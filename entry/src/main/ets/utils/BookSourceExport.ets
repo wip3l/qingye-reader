@@ -2,7 +2,7 @@ import { BookSource, NativeSourceService } from '@legado/sourceengine';
 
 export class BookSourceExport {
   static toObject(source: BookSource): Object {
-    if (NativeSourceService.isNative(source)) return NativeSourceService.exportObject(source);
+    if (NativeSourceService.isNative(source)) return BookSourceExport.nativeObject(source);
     let result: Record<string, Object> = {};
     try {
       const parsed = JSON.parse(source.rawSourceJson || '{}') as Object;
@@ -41,6 +41,28 @@ export class BookSourceExport {
     result['eventListener'] = source.eventListener;
     if (source.isPinned || result['isPinned'] !== undefined) result['isPinned'] = source.isPinned;
     if (source.isLocked || result['isLocked'] !== undefined) result['isLocked'] = source.isLocked;
+    return result;
+  }
+
+  /**
+   * 原生书源的定义打包在 jsLib 里，只在导入或编辑保存时写入；之后在列表里改分组、开关只改数据库列。
+   * 导出和编辑页都要用列里的现值覆盖定义里的旧值，否则导出再导入（或编辑后保存）会退回旧分组。
+   */
+  static nativeObject(source: BookSource): Object {
+    const definition = NativeSourceService.exportObject(source) as Record<string, Object>;
+    const group = (source.bookSourceGroup || '').trim();
+    const result: Record<string, Object> = {};
+    for (const key of Object.keys(definition)) {
+      if (key !== 'group') result[key] = definition[key];
+      // 原位置写回，字段顺序不变；没写过分组的定义追加在末尾。
+      if (key === 'group' && group) result[key] = group;
+    }
+    if (group && definition['group'] === undefined) result['group'] = group;
+    // 定义里缺省即为开启，只在已写出或现值为关闭时才写，避免给每个导出都加上默认字段。
+    if (result['enabled'] !== undefined || !source.enabled) result['enabled'] = source.enabled;
+    if (result['enabledExplore'] !== undefined || !source.enabledExplore) {
+      result['enabledExplore'] = source.enabledExplore;
+    }
     return result;
   }
 

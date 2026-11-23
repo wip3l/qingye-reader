@@ -45,6 +45,18 @@ export class ReaderComicFit {
   }
 }
 
+/** 去白边：裁掉漫画图四周的纯白（或纯黑）空白，检测见 ReaderComicTrimDetect。 */
+export class ReaderComicTrimMode {
+  static readonly OFF: string = 'off';
+  /** 四边都裁；条漫长图仍只裁左右。 */
+  static readonly ALL: string = 'all';
+
+  /** 早先的“只裁左右”（'sides'）几乎看不出效果，已并入开启。 */
+  static normalize(value: string): string {
+    return value === 'sides' || value === ReaderComicTrimMode.ALL ? ReaderComicTrimMode.ALL : ReaderComicTrimMode.OFF;
+  }
+}
+
 /** 设置面板里并排选项块的一项。 */
 export class ReaderComicOption {
   value: string = '';
@@ -69,6 +81,7 @@ export class ReaderComicSettings {
   background: string = ReaderComicBackground.BLACK;
   pageGap: number = 0;
   fit: string = ReaderComicFit.WIDTH;
+  trim: string = ReaderComicTrimMode.OFF;
   /** 点击屏幕两侧翻一屏；关闭后点哪里都呼出菜单。 */
   tapTurn: boolean = true;
   /** 角落里的话名、页码、时间与电量。 */
@@ -100,6 +113,7 @@ export class ReaderComicSettings {
     next.background = this.background;
     next.pageGap = this.pageGap;
     next.fit = this.fit;
+    next.trim = this.trim;
     next.tapTurn = this.tapTurn;
     next.infoBar = this.infoBar;
     next.doubleTapZoom = this.doubleTapZoom;
@@ -117,6 +131,7 @@ export class ReaderComicSettings {
       'background': this.background,
       'pageGap': this.pageGap,
       'fit': this.fit,
+      'trim': this.trim,
       'tapTurn': this.tapTurn,
       'infoBar': this.infoBar,
       'doubleTapZoom': this.doubleTapZoom,
@@ -139,6 +154,7 @@ export class ReaderComicSettings {
       settings.background = ReaderComicBackground.normalize(String(record['background'] ?? ''));
       settings.pageGap = ReaderComicSettings.nearest(Number(record['pageGap']), ReaderComicSettings.PAGE_GAPS, 0);
       settings.fit = ReaderComicFit.normalize(String(record['fit'] ?? ''));
+      settings.trim = ReaderComicTrimMode.normalize(String(record['trim'] ?? ''));
       settings.tapTurn = record['tapTurn'] !== false;
       settings.infoBar = record['infoBar'] !== false;
       settings.doubleTapZoom = record['doubleTapZoom'] !== false;

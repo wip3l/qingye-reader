@@ -82,11 +82,16 @@ export class AudioUrlResolver {
     return '';
   }
 
-  static invalidAudioAddressMessage(raw: string): string {
+  /**
+   * reason 是引擎为这一章记下的失败原因（ReadBookEngine.contentError）。全局键只在没传时兜底，
+   * 它会被同时运行的别的书源任务清空或改写。
+   */
+  static invalidAudioAddressMessage(raw: string, reason: string = ''): string {
     // 取正文失败时内容为空，原因记在书源阶段错误里（例如接口返回的 code/message、书源给的说明）。
     if (!(raw || '').trim()) {
-      const stageError = (AppStorage.get<string>('bookSourceStageLastError') || '').trim();
+      const stageError = (reason || AppStorage.get<string>('bookSourceStageLastError') || '').trim();
       if (stageError) return stageError;
+      return '书源没有返回音频地址，也没有说明原因';
     }
     try {
       const root = JSON.parse(raw || '{}') as Record<string, Object>;
@@ -98,6 +103,13 @@ export class AudioUrlResolver {
         data['error'] || data['message'] || data['msg'] || '').trim();
       if (message) return `音频接口未返回可播放地址：${message}`;
     } catch (_) {}
+    // 书源给了一段说明文字而不是地址（例如“本章为听书音频…”“请先登录”），原样告诉用户，比笼统的说明好排查。
+    const text = String(raw).trim();
+    if (!/^[\[{<]/.test(text) && !/<[a-z!\/][^>]*>/i.test(text)) {
+      const plain = text.replace(/\s+/g, ' ');
+      if (plain.length <= 120) return `书源返回的不是音频地址：${plain}`;
+      return `书源返回的不是音频地址：${plain.substring(0, 117)}…`;
+    }
     return '正文规则没有返回有效音频地址';
   }
 

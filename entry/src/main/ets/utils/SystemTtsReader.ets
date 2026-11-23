@@ -183,6 +183,8 @@ export class SystemTtsReader {
   private optionStyle: string | null = null;
   private optionLanguage: string | null = null;
   private optionSpeed: number | null = null;
+  // 正在用自定义音色朗读时的那个音色，供中途改倍速（applyLiveSpeed）判断能否就地生效。
+  private activeCustomVoice: HttpTTS | null = null;
   private optionCloudVoiceId: string = '';
   private optionCloudVoiceName: string = '';
   private optionCloudVoiceTier: string = 'STANDARD';
@@ -199,6 +201,11 @@ export class SystemTtsReader {
   private systemAudioSessionOwner: string = '';
   private keepAudioOutputOnFinish: boolean = false;
   private pcmOutputReleaseTimerId: number = -1;
+  /**
+   * 连续朗读时本章最后一段已全部写进渲染器、但还没放完就报了完成（见 finishWhenQueued）。
+   * 下一章的语音直接排在这段尾巴后面；不再接着读时要先 drainQueuedTail 再停，免得切掉结尾。
+   */
+  private queuedTailPending: boolean = false;
 
   static async listAvailableVoices(): Promise<TtsVoiceOption[]> {
     try {
@@ -432,6 +439,8 @@ export class SystemTtsReader {
     this.optionStyle = options?.style ?? null;
     this.optionLanguage = options?.language ?? null;
     this.optionSpeed = options?.speed ?? null;
+    this.activeCustomVoice = null;
+    this.httpReader.clearLiveSpeed();
     this.optionCloudVoiceId = options?.cloudVoiceId || '';
     this.optionCloudVoiceName = options?.cloudVoiceName || '';
     this.optionCloudVoiceTier = (options?.cloudVoiceTier || '').toUpperCase() === 'PREMIUM' ?
@@ -529,6 +538,7 @@ export class SystemTtsReader {
         }
         this.engine = null;
       }
+      this.activeCustomVoice = customVoice;
       this.speakCustomNext(generation, customVoice);
       return;
     }
@@ -718,6 +728,7 @@ export class SystemTtsReader {
     this.optionStyle = null;
     this.optionLanguage = null;
     this.optionSpeed = null;
+    this.activeCustomVoice = null;
     this.optionCloudVoiceId = '';
     this.optionCloudVoiceName = '';
     this.optionCloudVoiceTier = 'STANDARD';
@@ -764,6 +775,19 @@ export class SystemTtsReader {
 
   isSpeaking(): boolean {
     return this.active;
+  }
+
+  /**
+   * 朗读中途改倍速，能就地生效时返回 true：自定义音色由播放器变速（URL 不带倍速变量），正在放的和已合成的段
+   * 直接按新倍速放，不停下、不重新请求。其他音色返回 false，调用方照旧停下从当前句按新倍速重读。
+   */
+  applyLiveSpeed(speed: number): boolean {
+    const voice = this.activeCustomVoice;
+    if (!this.active || !voice) return false;
+    const normalized = Math.max(0.5, Math.min(3, speed || 1));
+    if (!this.httpReader.applyLiveSpeed(voice, normalized)) return false;
+    if (this.optionSpeed !== null) this.optionSpeed = normalized;
+    return true;
   }
 
   private async ensureEngine(): Promise<textToSpeech.TextToSpeechEngine> {
@@ -934,16 +958,63 @@ export class SystemTtsReader {
     return this.keepAudioOutputOnFinish && this.ttsPcmPlayType === 0;
   }
 
+  /**
+   * 连续朗读的本章最后一段已经全部写进渲染器：不等它放完，直接报完成，让调用方接着准备下一章。
+   *
+   * 熄屏后系统把这条流切到 offload 通道，会一次收下十来秒音频慢慢放。等放完才交接时，这段时间里应用一直
+   * 写不出数据，系统按“连续约 8 秒没写数据”判定应用无声（standby、all session mute），几秒后冻结进程，
+   * 下一章要等用户解锁才开始。现在下一章的语音紧接着写在尾巴后面，流里一直有数据。
+   * 返回 true 表示已经报了完成，调用方不必再 drain。
+   */
+  private finishWhenQueued(generation: number): boolean {
+    if (this.readGeneration !== generation || !this.active || !this.keepsPcmOutputOnFinish()) return false;
+    console.info(`[TTS] chapter audio fully queued, handing off before playback drains: ${this.audioDebugState()}`);
+    this.queuedTailPending = true;
+    // 普通蓝牙等非 offload 通道只预收零点几秒：下一章合成出来之前垫静音，不让流断数据转入待机。
+    this.pcmPlayer.startGapFill();
+    this.finish(true);
+    return true;
+  }
+
+  /** 上一次完成时本章结尾还在渲染器里放（下一章还没接上）。 */
+  finishedWithQueuedTail(): boolean {
+    return this.queuedTailPending && !this.active;
+  }
+
+  /** 不再接着读时（读完最后一章、下一章打不开）先把排着的结尾放完，最多等 20 秒。 */
+  async drainQueuedTail(): Promise<void> {
+    if (!this.queuedTailPending || this.active) return;
+    const generation = this.readGeneration;
+    let timer = -1;
+    try {
+      await Promise.race([
+        this.pcmPlayer.drain(),
+        new Promise<void>((resolve: () => void): void => {
+          timer = setTimeout(resolve, 20000);
+        })
+      ]);
+    } catch (error) {
+      console.warn('[TTS] drain queued chapter tail failed:', error);
+    } finally {
+      if (timer >= 0) clearTimeout(timer);
+    }
+    if (this.readGeneration === generation) this.queuedTailPending = false;
+  }
+
   private schedulePcmOutputRelease(): void {
     this.cancelPendingPcmOutputRelease();
     console.info(`[TTS] keeping pcm output for chapter handoff: ${this.audioDebugState()}`);
     this.pcmOutputReleaseTimerId = setTimeout(() => {
       this.pcmOutputReleaseTimerId = -1;
-      if (!this.active) {
+      if (this.active) return;
+      const generation = this.readGeneration;
+      // 结尾可能还在放：放完再关，期间又开始读了就不关。
+      this.drainQueuedTail().then((): void => {
+        if (this.active || this.readGeneration !== generation) return;
         console.info('[TTS] releasing idle pcm output after chapter handoff grace period');
         this.pcmPlayer.stop();
         this.httpReader.stop();
-      }
+      });
     }, 15000);
   }
 
@@ -1650,6 +1721,7 @@ export class SystemTtsReader {
   private async finishSystemPcmPlayback(generation: number): Promise<void> {
     try {
       await this.systemLastWritePromise;
+      if (this.finishWhenQueued(generation)) return;
       await this.pcmPlayer.drain();
     } catch (error) {
       console.warn('[TTS] drain system pcm playback failed:', error);
@@ -1870,6 +1942,7 @@ export class SystemTtsReader {
         }
         this.clearSpeakWatchdog();
         if (this.chunkIndex >= this.chunks.length) {
+          if (this.ttsPcmPlayType === 0 && this.finishWhenQueued(generation)) return;
           try {
             await this.pcmPlayer.drain();
           } catch (error) {
@@ -2174,7 +2247,8 @@ export class SystemTtsReader {
    * the requested range has nothing following it, so only that one still drops the comma.
    */
   private normalizeChunkForSpeech(text: string, protectTailPause: boolean = true): string {
-    const normalized = this.normalizeMathNotationForSpeech(this.replaceUnsafeSpeechCharacters(text || ''))
+    const normalized = this.stripDecorativeSpeechSymbols(
+      this.normalizeMathNotationForSpeech(this.replaceUnsafeSpeechCharacters(text || '')))
       .replace(/\r\n/g, '\n')
       .replace(/\s*\n+\s*/g, '。')
       .replace(/[ \t]{2,}/g, ' ')
@@ -2288,7 +2362,7 @@ export class SystemTtsReader {
             (denominator.length > 1 && denominator.charAt(0) === '0') ? match :
             `${numerator} over ${denominator}`;
         });
-      result = result.replace(/(\d+)\s*[×*]\s*(\d+)/g,
+      result = result.replace(/(\d+)\s*[×*＊]\s*(\d+)/g,
         (_match: string, left: string, right: string): string => `${left} times ${right}`);
       result = result.replace(/(\d+)\s*[÷]\s*(\d+)/g,
         (_match: string, left: string, right: string): string => `${left} divided by ${right}`);
@@ -2314,13 +2388,24 @@ export class SystemTtsReader {
         }
         return `${denominator}分之${numerator}`;
       });
-    result = result.replace(/(\d+)\s*[×*]\s*(\d+)/g,
+    result = result.replace(/(\d+)\s*[×*＊]\s*(\d+)/g,
       (_match: string, left: string, right: string): string => `${left}乘以${right}`);
     result = result.replace(/(\d+)\s*[÷]\s*(\d+)/g,
       (_match: string, left: string, right: string): string => `${left}除以${right}`);
     result = result.replace(/(\d+)\s*=\s*(\d+)/g,
       (_match: string, left: string, right: string): string => `${left}等于${right}`);
     return result;
+  }
+
+  /**
+   * Drop marker symbols that have no spoken meaning in prose: a "*" before a paragraph (scene
+   * break), "**强调**", "※注" or "★" bullets. The system engine skips them silently, but custom
+   * online/offline voices read them out as "星号". Runs after math normalization so "3*4" has
+   * already become "3乘以4". Only applied to the synthesizer text; chunk offsets are untouched.
+   */
+  private stripDecorativeSpeechSymbols(text: string): string {
+    if (!text) return '';
+    return text.replace(/[*＊※★☆◆◇■□●◎▲△▼▽♦♢❖✦✧]+/g, '');
   }
 
   /**
@@ -2762,7 +2847,7 @@ export class SystemTtsReader {
         end = this.findFirstCloudBreak(text, preferredEnd, limit, false);
       }
       if (end <= start) {
-        end = this.safeHardCutIndex(text, limit);
+        end = this.safeHardCutIndex(text, limit, start);
       }
       end = this.extendTtsBreak(text, end, text.length);
       this.appendAbsoluteTextChunk(chunks, text, start, end);
@@ -2929,7 +3014,7 @@ export class SystemTtsReader {
       }
       if (end <= start) {
         breakPath = 'hard';
-        end = this.safeHardCutIndex(text, limit);
+        end = this.safeHardCutIndex(text, limit, start);
       }
       end = this.extendTtsBreak(text, end, text.length);
       if (breakPath === 'weak' || breakPath === 'hard') {
@@ -2961,7 +3046,7 @@ export class SystemTtsReader {
 
   private findLastCloudBreak(text: string, from: number, to: number, strong: boolean): number {
     for (let index = Math.min(text.length, to) - 1; index >= from; index--) {
-      if (this.isCloudBreak(text.charAt(index), strong) && !this.isNumericDecimalPoint(text, index)) {
+      if (this.isCloudBreakAt(text, index, strong)) {
         return index + 1;
       }
     }
@@ -2970,11 +3055,39 @@ export class SystemTtsReader {
 
   private findFirstCloudBreak(text: string, from: number, to: number, strong: boolean): number {
     for (let index = Math.max(0, from); index < Math.min(text.length, to); index++) {
-      if (this.isCloudBreak(text.charAt(index), strong) && !this.isNumericDecimalPoint(text, index)) {
+      if (this.isCloudBreakAt(text, index, strong)) {
         return index + 1;
       }
     }
     return -1;
+  }
+
+  /**
+   * An ellipsis followed directly by more words ("“小神……明白。”") is a hesitation inside one
+   * sentence, not its end. Breaking there sent "“小神……" and "明白。”" as two utterances: the
+   * first closed with falling pitch, the second started cold, which listeners hear as a stutter
+   * or a swallowed word. Such an ellipsis only counts as a weak break.
+   */
+  private isCloudBreakAt(text: string, index: number, strong: boolean): boolean {
+    const value = text.charAt(index);
+    if (this.isNumericDecimalPoint(text, index)) return false;
+    if (this.isEllipsisInsideSentence(text, index)) return !strong;
+    return this.isCloudBreak(value, strong);
+  }
+
+  private isEllipsisInsideSentence(text: string, index: number): boolean {
+    const value = text.charAt(index);
+    if (value !== '…' && value !== '.') return false;
+    let runStart = index;
+    while (runStart > 0 && (text.charAt(runStart - 1) === '…' || text.charAt(runStart - 1) === '.')) runStart--;
+    let runEnd = index + 1;
+    while (runEnd < text.length && (text.charAt(runEnd) === '…' || text.charAt(runEnd) === '.')) runEnd++;
+    // A single "." is an ordinary full stop; only "…" or ".." and longer runs are ellipses.
+    if (value === '.' && runEnd - runStart < 2) return false;
+    if (runEnd >= text.length) return false;
+    const next = text.charAt(runEnd);
+    return !this.isTrimChar(next) && !this.isClosingPunctuationAt(text, runEnd) && !this.isSentenceEnd(next) &&
+      next !== '—' && next !== '–';
   }
 
   private isCloudBreak(value: string, strong: boolean): boolean {
@@ -3065,6 +3178,10 @@ export class SystemTtsReader {
       if (this.isNumericDecimalPoint(text, i)) {
         continue;
       }
+      if (this.isEllipsisInsideSentence(text, i)) {
+        if (weakCandidate < 0) weakCandidate = i + 1;
+        continue;
+      }
       if (this.isStrongSentenceEnd(value)) {
         return i + 1;
       }
@@ -3075,7 +3192,7 @@ export class SystemTtsReader {
     if (weakCandidate > 0) {
       return weakCandidate;
     }
-    return limit < text.length ? this.safeHardCutIndex(text, limit) : text.length;
+    return limit < text.length ? this.safeHardCutIndex(text, limit, start) : text.length;
   }
 
   private isStrongSentenceEnd(value: string): boolean {
@@ -3112,9 +3229,23 @@ export class SystemTtsReader {
    * A raw `start + maximumLength` cut can split a surrogate pair (emoji), split a value from
    * its unit ("3.5 米" / "80分" / "12%"), split an ASCII word, or leave a leading quote at the
    * head of the next chunk. Move the cut backwards until none of those apply.
+   *
+   * `floor` is where the current chunk starts. A window with no place to cut at all (60+
+   * letters/digits in a row: a hash, a serial number, a line of "hahaha") would walk the cut
+   * back to or past the chunk start, and the caller's `start = end` then never advances —
+   * the split loop spins forever on the main thread. In that case cut at the raw position.
    */
-  private safeHardCutIndex(text: string, index: number): number {
-    let cut = Math.max(1, Math.min(text.length, Math.round(index)));
+  private safeHardCutIndex(text: string, index: number, floor: number = 0): number {
+    const raw = Math.max(1, Math.min(text.length, Math.round(index)));
+    const cut = this.backOffHardCut(text, raw);
+    if (cut > floor) {
+      return cut;
+    }
+    return raw - 1 > floor && this.isHighSurrogate(text.charCodeAt(raw - 1)) ? raw - 1 : raw;
+  }
+
+  private backOffHardCut(text: string, raw: number): number {
+    let cut = raw;
     if (cut >= text.length) {
       return text.length;
     }

@@ -77,13 +77,15 @@ export struct SearchBookResultList {
   @StorageProp('appDarkMode') @Watch('onCoverSettingsChanged') appDarkMode: boolean = false;
   @StorageProp('themeRevision') @Watch('onCoverSettingsChanged') themeRevision: number = 0;
   @StorageProp('appThemeBookCoverEnabled') @Watch('onCoverSettingsChanged') themeCoverEnabled: boolean = false;
+  @StorageProp('appThemeBookFrameEnabled') @Watch('onCoverSettingsChanged') themeFrameEnabled: boolean = false;
   @StorageProp('bookshelfCoverAlbums') @Watch('onCoverSettingsChanged') coverAlbums: string = '';
   @StorageProp('bookshelfLightCoverAlbumId') @Watch('onCoverSettingsChanged') lightCoverAlbum: string = '';
   @StorageProp('bookshelfDarkCoverAlbumId') @Watch('onCoverSettingsChanged') darkCoverAlbum: string = '';
   @StorageProp('bookshelfCoverApplyScope') @Watch('onCoverSettingsChanged') coverScope: string = '';
   @StorageProp('bookshelfCoverTargetBooks') @Watch('onCoverSettingsChanged') coverTargets: string = '';
-  @StorageProp('bookshelfIgnoreSourceCover') @Watch('onCoverSettingsChanged') ignoreSourceCover: boolean = false;
-  @StorageProp('bookshelfIgnoreEmptyCoverOnly') @Watch('onCoverSettingsChanged') ignoreEmptyCoverOnly: boolean = false;
+  @StorageProp('bookshelfCoverReplaceAlbum') @Watch('onCoverSettingsChanged') coverReplaceAlbum: boolean = false;
+  @StorageProp('bookshelfCoverAlbumMix') @Watch('onCoverSettingsChanged') coverAlbumMix: boolean = false;
+  @StorageProp('bookshelfCoverFallback') @Watch('onCoverSettingsChanged') coverFallback: string = 'text';
   @StorageProp('bookshelfCoverMode') @Watch('onCoverSettingsChanged') coverMode: string = '';
   @StorageProp('shelfUpdateTime') @Watch('onCoverSettingsChanged') shelfRevision: number = 0;
   @State preparedCovers: Map<string, PreparedResultCover> = new Map<string, PreparedResultCover>();
@@ -632,6 +634,10 @@ export struct SearchBookResultList {
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
+    // 展开屏一屏三四十格、上下还各预建三行，滑动时渲染服务每帧逐个重画封面、圆角裁切、投影与文字，
+    // 单帧 12ms 左右，悬浮底栏取模糊底图前还得先把这些全部提交一遍。整格缓存成一张图后真机降到 7ms 左右，
+    // 投影也在缓存里；封面解码完淡入、角标变化时渲染服务会自己重建。
+    .renderGroup(true)
     .onClick(() => {
       this.onOpenBook(this.resultBook(key));
     })

@@ -9,6 +9,7 @@ import { SettingNavRow, SettingRow, SettingSwitchRow } from '../components/commo
 import {
   ReaderComicBackground,
   ReaderComicFit,
+  ReaderComicTrimMode,
   ReaderComicMode,
   ReaderComicSettings,
   ReaderComicSettingsStore
@@ -145,8 +146,18 @@ struct ComicSettingsPage {
           });
         }, 'comic_settings_fit_select')
       SettingSwitchRow({
+        title: '去白边',
+        description: '裁掉图片四周的白边或黑边；条漫长图只裁左右',
+        isOn: this.settings.trim !== ReaderComicTrimMode.OFF,
+        onChange: (value: boolean) => {
+          this.update((next: ReaderComicSettings): void => {
+            next.trim = value ? ReaderComicTrimMode.ALL : ReaderComicTrimMode.OFF;
+          });
+        }
+      })
+      SettingSwitchRow({
         title: '双击缩放',
-        description: '双击放大到 2 倍，再双击还原；关闭后单击响应更快',
+        description: '双击放大 2 倍，再双击还原；关闭后单击更快',
         isOn: this.settings.doubleTapZoom,
         onChange: (value: boolean) => {
           this.update((next: ReaderComicSettings): void => {
@@ -197,7 +208,7 @@ struct ComicSettingsPage {
       SettingSwitchRow({
         title: 'AI超分',
         minimumMembership: 'MONTHLY',
-        description: '借助AI把低清图片放大变清晰，处理好后自动替换；只处理正在看的图，会多耗一些电',
+        description: '用AI把低清图片变清晰；只处理正在看的图，较耗电',
         isOn: this.settings.superResolution,
         onChange: (value: boolean) => {
           this.update((next: ReaderComicSettings): void => {
@@ -220,7 +231,7 @@ struct ComicSettingsPage {
       SettingSwitchRow({
         title: 'AI超分',
         minimumMembership: 'MONTHLY',
-        description: '当前系统不支持，需要 API 26 及以上且支持图片超分的设备',
+        description: '当前设备不支持（需 API 26 及以上并支持超分）',
         isOn: false,
         switchEnabled: false
       })
@@ -245,7 +256,7 @@ struct ComicSettingsPage {
       SettingSwitchRow({
         title: 'AI着色',
         minimumMembership: 'MONTHLY',
-        description: '新打开的黑白漫画默认着色，当前画面优先；单张超长图暂不支持。首次开启需下载着色模型，开启后暂停AI超分',
+        description: '新打开的黑白漫画默认着色；首次需下载模型，开启后暂停AI超分',
         // 下载期间开关要保持“开”：禁用开关会让 Toggle 按 isOn 重建，若此时仍是 false
         // 会回弹并触发 onChange(false)，把刚开始的模型下载静默取消。
         isOn: this.settings.colorDefault || !!this.modelStatus,

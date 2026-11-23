@@ -77,6 +77,7 @@ import { ReaderNightImage } from '../core/reader/ReaderNightImage';
 import { TapZoneSettingsDialogContent } from '../components/TapZoneSettingsDialog';
 import { ReaderHaptics } from '../utils/ReaderHaptics';
 import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
+import { WatchReaderHost, WatchReaderSnapshot, WatchRemoteBridge } from '../utils/WatchRemoteBridge';
 import {
   ReaderSnapshotPageTurn, ReaderSnapshotTurnController, ReaderSnapshotTurnHost
 } from '../components/reader/ReaderSnapshotPageTurn';
@@ -356,8 +357,12 @@ struct EpubOriginalReadBookPage {
   /** 与普通阅读页相同：关闭时阅读中显示状态栏，页眉排在状态栏下面；打开时隐藏状态栏。 */
   @StorageProp('readerExtendToStatusBar') @Watch('onReaderChromeChanged') readerExtendToStatusBar: boolean = false;
   @StorageProp('readerHideNavIndicator') @Watch('applySystemBars') readerHideNavIndicator: boolean = false;
-  /** 翻页动画与普通阅读页共用（平移、推页、淡入、叠页、仿真、3D 仿真）。 */
+  /** 翻页动画与普通阅读页共用（平移、推页、淡入、叠页、仿真、3D 仿真）；这里是当前方向实际用的那份。 */
   @State pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  // 横竖屏分开设置翻页动画：两份都留着，视口变化时按宽高重新挑。
+  @State pageTurnAnimationSplit: boolean = false;
+  @State portraitPageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  @State landscapePageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
   // 四侧边距与普通阅读页共用（排版里的左/右/上/下边距），点击区域也是同一个设置。
   @StorageLink('readerMarginLeft') @Watch('onReaderChromeChanged') readerMarginLeft: number = 18;
   @StorageLink('readerMarginRight') @Watch('onReaderChromeChanged') readerMarginRight: number = 18;
@@ -491,6 +496,7 @@ struct EpubOriginalReadBookPage {
   private loadSerial: number = 0;
   private noteSerial: number = 0;
   private alive: boolean = true;
+  private watchRemoteHost: WatchReaderHost | null = null;
   private saveTimer: number = -1;
   private saveTask: Promise<void> = Promise.resolve();
   private owner: string = `epub-original-${Date.now()}-${Math.random()}`;
@@ -621,6 +627,7 @@ struct EpubOriginalReadBookPage {
     // 没有接系统媒体控件，退到后台或盖上别的页面时音乐先停下，回来再点卡片或胶囊继续。
     EpubAudioPlayer.pause(this.owner);
     this.unregisterHardwareKeys();
+    if (this.watchRemoteHost) WatchRemoteBridge.detach(this.watchRemoteHost);
     this.keyboard.reset();
     this.showLayoutElements = false;
     this.showTapZones = false;
@@ -637,6 +644,7 @@ struct EpubOriginalReadBookPage {
     this.stopHoldingHandTracking();
     this.flushAndSyncProgress();
     this.alive = false;
+    if (this.watchRemoteHost) WatchRemoteBridge.detach(this.watchRemoteHost);
     this.themeRevealSerial++;
     this.releaseThemeReveal();
     this.musicUnsubscribe?.();
@@ -864,7 +872,10 @@ struct EpubOriginalReadBookPage {
         ReaderQuickJumpModel.normalizeMode(settings.quickJumpMode));
       this.screenTimeoutMinutes = ReaderSettingsStore.normalizeScreenTimeoutMinutes(settings.screenTimeoutMinutes);
       this.applyScreenTimeout();
-      this.pageTurnAnimation = ReaderPageTurnAnimation.normalize(settings.pageTurnAnimationType);
+      this.portraitPageTurnAnimation = ReaderPageTurnAnimation.normalize(settings.pageTurnAnimationType);
+      this.landscapePageTurnAnimation = ReaderPageTurnAnimation.normalize(settings.landscapePageTurnAnimationType);
+      this.pageTurnAnimationSplit = settings.pageTurnAnimationSplit;
+      this.syncPageTurnAnimationForViewport();
       if (settings.tapZoneActions) this.readerTapZoneActions = settings.tapZoneActions;
       // 直接从书架进来时普通阅读页没读过字体列表。
       if (!this.readerCustomFontsRaw && settings.customFontsRaw) {
@@ -883,6 +894,7 @@ struct EpubOriginalReadBookPage {
   /** 页面可见时才接管音量键、智控键；离开页面立即交还给系统。 */
   updateKeySubscription(): void {
     this.unregisterHardwareKeys();
+    this.syncWatchRemoteHost();
     // 朗读时音量键调音量（与普通阅读页相同）。
     if (!this.alive || !this.visible || this.ttsActive) return;
     if (this.volumeTurnOn()) {
@@ -936,6 +948,40 @@ struct EpubOriginalReadBookPage {
   private hardwareTurn(direction: number): void {
     if (!this.canTurnByKey()) return;
     this.turnByKey(direction);
+  }
+
+  /** 手表翻页：页面可见时接上，规则与按键翻页相同，朗读时不翻。 */
+  private syncWatchRemoteHost(): void {
+    if (!this.watchRemoteHost) {
+      const host = new WatchReaderHost();
+      host.inputKind = (): number => ReaderInputKind.NOVEL;
+      host.blockedReason = (): string => {
+        if (this.ttsActive) return '手机正在朗读，停止朗读后自动恢复';
+        if (this.canTurnByKey()) return '';
+        return this.ready && !this.transitioning && !this.jumpBusy ? '手机上菜单或面板开着' : '手机正在加载';
+      };
+      host.turn = (direction: number): void => {
+        if (!this.ttsActive) this.hardwareTurn(direction);
+      };
+      host.snapshot = (): WatchReaderSnapshot => {
+        const pages = this.paged ? Math.max(0, this.pageCount) : 0;
+        const page = pages > 0 ? Math.min(pages, this.pageIndex + 1) : 0;
+        const chapterRatio = pages > 0 ? page / pages : 0;
+        const snapshot: WatchReaderSnapshot = {
+          book: this.title, chapter: this.chapterTitle, page: page, pages: pages,
+          progress: this.chapterCount > 0 ? (this.chapterIndex + chapterRatio) / this.chapterCount : 0
+        };
+        return snapshot;
+      };
+      host.onWatchContact = (): void => HdsFeedback.showToast('手表已连上，可以用手表翻页');
+      this.watchRemoteHost = host;
+    }
+    if (this.alive && this.visible) {
+      WatchRemoteBridge.attach(this.watchRemoteHost);
+      WatchRemoteBridge.sync(this.getUIContext().getHostContext() as Context);
+    } else {
+      WatchRemoteBridge.detach(this.watchRemoteHost);
+    }
   }
 
   private turnByKey(direction: number): void {
@@ -2628,14 +2674,49 @@ struct EpubOriginalReadBookPage {
     }, 450);
   }
 
-  private setPageTurnAnimation(type: number): void {
-    const value = ReaderPageTurnAnimation.normalize(type);
+  private pageTurnAnimationUsesLandscape(): boolean {
+    return ReaderPageTurnAnimation.usesLandscape(this.pageTurnAnimationSplit, this.viewWidth, this.viewHeight);
+  }
+
+  private syncPageTurnAnimationForViewport(): void {
+    const value = this.pageTurnAnimationUsesLandscape() ?
+      this.landscapePageTurnAnimation : this.portraitPageTurnAnimation;
     if (value === this.pageTurnAnimation) return;
     this.pageTurnAnimation = value;
     this.turnController.invalidate();
-    ReaderSettingsStore.savePageTurnAnimationType(getContext(this), value).catch((error: Error): void => {
-      console.warn('[EpubOriginal] save page turn animation failed:', error);
-    });
+  }
+
+  /** 与普通阅读页同一组设置：landscape 为 true 时改横屏那份，否则改竖屏（未分开时即唯一一份）。 */
+  private setPageTurnAnimation(type: number, landscape: boolean): void {
+    const value = ReaderPageTurnAnimation.normalize(type);
+    if (landscape) {
+      if (value === this.landscapePageTurnAnimation) return;
+      this.landscapePageTurnAnimation = value;
+      ReaderSettingsStore.savePageTurnAnimationSplit(getContext(this), this.pageTurnAnimationSplit, value)
+        .catch((error: Error): void => {
+          console.warn('[EpubOriginal] save landscape page turn animation failed:', error);
+        });
+    } else {
+      if (value === this.portraitPageTurnAnimation) return;
+      this.portraitPageTurnAnimation = value;
+      ReaderSettingsStore.savePageTurnAnimationType(getContext(this), value).catch((error: Error): void => {
+        console.warn('[EpubOriginal] save page turn animation failed:', error);
+      });
+    }
+    this.syncPageTurnAnimationForViewport();
+    this.schedulePrewarm();
+  }
+
+  // 打开时横屏先沿用竖屏那份动画，之后各改各的。
+  private setPageTurnAnimationSplit(enabled: boolean): void {
+    if (enabled === this.pageTurnAnimationSplit) return;
+    if (enabled) this.landscapePageTurnAnimation = this.portraitPageTurnAnimation;
+    this.pageTurnAnimationSplit = enabled;
+    ReaderSettingsStore.savePageTurnAnimationSplit(getContext(this), enabled, this.landscapePageTurnAnimation)
+      .catch((error: Error): void => {
+        console.warn('[EpubOriginal] save page turn animation split failed:', error);
+      });
+    this.syncPageTurnAnimationForViewport();
     this.schedulePrewarm();
   }
 
@@ -4123,7 +4204,6 @@ struct EpubOriginalReadBookPage {
       },
       onJumpToBookmark: (bookmark: Bookmark): void => { this.openBookmark(bookmark); },
       // 本地书的目录来自书里的导航文件，没有可刷新的远端。
-      onRefreshToc: (): Promise<void> => Promise.resolve(),
       onLoadBookmarks: (): void => { this.loadBookmarks(); },
       onShowBookmarkActions: (bookmark: Bookmark, globalX: number, globalY: number): void =>
         this.openBookmarkActions(bookmark, globalX, globalY),
@@ -4311,9 +4391,15 @@ struct EpubOriginalReadBookPage {
         smartKeySupported: this.smartKeySupported,
         onVolumeTurnChange: (enabled: boolean): void => { this.setVolumeTurnPage(enabled); },
         onSmartKeyTurnChange: (enabled: boolean): void => { this.setSmartKeyTurnPage(enabled); },
-        pageTurnAnimation: this.pageTurnAnimation,
+        portraitPageTurnAnimation: this.portraitPageTurnAnimation,
+        landscapePageTurnAnimation: this.landscapePageTurnAnimation,
+        pageTurnAnimationSplit: this.pageTurnAnimationSplit,
+        pageTurnAnimationLandscapeNow: this.pageTurnAnimationUsesLandscape(),
+        onPageTurnAnimationSplitChange: (enabled: boolean): void => { this.setPageTurnAnimationSplit(enabled); },
         headerBaseInset: ReaderInfoBarConfig.headerBaseInset(this.readerExtendToStatusBar, this.statusBarHeight),
-        onPageTurnAnimationChange: (type: number): void => { this.setPageTurnAnimation(type); },
+        onPageTurnAnimationChange: (type: number, landscape: boolean): void => {
+          this.setPageTurnAnimation(type, landscape);
+        },
         margins: [this.readerMarginLeft, this.readerMarginRight, this.readerMarginTop, this.readerMarginBottom],
         onMarginsChange: (left: number, right: number, top: number, bottom: number): void => {
           this.saveMargins(left, right, top, bottom);
@@ -4429,6 +4515,7 @@ struct EpubOriginalReadBookPage {
       if (this.closing) return;
       this.viewWidth = Number(after.width) || this.viewWidth;
       this.viewHeight = Number(after.height) || this.viewHeight;
+      this.syncPageTurnAnimationForViewport();
     })
       if (this.themeRevealSnapshot) {
         // 按切换序号重建：连续点按时换上新截图，旧动画的结束回调按序号作废。

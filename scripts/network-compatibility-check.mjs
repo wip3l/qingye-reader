@@ -232,6 +232,8 @@ for (const binary of [false, true]) {
   const f = fixture(); const client = new f.HttpClient(); let release;
   f.state.webGate = new Promise(resolve => { release = resolve; });
   assert.match((await client.execute({...request(), useWebView:true, deadlineAt:Date.now()+50})).error, /2300028/);
+  // Node 定时器可能比 Date.now() 早约 1 毫秒触发：先等过截止时间再放行浏览器会话，才是“已过期”的情形。
+  await new Promise(resolve => setTimeout(resolve, 5));
   release(); await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(f.state.webRequests || 0, 0, 'expired request must not navigate after obtaining the browser session');
   const deadline = Date.now()+500;
@@ -409,5 +411,17 @@ console.log('network-compatibility-check: transports, final headers, managed ret
   assert.equal(f.calls.at(-1).header.Cookie,undefined);
   const host=new f.NativeHost({bookSourceUrl:'https://source.example'},client,()=>false);
   assert.equal(host.cookieGet(request().url,'cf_clearance'),'fixture');
+}
+// GET/HEAD must not pass extraData: the system HTTP module appends a GET's string extraData to the URL, so an
+// empty string turned "/s?q=a" into "/s?q=a&" on device. POST still sends its body.
+for (const binary of [false, true]) {
+  const f = fixture(); const client = new f.HttpClient();
+  const execute = req => binary ? client.executeBinary(req) : client.execute(req);
+  f.replies.push({}); await execute(request('https://source.example/s?q=%D7%DC'));
+  assert.equal('extraData' in f.calls.at(-1), false, 'GET must not carry extraData');
+  f.replies.push({}); await execute({ ...request('https://source.example/s?q=1'), method: 'HEAD' });
+  assert.equal('extraData' in f.calls.at(-1), false, 'HEAD must not carry extraData');
+  f.replies.push({}); await execute({ ...request(), method: 'POST', body: 'q=1' });
+  assert.equal(f.calls.at(-1).extraData, 'q=1', 'POST keeps its body');
 }
 console.log('Partition-aware request cookie / explicit-header / UA casing checks passed.');

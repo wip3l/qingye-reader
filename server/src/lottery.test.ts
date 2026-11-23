@@ -211,10 +211,22 @@ test('lottery, coupons and campaign cloud quota (embedded PostgreSQL)', async t 
       'SELECT status, used_order_id FROM membership_coupons WHERE user_id=$1', [id]);
     assert.equal(coupon.rows[0]!.status, 'USED');
     assert.equal(coupon.rows[0]!.used_order_id, order.orderId);
-    // A later upgrade credits what the lifetime membership actually cost.
+    // A later upgrade does not charge the spent coupon back.
     const upgrade = await tx(c => quoteMembership(c, id, 'SUPER_LIFETIME', now));
-    assert.equal(upgrade.creditPoints, 1260);
+    assert.equal(upgrade.creditPoints, 1290);
+    assert.equal(upgrade.payablePoints, 1200);
     assert.equal(upgrade.couponId, null);
+    // Memberships recorded net of the coupon are corrected once; other credits stay as they are.
+    const credit = async () => Number((await db.query<{ points: string }>(`SELECT permanent_credit_points AS points
+      FROM membership_periods WHERE user_id=$1`, [id])).rows[0]!.points);
+    const fix = await readFile(new URL('033_coupon_upgrade_credit.sql', migrations), 'utf8');
+    await db.query('UPDATE membership_periods SET permanent_credit_points=1260 WHERE user_id=$1', [id]);
+    await db.exec(fix);
+    assert.equal(await credit(), 1290);
+    await db.query('UPDATE membership_periods SET permanent_credit_points=690 WHERE user_id=$1', [id]);
+    await db.exec(fix);
+    assert.equal(await credit(), 690);
+    await db.query('UPDATE membership_periods SET permanent_credit_points=1290 WHERE user_id=$1', [id]);
     await assert.rejects(tx(c => setSuperChoice(c, campaign, id, 'CLOUD')), rejectedCode('LOTTERY_COUPON_UNAVAILABLE'));
   });
 

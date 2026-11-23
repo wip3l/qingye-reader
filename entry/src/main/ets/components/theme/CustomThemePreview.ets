@@ -1,6 +1,7 @@
 import { ThemePack, ThemeVariant } from '../../theme/ThemeModels';
-import { ThemeImageSlots } from '../../theme/ThemePackRegistry';
-import { ThemeImageCrop } from '../../theme/share/ThemePackageFormat';
+import { ResolvedBubbleFrame, ThemeImageSlots, ThemePackRegistry } from '../../theme/ThemePackRegistry';
+import { BubbleFrameBreak, BubbleFrameRepeat, ThemeImageCrop, ThemePackageBubble } from '../../theme/share/ThemePackageFormat';
+import { ThemeBubbleFramePreview } from './ThemeBubbleFramePreview';
 import { ThemeCroppedImage } from './ThemeCroppedImage';
 import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
@@ -14,11 +15,18 @@ import { ThemeStartupCover } from '../ThemeStartupCover';
 import { TtsPanelThemeBackground } from '../TtsPanelThemeBackground';
 import { BookCover } from '../book/BookCover';
 import { HomeTabBarSettingsStore } from '../../utils/HomeTabBarSettingsStore';
+import { ThemeDetailScene } from './ThemeDetailScene';
+import { ThemeChapterHeadSampleMetrics, ThemeChapterHeadTitle, ThemeDropCapParagraph } from './ThemeChapterHeadSample';
+import { normalizeChapterHead, ThemePackageChapterHead } from '../../theme/share/ThemePackageFormat';
 import {
   ReaderRegexBubbleStyleResolver,
   ReaderRegexEmphasisContext,
-  ReaderResolvedRegexEmphasis
+  ReaderRegexFontRule,
+  ReaderResolvedRegexEmphasis,
+  ReaderTitleEmphasis
 } from '../../model/reader/ReaderRegexFontRule';
+
+const READER_SAMPLE_BODY = '清晨的薄雾漫过山谷，窗外的树叶还带着昨夜的雨。远处，风把林间的消息，轻轻送到了窗前。';
 
 /** 只读的方案预览；始终使用传入的草稿，不发布全局主题令牌。 */
 @Component
@@ -48,6 +56,9 @@ export struct CustomThemePreview {
   @Prop assetRevision: number = 0;
   // 底栏按“外观 › 底栏”里选的第四个页签画，和首页一致。
   @StorageProp('homeExtraTab') homeExtraTab: string = 'none';
+  // 预览框自己的尺寸：书架实景按真实大小排好再整体缩小，需要知道要填满多大。
+  @State boxWidth: number = 0;
+  @State boxHeight: number = 0;
 
   build() {
     Stack() {
@@ -72,6 +83,8 @@ export struct CustomThemePreview {
         this.ttsPreview()
       } else if (this.scene === 'card') {
         this.cardPreview()
+      } else if (this.scene !== 'explore' && this.scene !== 'mine') {
+        this.shelfScene()
       } else {
         if (this.homeBackdrop()) {
           this.homeBackdropLayer()
@@ -79,10 +92,8 @@ export struct CustomThemePreview {
         Column({ space: AppSpacing.MD }) {
           if (this.scene === 'explore') {
             this.explorePreview()
-          } else if (this.scene === 'mine') {
-            this.minePreview()
           } else {
-            this.bookshelfPreview()
+            this.minePreview()
           }
           this.navigationBar()
         }
@@ -97,6 +108,41 @@ export struct CustomThemePreview {
     .borderRadius(this.themePack.radius.card)
     .clip(true)
     .accessibilityText(`${this.previewDark ? '深色' : '浅色'}主题效果预览`)
+    .onAreaChange((_oldArea: Area, newArea: Area) => {
+      this.boxWidth = Number(newArea.width);
+      this.boxHeight = Number(newArea.height);
+    })
+  }
+
+  /** 小预览里书架实景缩到一半：按两倍大的画布排版，能看到顶栏、头几本书和底栏。 */
+  shelfSceneScale(): number {
+    return this.expanded ? 1 : 0.5;
+  }
+
+  /**
+   * 书架画面用主题详情那套实景（四种布局的版式、字号、间距都按真实书架画），不另画一套示意。
+   * 先按 1/缩放 倍的画布排好，再以左上角为中心整体缩小填满预览框。
+   */
+  @Builder
+  shelfScene() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      if (this.boxWidth > 0 && this.boxHeight > 0) {
+        ThemeDetailScene({
+          themePack: this.themePack,
+          previewDark: this.previewDark,
+          scene: 'shelf',
+          shelfLayout: this.shelfLayout,
+          homeBackdropThemeId: this.homeBackdropThemeId
+        })
+          .width(this.boxWidth / this.shelfSceneScale())
+          .height(this.boxHeight / this.shelfSceneScale())
+          .scale({ x: this.shelfSceneScale(), y: this.shelfSceneScale(), centerX: 0, centerY: 0 })
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .clip(true)
+    .hitTestBehavior(HitTestMode.None)
   }
 
   variant(): ThemeVariant {
@@ -193,7 +239,7 @@ export struct CustomThemePreview {
           .height('100%')
       }
       if (this.themePack.book.shelfFrameAssetId) {
-        Image(ThemeAssetRegistry.themeShelfFrame(this.themePack.book.shelfFrameAssetId))
+        Image(ThemeAssetRegistry.themeShelfFrame(this.themePack.book.shelfFrameAssetId, this.previewDark))
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Fill)
@@ -216,122 +262,6 @@ export struct CustomThemePreview {
   }
 
   @Builder
-  progressBar(percent: number) {
-    Stack({ alignContent: Alignment.Start }) {
-      Column()
-        .width(`${percent}%`)
-        .height('100%')
-        .borderRadius(2)
-        .backgroundColor(this.variant().colors.accentColor)
-    }
-    .width('100%')
-    .height(4)
-    .borderRadius(2)
-    .backgroundColor(this.variant().colors.dividerColor)
-  }
-
-  coverScale(): number {
-    return this.expanded ? 1.3 : 1;
-  }
-
-  @Builder
-  bookshelfPreview() {
-    Column({ space: AppSpacing.MD }) {
-      if (this.shelfLayout === 'tile') {
-        this.titleRow('书架', '最近阅读')
-        Row({ space: AppSpacing.LG }) {
-          ForEach(['山野来信', '长夜微光', '人间草木', '海上来客'], (name: string, index: number) => {
-            Column({ space: AppSpacing.XS }) {
-              this.coverTile(name, index, 52 * this.coverScale())
-              this.smallText(name, this.variant().colors.primaryTextColor)
-            }
-            .layoutWeight(1)
-          }, (name: string) => name)
-        }
-        .width('100%')
-      } else if (this.shelfLayout === 'loose') {
-        this.titleRow('书架', '')
-        ForEach(['山野来信', '长夜微光'], (name: string, index: number) => {
-          Row({ space: AppSpacing.LG }) {
-            this.coverTile(name, index, 40 * this.coverScale())
-            Column({ space: AppSpacing.XS }) {
-              Text(name)
-                .fontFamily(this.themePack.typography.appFontFamily)
-                .fontSize(AppFontSize.BODY)
-                .fontColor(this.variant().colors.primaryTextColor)
-              this.smallText(index === 0 ? '读到第十二章 · 38%' : '读到第三章 · 9%', this.variant().colors.subTextColor)
-              this.progressBar(index === 0 ? 38 : 9)
-            }
-            .layoutWeight(1)
-            .alignItems(HorizontalAlign.Start)
-          }
-          .width('100%')
-          .padding(AppSpacing.MD)
-          .borderRadius(this.themePack.radius.card)
-          .backgroundColor(this.variant().colors.cardColor)
-        }, (name: string) => name)
-      } else if (this.shelfLayout === 'compact') {
-        this.titleRow('书架', '')
-        Column() {
-          ForEach(['山野来信', '长夜微光', '人间草木'], (name: string, index: number) => {
-            Row({ space: AppSpacing.MD }) {
-              this.coverTile(name, index, 22 * this.coverScale())
-              Text(name)
-                .fontFamily(this.themePack.typography.appFontFamily)
-                .fontSize(AppFontSize.CAPTION)
-                .fontColor(this.variant().colors.primaryTextColor)
-                .layoutWeight(1)
-              this.smallText(index === 0 ? '38%' : (index === 1 ? '9%' : '72%'), this.variant().colors.subTextColor)
-            }
-            .width('100%')
-            .padding({ top: AppSpacing.XS, bottom: AppSpacing.XS })
-            .border({ width: { bottom: index < 2 ? 1 : 0 }, color: this.variant().colors.dividerColor })
-          }, (name: string) => name)
-        }
-        .width('100%')
-        .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
-        .borderRadius(this.themePack.radius.card)
-        .backgroundColor(this.variant().colors.cardColor)
-      } else {
-        Column({ space: AppSpacing.XXS }) {
-          this.titleRow('下午好', '')
-          this.smallText('今天读了 24 分钟', this.variant().colors.subTextColor)
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
-        Row({ space: AppSpacing.LG }) {
-          this.coverTile('山野来信', 0, 40 * this.coverScale())
-          Column({ space: AppSpacing.XS }) {
-            this.smallText('继续阅读', this.variant().colors.accentColor)
-            Text('山野来信')
-              .fontFamily(this.themePack.typography.appFontFamily)
-              .fontSize(AppFontSize.BODY)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(this.variant().colors.primaryTextColor)
-            this.progressBar(38)
-          }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.Start)
-        }
-        .width('100%')
-        .padding(AppSpacing.MD)
-        .borderRadius(this.themePack.radius.card)
-        .backgroundColor(this.variant().colors.cardColor)
-        Row({ space: AppSpacing.MD }) {
-          ForEach(['长夜微光', '人间草木', '海上来客', '雪国'], (name: string, index: number) => {
-            this.coverTile(name, index + 1, 32 * this.coverScale())
-          }, (name: string) => name)
-        }
-        .width('100%')
-      }
-    }
-    .width('100%')
-    .layoutWeight(1)
-    .alignItems(HorizontalAlign.Start)
-    .clip(true)
-  }
-
-  @Builder
   chip(label: string, active: boolean) {
     Text(label)
       .fontFamily(this.themePack.typography.appFontFamily)
@@ -346,7 +276,7 @@ export struct CustomThemePreview {
   @Builder
   bookRow(name: string, index: number, detail: string) {
     Row({ space: AppSpacing.MD }) {
-      this.coverTile(name, index, 28 * this.coverScale())
+      this.coverTile(name, index, this.expanded ? 36 : 28)
       Column({ space: AppSpacing.XXS }) {
         Text(name)
           .fontFamily(this.themePack.typography.appFontFamily)
@@ -465,7 +395,7 @@ export struct CustomThemePreview {
       ForEach(this.navigationTabs(), (tabId: string) => {
         Column({ space: 2 }) {
           Image(ThemeAssetRegistry.navigationIcon(this.themePack.navigation.iconPackId, tabId,
-            tabId === this.selectedTab()))
+            tabId === this.selectedTab(), this.previewDark))
             .width(this.hidesLabels() ? 26 : 20)
             .height(this.hidesLabels() ? 26 : 20)
             .fillColor(tabId === this.selectedTab() ? this.variant().colors.accentColor :
@@ -555,6 +485,37 @@ export struct CustomThemePreview {
     return size * (this.expanded ? 1 : 0.72);
   }
 
+  /** 示意正文的段首缩进：方案有自己的排版时按它的缩进字符数，否则两个字。 */
+  readerSampleText(): string {
+    const indent = this.useReaderProfile ? Math.max(0, Math.min(4, Math.round(this.readerSettings.paragraphIndent))) : 2;
+    return '　'.repeat(indent) + READER_SAMPLE_BODY;
+  }
+
+  readerBodyFontFamily(): string {
+    return this.useReaderProfile && this.readerSettings.bodyFontMode !== 'device' && this.readerSettings.bodyFontFamily ?
+      this.readerSettings.bodyFontFamily : this.themePack.typography.appFontFamily;
+  }
+
+  readerLineHeight(): number {
+    return this.readerFontSize() + (this.useReaderProfile ?
+      this.readerSettings.lineHeight : this.themePack.readerLayout.lineHeight) * 0.65;
+  }
+
+  readerLetterSpacing(): number {
+    return this.useReaderProfile ? this.readerSettings.letterSpacing : this.themePack.readerLayout.letterSpacing;
+  }
+
+  /** 方案这个模式的章首装饰（标题饰图、序号行颜色、首字）；没设时各字段为空。 */
+  chapterHead(): ThemePackageChapterHead {
+    return normalizeChapterHead(this.variant().regexEmphasis.chapterHead);
+  }
+
+  readerSampleAlign(): TextAlign {
+    if (!this.useReaderProfile) return TextAlign.JUSTIFY;
+    if (this.readerSettings.textAlign === 'start') return TextAlign.Start;
+    return this.readerSettings.textAlign === 'end' ? TextAlign.End : TextAlign.JUSTIFY;
+  }
+
   @Builder
   readerPreview() {
     Stack({ alignContent: Alignment.TopStart }) {
@@ -566,34 +527,55 @@ export struct CustomThemePreview {
           ThemeAssetRegistry.readerDecorationSignature(this.variant().reader.backgroundAssetId)
       })
       Column({ space: AppSpacing.MD }) {
-        Row() {
-          Text('山野来信')
-            .layoutWeight(1)
-            .fontSize(AppFontSize.MICRO)
-            .fontColor(this.variant().reader.subTextColor)
-          Text('第十二章')
-            .fontSize(AppFontSize.MICRO)
-            .fontColor(this.variant().reader.subTextColor)
+        // 方案有自己的排版时，页眉跟着它的开关显示。
+        if (!this.useReaderProfile || this.readerSettings.readerHeaderEnabled) {
+          Row() {
+            Text('山野来信')
+              .layoutWeight(1)
+              .fontSize(AppFontSize.MICRO)
+              .fontColor(this.variant().reader.subTextColor)
+            Text('第十二章')
+              .fontSize(AppFontSize.MICRO)
+              .fontColor(this.variant().reader.subTextColor)
+          }
+          .width('100%')
         }
-        .width('100%')
-        Text('风从山间来')
-          .fontFamily(this.themePack.typography.appFontFamily)
-          .fontSize(this.readerFontSize() + 2)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(this.variant().reader.textColor)
-          .width('100%')
-        Text('　　清晨的薄雾漫过山谷，窗外的树叶还带着昨夜的雨。远处，风把林间的消息，轻轻送到了窗前。')
-          .fontFamily(this.useReaderProfile && this.readerSettings.bodyFontMode !== 'device' &&
-            this.readerSettings.bodyFontFamily ? this.readerSettings.bodyFontFamily : this.themePack.typography.appFontFamily)
-          .fontSize(this.readerFontSize())
-          .lineHeight(this.readerFontSize() + (this.useReaderProfile ?
-            this.readerSettings.lineHeight : this.themePack.readerLayout.lineHeight) * 0.65)
-          .letterSpacing(this.useReaderProfile ? this.readerSettings.letterSpacing :
-            this.themePack.readerLayout.letterSpacing)
-          .fontColor(this.variant().reader.textColor)
-          .width('100%')
-          .maxLines(this.expanded ? 12 : 3)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        // 章首装饰按方案自己的画（相当于读者开着“标题装饰”和“首字装饰”）。
+        ThemeChapterHeadTitle({
+          head: this.chapterHead(),
+          numberText: '第十二章',
+          titleSize: this.readerFontSize() + 2,
+          fontFamily: this.themePack.typography.appFontFamily,
+          titleWeight: FontWeight.Medium
+        }) {
+          this.titleSample()
+        }
+        if (ThemeChapterHeadSampleMetrics.dropCapApplies(this.chapterHead(), READER_SAMPLE_BODY)) {
+          ThemeDropCapParagraph({
+            text: READER_SAMPLE_BODY,
+            head: this.chapterHead(),
+            fontSize: this.readerFontSize(),
+            lineHeight: this.readerLineHeight(),
+            fontFamily: this.readerBodyFontFamily(),
+            textColor: this.variant().reader.textColor,
+            letterSpacing: this.readerLetterSpacing(),
+            textAlign: this.readerSampleAlign(),
+            maxLines: this.expanded ? 12 : 3,
+            capFontFamily: this.themePack.typography.appFontFamily,
+            capFontWeight: FontWeight.Medium
+          })
+        } else {
+          Text(this.readerSampleText())
+            .textAlign(this.readerSampleAlign())
+            .fontFamily(this.readerBodyFontFamily())
+            .fontSize(this.readerFontSize())
+            .lineHeight(this.readerLineHeight())
+            .letterSpacing(this.readerLetterSpacing())
+            .fontColor(this.variant().reader.textColor)
+            .width('100%')
+            .maxLines(this.expanded ? 12 : 3)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
         this.emphasisSample()
       }
       .width('100%')
@@ -604,6 +586,20 @@ export struct CustomThemePreview {
         bottom: AppSpacing.LG
       })
       .alignItems(HorizontalAlign.Start)
+      if (this.useReaderProfile && this.readerSettings.readerFooterEnabled) {
+        Row() {
+          Text('风从山间来')
+            .layoutWeight(1)
+            .fontSize(AppFontSize.MICRO)
+            .fontColor(this.variant().reader.subTextColor)
+          Text('3 / 18')
+            .fontSize(AppFontSize.MICRO)
+            .fontColor(this.variant().reader.subTextColor)
+        }
+        .width('100%')
+        .padding({ left: this.readerSettings.marginLeft, right: this.readerSettings.marginRight })
+        .position({ left: 0, bottom: AppSpacing.SM })
+      }
     }
     .width('100%')
     .height('100%')
@@ -612,6 +608,165 @@ export struct CustomThemePreview {
   /** 强调示例按方案实际的强调方式、气泡样式与端饰绘制，和主题详情页的阅读页预览同一套解析。 */
   @Builder
   emphasisSample() {
+    if (this.emphasisFrame()) {
+      // 包内气泡有边框：文字行内的 Span 画不出逐行拉伸的边框，改用和编辑器小样同一套画法。
+      ThemeBubbleFramePreview({
+        uri: this.emphasisFrame()?.asset ?? '',
+        capUri: this.emphasisCapUri(),
+        settings: this.emphasisFrameSettings(),
+        leadText: '她在扉页写下：',
+        emphasisText: '把时光，留给阅读',
+        textColor: this.emphasisStyle().textColor,
+        bubbleColor: this.emphasisStyle().backgroundColor,
+        paperColor: '#00000000',
+        normalTextColor: this.variant().reader.textColor,
+        fontSize: this.readerFontSize(),
+        lineHeight: this.readerFontSize() * 1.8,
+        fontFamily: this.themePack.typography.appFontFamily,
+        indentChars: 0,
+        paddingX: 0,
+        paddingY: 0,
+        cornerRadius: 0
+      })
+    } else {
+      this.emphasisTextSample()
+    }
+  }
+
+  /** 章节标题按方案的标题强调画（相当于读者选了“跟随主题”）；主题不设置时就是普通标题。 */
+  @Builder
+  titleSample() {
+    if (!this.titleStyle()) {
+      Text('风从山间来')
+        .fontFamily(this.themePack.typography.appFontFamily)
+        .fontSize(this.readerFontSize() + 2)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.variant().reader.textColor)
+        .width('100%')
+    } else if (this.titleFrame()) {
+      ThemeBubbleFramePreview({
+        uri: this.titleFrame()?.asset ?? '',
+        capUri: this.titleCapUri(),
+        settings: this.frameSettingsOf(this.titleFrame()),
+        leadText: '',
+        emphasisText: '风从山间来',
+        textColor: (this.titleStyle() as ReaderResolvedRegexEmphasis).textColor,
+        bubbleColor: (this.titleStyle() as ReaderResolvedRegexEmphasis).backgroundColor,
+        paperColor: '#00000000',
+        normalTextColor: this.variant().reader.textColor,
+        fontSize: this.readerFontSize() + 2,
+        lineHeight: (this.readerFontSize() + 2) * 1.8,
+        fontFamily: this.themePack.typography.appFontFamily,
+        indentChars: 0,
+        paddingX: 0,
+        paddingY: 0,
+        cornerRadius: 0
+      })
+    } else {
+      Text() {
+        if ((this.titleStyle() as ReaderResolvedRegexEmphasis).bubbleDecorationEnabled && this.titleCapUri()) {
+          ContainerSpan() {
+            ImageSpan(this.titleCapUri())
+              .width(this.readerFontSize() + 2)
+              .height(this.readerFontSize() + 2)
+              .objectFit(ImageFit.Contain)
+              .verticalAlign(ImageSpanAlignment.CENTER)
+            Span('风从山间来')
+              .fontColor((this.titleStyle() as ReaderResolvedRegexEmphasis).textColor)
+            ImageSpan(this.titleCapUri())
+              .width(this.readerFontSize() + 2)
+              .height(this.readerFontSize() + 2)
+              .objectFit(ImageFit.Contain)
+              .verticalAlign(ImageSpanAlignment.CENTER)
+              .rotate({ angle: 180 })
+          }
+          .textBackgroundStyle(this.backgroundOf(this.titleStyle() as ReaderResolvedRegexEmphasis))
+        } else {
+          ContainerSpan() {
+            Span('风从山间来')
+              .fontColor((this.titleStyle() as ReaderResolvedRegexEmphasis).textColor)
+          }
+          .textBackgroundStyle(this.backgroundOf(this.titleStyle() as ReaderResolvedRegexEmphasis))
+        }
+      }
+      .fontFamily(this.themePack.typography.appFontFamily)
+      .fontSize(this.readerFontSize() + 2)
+      .fontWeight(FontWeight.Medium)
+      .lineHeight((this.readerFontSize() + 2) * 1.8)
+      .width('100%')
+    }
+  }
+
+  /** 方案这个模式的标题强调解析结果；不设置时为 null。 */
+  titleStyle(): ReaderResolvedRegexEmphasis | null {
+    const variant = this.variant();
+    const rule = new ReaderRegexFontRule();
+    rule.emphasisMode = ReaderTitleEmphasis.THEME;
+    const plan = ReaderTitleEmphasis.plan(rule, variant.regexEmphasis.title, this.emphasisContext());
+    return plan ? ReaderRegexBubbleStyleResolver.resolve(plan.rule, plan.context, false) : null;
+  }
+
+  titleFrame(): ResolvedBubbleFrame | null {
+    const style = this.titleStyle();
+    if (!style || !style.bubbleDecorationEnabled) return null;
+    return ThemePackRegistry.bubbleFrame(style.bubbleStyleId, this.previewDark);
+  }
+
+  titleCapUri(): string {
+    const style = this.titleStyle();
+    if (!style || !ThemeAssetRegistry.hasRegexBubbleCap(style.bubbleStyleId, this.previewDark)) return '';
+    const cap = ThemeAssetRegistry.regexBubbleCap(style.bubbleStyleId, this.previewDark);
+    return typeof cap === 'string' ? cap : '';
+  }
+
+  frameSettingsOf(frame: ResolvedBubbleFrame | null): ThemePackageBubble {
+    const settings = new ThemePackageBubble();
+    if (!frame) return settings;
+    settings.frameSlice = frame.slice;
+    settings.frameRepeat = frame.round ? BubbleFrameRepeat.ROUND : '';
+    settings.frameBreak = frame.cut ? BubbleFrameBreak.CUT : '';
+    settings.frameTint = frame.tint;
+    return settings;
+  }
+
+  backgroundOf(style: ReaderResolvedRegexEmphasis): TextBackgroundStyle {
+    if (!style.backgroundEnabled) return {};
+    return {
+      color: style.backgroundColor,
+      radius: {
+        topLeft: style.radiusTopLeft,
+        topRight: style.radiusTopRight,
+        bottomLeft: style.radiusBottomLeft,
+        bottomRight: style.radiusBottomRight
+      }
+    };
+  }
+
+  /** 方案的强调用的是包内气泡且包里有边框时给出边框；只在气泡模式下画。 */
+  emphasisFrame(): ResolvedBubbleFrame | null {
+    if (this.emphasisStyle().mode === 'none' || !this.emphasisStyle().bubbleDecorationEnabled) return null;
+    return ThemePackRegistry.bubbleFrame(this.variant().regexEmphasis.bubbleStyle, this.previewDark);
+  }
+
+  emphasisCapUri(): string {
+    if (!this.hasBubbleCap()) return '';
+    const cap = ThemeAssetRegistry.regexBubbleCap(this.variant().regexEmphasis.bubbleStyle, this.previewDark);
+    return typeof cap === 'string' ? cap : '';
+  }
+
+  emphasisFrameSettings(): ThemePackageBubble {
+    const settings = new ThemePackageBubble();
+    const frame = this.emphasisFrame();
+    if (!frame) return settings;
+    settings.frameSlice = frame.slice;
+    settings.frameRepeat = frame.round ? BubbleFrameRepeat.ROUND : '';
+    settings.frameBreak = frame.cut ? BubbleFrameBreak.CUT : '';
+    settings.frameTint = frame.tint;
+    return settings;
+  }
+
+  @Builder
+  emphasisTextSample() {
     Text() {
       Span('她在扉页写下：')
         .fontColor(this.variant().reader.textColor)
@@ -620,7 +775,7 @@ export struct CustomThemePreview {
           .fontColor(this.variant().reader.textColor)
       } else if (this.emphasisStyle().bubbleDecorationEnabled && this.hasBubbleCap()) {
         ContainerSpan() {
-          ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.variant().regexEmphasis.bubbleStyle))
+          ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.variant().regexEmphasis.bubbleStyle, this.previewDark))
             .width(this.readerFontSize())
             .height(this.readerFontSize())
             .objectFit(ImageFit.Contain)
@@ -628,7 +783,7 @@ export struct CustomThemePreview {
           Span('把时光，留给阅读')
             .fontColor(this.emphasisStyle().textColor)
             .textShadow(this.emphasisShadow())
-          ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.variant().regexEmphasis.bubbleStyle))
+          ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.variant().regexEmphasis.bubbleStyle, this.previewDark))
             .width(this.readerFontSize())
             .height(this.readerFontSize())
             .objectFit(ImageFit.Contain)
@@ -653,6 +808,11 @@ export struct CustomThemePreview {
   }
 
   emphasisStyle(): ReaderResolvedRegexEmphasis {
+    // 预览画的是方案自己选的气泡，权益检查留给阅读页。
+    return ReaderRegexBubbleStyleResolver.resolve(null, this.emphasisContext(), false);
+  }
+
+  emphasisContext(): ReaderRegexEmphasisContext {
     const variant = this.variant();
     const context = new ReaderRegexEmphasisContext();
     context.inheritedMode = variant.regexEmphasis.emphasisMode;
@@ -663,12 +823,11 @@ export struct CustomThemePreview {
     context.surfaceColor = variant.reader.backgroundColor;
     context.normalTextColor = variant.reader.textColor;
     context.darkMode = variant.reader.contentTone === 'dark';
-    // 预览画的是方案自己选的气泡，权益检查留给阅读页。
-    return ReaderRegexBubbleStyleResolver.resolve(null, context, false);
+    return context;
   }
 
   hasBubbleCap(): boolean {
-    return ThemeAssetRegistry.hasRegexBubbleCap(this.variant().regexEmphasis.bubbleStyle);
+    return ThemeAssetRegistry.hasRegexBubbleCap(this.variant().regexEmphasis.bubbleStyle, this.previewDark);
   }
 
   emphasisBackground(): TextBackgroundStyle {

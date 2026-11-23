@@ -4,6 +4,8 @@ import zlib from '@ohos.zlib';
 import util from '@ohos.util';
 import preferences from '@ohos.data.preferences';
 import { Context } from '@kit.AbilityKit';
+import { ReadStatsFold } from '../core/stats/ReadStatsFold';
+import { ReadWorkIdentity } from '../core/stats/ReadStatsSummary';
 import { statfs } from '@kit.CoreFileKit';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { Book, BookGroup, Bookmark, BookSource, BookListRule, SearchRule, ExploreRule, BookInfoRule, TocRule, ContentRule, HttpTTS, ReadConfig, SearchKeyword } from '@legado/sourceengine';
@@ -162,6 +164,7 @@ export class AppDataBackupService {
     'custom_theme_schemes',
     'immersive_light_settings',
     'opds_settings',
+    'read_stats_merges',
     'reader_replace_rules',
     'reader_settings',
     'search_explore_settings',
@@ -740,7 +743,7 @@ export class AppDataBackupService {
 
     if (selection.progress) {
       AppDataBackupService.reportProgress(onProgress, '正在导入 Android 阅读记录...', 76);
-      result.readRecords = await AppDataBackupService.importAndroidReadRecords(db, session.rootPath);
+      result.readRecords = await AppDataBackupService.importAndroidReadRecords(context, db, session.rootPath);
     }
 
     if (selection.settings &&
@@ -773,7 +776,22 @@ export class AppDataBackupService {
     return result;
   }
 
-  private static async importAndroidReadRecords(db: AppDatabase, root: string): Promise<number> {
+  /** 安卓手机上的本地封面（自己选的图、content:// 地址）在本机读不到，不带过来，书按没有这张封面处理。 */
+  private static androidPortableCover(cover: string): string {
+    return /^\s*(\/|file:|content:)/i.test(cover) ? '' : cover;
+  }
+
+  /** 书架上书源不在本机的网络书本数：导入后据此提示自动换源。 */
+  static async countBooksWithoutSource(context: Context): Promise<number> {
+    const db = AppDatabase.getInstance();
+    await db.initWithContext(context);
+    const known = await db.getBookSourceAddedTimes();
+    const books = await db.getAllBooks();
+    return books.filter((book: Book): boolean =>
+      !!book.bookUrl && !LocalBookService.isLocalBook(book) && !known.has(book.origin)).length;
+  }
+
+  private static async importAndroidReadRecords(context: Context, db: AppDatabase, root: string): Promise<number> {
     const importer = new AndroidReadRecordImport();
     for (const file of AppDataBackupService.ANDROID_READ_RECORD_FILES) {
       await AppDataBackupService.forEachAndroidJsonArray(root, file, AppDataBackupService.ANDROID_MAX_DATA_BYTES,
@@ -786,13 +804,29 @@ export class AppDataBackupService {
     const records = importer.records();
     if (records.length === 0) return 0;
     const books = await db.getAllBooks();
-    const byName: Map<string, Book> = new Map<string, Book>();
+    // 备份里的书名可能和书架上的只差简繁或全半角，按统计页归并同一套写法来对。
+    const fold = await ReadStatsFold.load(context);
+    const byWork: Map<string, Book> = new Map<string, Book>();
+    const byTitle: Map<string, Book[]> = new Map<string, Book[]>();
     for (const book of books) {
-      const key = JSON.stringify([book.name.trim(), book.author.trim()]);
-      if (!byName.has(key)) byName.set(key, book);
+      const name = ReadWorkIdentity.text(book.name, fold);
+      const key = ReadWorkIdentity.workKey(name, ReadWorkIdentity.text(book.author, fold));
+      if (!byWork.has(key)) byWork.set(key, book);
+      const sameTitle = byTitle.get(name);
+      if (sameTitle) sameTitle.push(book);
+      else byTitle.set(name, [book]);
     }
     for (const record of records) {
-      const book = byName.get(JSON.stringify([record.name, record.author]));
+      const name = ReadWorkIdentity.text(record.name, fold);
+      const author = ReadWorkIdentity.text(record.author, fold);
+      let book = byWork.get(ReadWorkIdentity.workKey(name, author));
+      if (!book) {
+        // 有一边没留作者时，只在书架上同名的书恰好一本才认作同一本。
+        const sameTitle = byTitle.get(name) || [];
+        if (sameTitle.length === 1 && (!author || !ReadWorkIdentity.text(sameTitle[0].author, fold))) {
+          book = sameTitle[0];
+        }
+      }
       record.bookUrl = book?.bookUrl ||
         `android-history://${encodeURIComponent(record.name)}/${encodeURIComponent(record.author)}`;
       await db.restoreAndroidReadStats(record, record.name, record.author);
@@ -1063,8 +1097,10 @@ export class AppDataBackupService {
     book.kind = AppDataBackupService.limitedStringValue(raw['kind'], 4096);
     book.status = AppDataBackupService.limitedStringValue(raw['status'], 4096);
     book.customTag = AppDataBackupService.limitedStringValue(raw['customTag'], 4096);
-    book.coverUrl = AppDataBackupService.limitedStringValue(raw['coverUrl'], 16384);
-    book.customCoverUrl = AppDataBackupService.limitedStringValue(raw['customCoverUrl'], 16384);
+    book.coverUrl = AppDataBackupService.androidPortableCover(
+      AppDataBackupService.limitedStringValue(raw['coverUrl'], 16384));
+    book.customCoverUrl = AppDataBackupService.androidPortableCover(
+      AppDataBackupService.limitedStringValue(raw['customCoverUrl'], 16384));
     book.intro = AppDataBackupService.limitedStringValue(raw['intro'], 65536);
     book.customIntro = AppDataBackupService.limitedStringValue(raw['customIntro'], 65536);
     book.charset = AppDataBackupService.limitedStringValue(raw['charset'], 128);
@@ -1179,6 +1215,7 @@ export class AppDataBackupService {
     voice.customOrder = AppDataBackupService.numberValue(raw['customOrder'], 0);
     voice.lastUpdateTime = AppDataBackupService.numberValue(raw['lastUpdateTime'], 0);
     voice.enabled = raw['enabled'] !== false && AppDataBackupService.stringValue(raw['enabled']) !== 'false';
+    voice.speedMode = AppDataBackupService.stringValue(raw['speedMode']).trim().toLowerCase();
     return voice;
   }
 

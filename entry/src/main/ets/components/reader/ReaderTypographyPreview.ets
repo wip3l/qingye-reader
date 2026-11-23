@@ -36,6 +36,7 @@ class ReaderTypographyPreviewNode extends ReaderV2PageFrameNode {
   onMeasure(constraint: LayoutConstraint): void {
     const input = JSON.parse(JSON.stringify(this.config.input)) as ReaderV2LayoutInput;
     input.commentBubble = this.config.input.commentBubble;
+    input.chapterHead = this.config.input.chapterHead;
     input.viewportWidthPx = Math.max(1, constraint.maxSize.width);
     input.viewportHeightPx = Math.max(1, this.context.vp2px(this.config.viewportHeightVp));
     // Match the sub-pixel width correction used by ReadBook.getReaderAdaptiveLetterSpacing.
@@ -140,7 +141,7 @@ export struct ReaderTypographyPreview {
       Stack({ alignContent: Alignment.TopStart }) {
         ForEach(this.capSegments, (segment: ReaderV2RegexBubbleSegment) => {
           ReaderV2RegexBubbleCapImages(segment, this.getUIContext())
-        }, (segment: ReaderV2RegexBubbleSegment) => `${segment.styleId}_${segment.rect.left}_${segment.rect.top}_` +
+        }, (segment: ReaderV2RegexBubbleSegment) => `${segment.styleId}_${segment.capDark ? 1 : 0}_${segment.rect.left}_${segment.rect.top}_` +
           `${segment.rect.right}_${segment.rect.bottom}_${segment.capSizePx}_${segment.leadingCapWidthPx}_` +
           `${segment.trailingCapWidthPx}_${segment.leading}_${segment.trailing}`)
       }

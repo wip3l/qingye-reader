@@ -42,8 +42,10 @@ export struct ImmersiveHeaderAction {
             .fontColor(this.contentColor())
             .maxLines(1)
         } else {
+          // 字号、字重与 ImmersiveBackButton 的默认图标一致，左右两侧的圆钮看起来才一样大。
           SymbolGlyph(this.icon)
-            .fontSize(20)
+            .fontSize(22)
+            .fontWeight(FontWeight.Medium)
             .fontColor([this.contentColor()])
         }
       }

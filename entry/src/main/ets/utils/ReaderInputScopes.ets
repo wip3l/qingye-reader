@@ -11,7 +11,7 @@ export class ReaderInputKind {
 }
 
 /**
- * 按阅读类型生效的全局设置：音量键翻页、智控键翻页、翻页震感。每项存一个类型位掩码，0 即关闭。
+ * 按阅读类型生效的全局设置：音量键翻页、智控键翻页、手表翻页、翻页震感。每项存一个类型位掩码，0 即关闭。
  * 存在 reader_settings 里但不进主题档案，换主题不变，随数据备份一起走。
  * 设置页“阅读通用”里按类型多选；各阅读页面板里的开关只改自己那一类。
  */
@@ -19,13 +19,15 @@ export class ReaderInputScopes {
   static readonly KEY_VOLUME_TURN: string = 'readerVolumeTurnScope';
   static readonly KEY_SMART_KEY_TURN: string = 'readerSmartKeyTurnScope';
   static readonly KEY_PAGE_TURN_HAPTICS: string = 'readerPageTurnHapticsScope';
+  /** 与 WatchRemoteBridge.KEY_SCOPE 相同。 */
+  static readonly KEY_WATCH_TURN: string = 'readerWatchTurnScope';
   private static readonly STORE_NAME: string = 'reader_settings';
   private static readonly KEYS: string[] = [ReaderInputScopes.KEY_VOLUME_TURN, ReaderInputScopes.KEY_SMART_KEY_TURN,
-    ReaderInputScopes.KEY_PAGE_TURN_HAPTICS];
+    ReaderInputScopes.KEY_PAGE_TURN_HAPTICS, ReaderInputScopes.KEY_WATCH_TURN];
   // 旧版的布尔开关：音量键、智控键原先跟主题档案走（当前档案的值同时写在这两个键上），震感原先就是全局布尔。
-  // 第一次读取时开着的迁移成三类全开，关着的全关，之后不再读。
+  // 第一次读取时开着的迁移成三类全开，关着的全关，之后不再读。手表翻页没有旧开关，默认关。
   private static readonly LEGACY_KEYS: string[] = ['readerVolumeTurnPage', 'readerSmartKeyTurnPage',
-    'readerPageTurnHaptics'];
+    'readerPageTurnHaptics', ''];
   private static loading: Promise<void> | null = null;
 
   /** 读入 AppStorage；重复调用共用同一次读取。 */
@@ -49,8 +51,8 @@ export class ReaderInputScopes {
         scope = ReaderInputScopes.normalize(Number(await store.get(key, 0)));
       } else {
         const legacyKey = ReaderInputScopes.LEGACY_KEYS[i];
-        const legacy = (await store.has(legacyKey)) ? (await store.get(legacyKey, false)) === true :
-          AppStorage.get<boolean>(legacyKey) === true;
+        const legacy = legacyKey === '' ? false : (await store.has(legacyKey)) ?
+          (await store.get(legacyKey, false)) === true : AppStorage.get<boolean>(legacyKey) === true;
         scope = legacy ? ReaderInputKind.ALL : 0;
         await store.put(key, scope);
         migrated = true;

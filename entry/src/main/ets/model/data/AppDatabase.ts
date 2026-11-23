@@ -1,5 +1,6 @@
 import { ReaderCacheCoordinator } from '../../core/book/ReaderCacheCoordinator';
 import { ReaderImageReferences } from '../../core/book/ReaderImageReferences';
+import { CachedChapterAssignment, CachedChapterRealign, CachedChapterRow, ChapterBookmarkSlot } from '../../core/book/CachedChapterRealign';
 import relationalStore from '@ohos.data.relationalStore';
 import fs from '@ohos.file.fs';
 import { Book, BookChapter, BookSource, BookGroup, Bookmark, SearchKeyword, ExploreRule, TocRule, ContentRule,
@@ -9,7 +10,10 @@ import { util } from '@kit.ArkTS';
 import { CloudSyncChangeTracker } from '../../account/CloudSyncChangeTracker';
 import { BookAnnotation, BookAnnotationStyles } from '../reader/BookAnnotation';
 import { BookMark, BookMarkRules } from '../book/BookMark';
+import { SourceGroupName } from '../../utils/SourceGroupName';
 import { BookIdentity } from '../../utils/BookIdentity';
+import { BookReadStatsRecord } from '../../core/stats/BookReadStats';
+import { TicketStatsRow } from '../../core/ticket/ReadingTicket';
 import { ReadStatsPendingUpload, ReadStatsSyncPayload, ReadStatsSyncChange,
   ReadStatsSyncAck } from '../../core/stats/ReadStatsSyncModels';
 
@@ -129,6 +133,8 @@ export class ReadStatsRow {
   dayKey: string = '';
   bookUrl: string = '';
   durationMs: number = 0;
+  /** 这一天这本书最后一次阅读的时间；旧版迁移来的记录可能是 0。 */
+  lastReadAt: number = 0;
 }
 
 export class ReadStatsDeviceOption {
@@ -486,6 +492,8 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       await this.setSchemaVersion(this.SCHEMA_VERSION);
     }
     await this.createIndexes();
+    // 不等：首次建要扫全表，用到这些索引的查询自己会等。
+    this.ensureContentIndexes();
   }
 
   private async createIndexes(): Promise<void> {
@@ -1604,6 +1612,24 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     return book;
   }
 
+  /** 只取 bookUrl 列，用于判断一批远程文件是否已在书架（如 WebDAV 列表里的“已在书架”）。 */
+  async getBookUrlsWithPrefix(prefix: string): Promise<string[]> {
+    if (!this.store || !prefix) return [];
+    const predicates = new relationalStore.RdbPredicates('books');
+    predicates.beginsWith('bookUrl', prefix);
+    const resultSet = await this.store.query(predicates, ['bookUrl']);
+    const urls: string[] = [];
+    try {
+      const column = resultSet.getColumnIndex('bookUrl');
+      while (resultSet.goToNextRow()) {
+        urls.push(resultSet.getString(column));
+      }
+    } finally {
+      resultSet.close();
+    }
+    return urls;
+  }
+
   async getAllBooks(): Promise<Book[]> {
     if (!this.store) return [];
     const predicates = new relationalStore.RdbPredicates('books');
@@ -1938,7 +1964,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       bookSourceUrl: source.bookSourceUrl,
       bookSourceName: source.bookSourceName,
       bookSourceType: source.bookSourceType,
-      bookSourceGroup: source.bookSourceGroup,
+      bookSourceGroup: SourceGroupName.clean(source.bookSourceGroup),
       bookSourceComment: source.bookSourceComment,
       loginUrl: source.loginUrl,
       loginUi: source.loginUi,
@@ -2026,7 +2052,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       bookSourceUrl: source.bookSourceUrl,
       bookSourceName: source.bookSourceName,
       bookSourceType: source.bookSourceType,
-      bookSourceGroup: source.bookSourceGroup,
+      bookSourceGroup: SourceGroupName.clean(source.bookSourceGroup),
       bookSourceComment: source.bookSourceComment,
       loginUrl: source.loginUrl,
       loginUi: source.loginUi,
@@ -2164,7 +2190,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       bookSourceUrl: source.bookSourceUrl,
       bookSourceName: source.bookSourceName,
       bookSourceType: source.bookSourceType,
-      bookSourceGroup: source.bookSourceGroup,
+      bookSourceGroup: SourceGroupName.clean(source.bookSourceGroup),
       bookSourceComment: source.bookSourceComment,
       loginUrl: source.loginUrl,
       loginUi: source.loginUi,
@@ -2294,7 +2320,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
         source.sourceFormat = this.getStringColumn(resultSet, 'jsLibHead') === NATIVE_SOURCE_JSLIB_HEAD ? 'native' : '';
         source.bookSourceUrl = resultSet.getString(resultSet.getColumnIndex('bookSourceUrl'));
         source.bookSourceName = resultSet.getString(resultSet.getColumnIndex('bookSourceName'));
-        source.bookSourceGroup = resultSet.getString(resultSet.getColumnIndex('bookSourceGroup'));
+        source.bookSourceGroup = SourceGroupName.clean(resultSet.getString(resultSet.getColumnIndex('bookSourceGroup')));
         source.loginUrl = resultSet.getString(resultSet.getColumnIndex('loginUrl'));
         source.loginUi = resultSet.getString(resultSet.getColumnIndex('loginUi'));
         source.loginCheckJs = resultSet.getString(resultSet.getColumnIndex('loginCheckJs'));
@@ -2320,7 +2346,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     if (!this.store) return;
     if (await this.isBookSourceLocked(bookSourceUrl)) return;
     const bucket: relationalStore.ValuesBucket = {};
-    if (fields['bookSourceGroup'] !== undefined) bucket['bookSourceGroup'] = fields['bookSourceGroup'];
+    if (fields['bookSourceGroup'] !== undefined) bucket['bookSourceGroup'] = SourceGroupName.clean(String(fields['bookSourceGroup']));
     if (fields['enabled'] !== undefined) bucket['enabled'] = fields['enabled'];
     if (fields['enabledExplore'] !== undefined) bucket['enabledExplore'] = fields['enabledExplore'];
     if (fields['customOrder'] !== undefined) bucket['customOrder'] = fields['customOrder'];
@@ -2398,7 +2424,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     if (!this.store || !bookSourceUrl) return;
     const predicates = new relationalStore.RdbPredicates('book_sources');
     predicates.equalTo('bookSourceUrl', bookSourceUrl);
-    await this.store.update({ bookSourceGroup: groupName, lastUpdateTime: Date.now() }, predicates);
+    await this.store.update({ bookSourceGroup: SourceGroupName.clean(groupName), lastUpdateTime: Date.now() }, predicates);
     CloudSyncChangeTracker.markBookSourceChanged();
   }
 
@@ -2418,6 +2444,28 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     await this.store.update({
       validationStatus: this.normalizeBookSourceValidationStatus(validationStatus)
     }, predicates);
+  }
+
+  /** 批量写校验状态：同一状态的书源合成一条 UPDATE，批量校验不必每个书源各写一次库。 */
+  async updateBookSourceValidationStatuses(statusByUrl: Map<string, number>): Promise<void> {
+    if (!this.store || statusByUrl.size === 0) return;
+    const urlsByStatus = new Map<number, string[]>();
+    statusByUrl.forEach((status: number, url: string): void => {
+      if (!url) return;
+      const normalized = this.normalizeBookSourceValidationStatus(status);
+      const urls = urlsByStatus.get(normalized);
+      if (urls) urls.push(url);
+      else urlsByStatus.set(normalized, [url]);
+    });
+    const chunkSize = 200;
+    for (const entry of urlsByStatus.entries()) {
+      const urls = entry[1];
+      for (let start = 0; start < urls.length; start += chunkSize) {
+        const predicates = new relationalStore.RdbPredicates('book_sources');
+        predicates.in('bookSourceUrl', urls.slice(start, start + chunkSize));
+        await this.store.update({ validationStatus: entry[0] }, predicates);
+      }
+    }
   }
 
   /** Runtime source variables (for mirror selection/login actions) remain writable for locked rule definitions. */
@@ -2520,7 +2568,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     source.bookSourceUrl = this.getStringColumn(resultSet, 'bookSourceUrl');
     source.bookSourceName = this.getStringColumn(resultSet, 'bookSourceName');
     source.bookSourceType = this.getLongColumn(resultSet, 'bookSourceType');
-    source.bookSourceGroup = this.getStringColumn(resultSet, 'bookSourceGroup');
+    source.bookSourceGroup = SourceGroupName.clean(this.getStringColumn(resultSet, 'bookSourceGroup'));
     source.bookSourceComment = this.getStringColumn(resultSet, 'bookSourceComment');
     source.loginUrl = this.getStringColumn(resultSet, 'loginUrl');
     source.loginUi = this.getStringColumn(resultSet, 'loginUi');
@@ -2789,18 +2837,187 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     return lengths;
   }
 
-  async getCachedChapterContent(bookUrl: string, chapterIndex: number): Promise<string> {
+  /**
+   * 传入 expected 时核对这一行记下的章节地址/章名：对不上（目录挪过、用的是临时通用目录）就当没缓存，
+   * 免得把别的章节正文配到这一章的标题下。
+   */
+  async getCachedChapterContent(bookUrl: string, chapterIndex: number,
+    expected: BookChapter | null = null): Promise<string> {
     if (!this.store) return '';
     const predicates = new relationalStore.RdbPredicates('book_contents');
     predicates.equalTo('bookUrl', bookUrl);
     predicates.equalTo('chapterIndex', chapterIndex);
-    const resultSet = await this.store.query(predicates, ['content']);
+    const resultSet = await this.store.query(predicates, expected ? ['content', 'chapterUrl', 'chapterName'] : ['content']);
     try {
       if (!resultSet.goToFirstRow()) return '';
+      if (expected && !CachedChapterRealign.matches(resultSet.getString(resultSet.getColumnIndex('chapterUrl')) || '',
+        resultSet.getString(resultSet.getColumnIndex('chapterName')) || '', expected)) {
+        console.warn('[AppDatabase] cached content belongs to another chapter, ignore:', chapterIndex);
+        return '';
+      }
       return resultSet.getString(resultSet.getColumnIndex('content')) || '';
     } finally {
       resultSet.close();
     }
+  }
+
+  /**
+   * 目录换新后把已缓存正文挪到新序号，规则见 CachedChapterRealign；对不上的行连同图片引用一起删掉。
+   * 挪动先换成负数临时序号再翻回来，避开 (bookUrl, chapterIndex) 主键冲突。
+   */
+  async realignCachedChapterContents(bookUrl: string, chapters: BookChapter[]): Promise<void> {
+    if (!this.store || !bookUrl) return;
+    await ReaderCacheCoordinator.run(async (): Promise<void> => {
+      if (!this.store) return;
+      const transaction = await this.store.createTransaction();
+      try {
+        const rows: CachedChapterRow[] = [];
+        const rs = await transaction.querySql(
+          'SELECT chapterIndex,chapterUrl,chapterName FROM book_contents WHERE bookUrl=?', [bookUrl]);
+        try {
+          while (rs.goToNextRow()) {
+            rows.push({ index: rs.getLong(0), url: rs.getString(1) || '', title: rs.getString(2) || '' });
+          }
+        } finally {
+          rs.close();
+        }
+        const plan = CachedChapterRealign.plan(rows, chapters);
+        if (plan.isUnchanged()) {
+          await transaction.commit();
+          return;
+        }
+        for (const index of plan.drops) {
+          for (const table of ['book_contents', 'reader_image_refs']) {
+            await transaction.execute('DELETE FROM ' + table + ' WHERE bookUrl=? AND chapterIndex=?', [bookUrl, index]);
+          }
+        }
+        let moved = false;
+        for (const item of plan.assignments) {
+          if (item.from === item.to) continue;
+          moved = true;
+          // cacheRevision 跟着加一：容量清理按 (序号, 版本) 删行，不能删到挪进来的另一章。
+          await transaction.execute('UPDATE book_contents SET chapterIndex=?,cacheRevision=cacheRevision+1 ' +
+            'WHERE bookUrl=? AND chapterIndex=?', [-1 - item.to, bookUrl, item.from]);
+          await transaction.execute('UPDATE reader_image_refs SET chapterIndex=? WHERE bookUrl=? AND chapterIndex=?',
+            [-1 - item.to, bookUrl, item.from]);
+        }
+        if (moved) {
+          for (const table of ['book_contents', 'reader_image_refs']) {
+            await transaction.execute('UPDATE ' + table + ' SET chapterIndex=-1-chapterIndex WHERE bookUrl=? AND chapterIndex<0',
+              [bookUrl]);
+          }
+        }
+        for (const item of plan.assignments) {
+          if (!item.relabel) continue;
+          await transaction.execute('UPDATE book_contents SET chapterUrl=?,chapterName=? WHERE bookUrl=? AND chapterIndex=?',
+            [item.url, item.title, bookUrl, item.to]);
+        }
+        await transaction.commit();
+        console.info('[AppDatabase] realigned cached chapters:', bookUrl, 'moved',
+          plan.assignments.filter(item => item.from !== item.to).length, 'dropped', plan.drops.length);
+      } catch (e) {
+        await transaction.rollback();
+        throw e as Error;
+      }
+    });
+  }
+
+  /**
+   * 目录换新后书签、划线跟着章节挪，章名换成新目录里的。两张表只记了章名，对位规则见 CachedChapterRealign.markRows。
+   * 对不上的留在原处、不删：这是用户自己记下的东西。书签挪过去会撞上同页书签时也留在原处。返回是否改了库。
+   */
+  async realignChapterMarks(bookUrl: string, previous: BookChapter[], chapters: BookChapter[]): Promise<boolean> {
+    if (!this.store || !bookUrl || chapters.length === 0) return false;
+    const transaction = await this.store.createTransaction();
+    let changed = false;
+    try {
+      const titles: Map<number, string> = new Map();
+      const bookmarks: ChapterBookmarkSlot[] = [];
+      const bookmarkNames: Map<number, string> = new Map();
+      const bookmarkRows = await transaction.querySql(
+        'SELECT id,chapterIndex,chapterName,pageIndex FROM bookmarks WHERE bookUrl=?', [bookUrl]);
+      try {
+        while (bookmarkRows.goToNextRow()) {
+          const index = bookmarkRows.getLong(1);
+          const name = bookmarkRows.getString(2) || '';
+          bookmarks.push({ id: bookmarkRows.getLong(0), index: index, page: bookmarkRows.getLong(3) });
+          bookmarkNames.set(bookmarkRows.getLong(0), name);
+          if (!titles.has(index)) titles.set(index, name);
+        }
+      } finally {
+        bookmarkRows.close();
+      }
+      const annotationNames: Map<number, string> = new Map();
+      const annotationRows = await transaction.querySql(
+        'SELECT DISTINCT chapterIndex,chapterName FROM book_annotations WHERE bookUrl=?', [bookUrl]);
+      try {
+        while (annotationRows.goToNextRow()) {
+          const index = annotationRows.getLong(0);
+          const name = annotationRows.getString(1) || '';
+          if (!annotationNames.has(index)) annotationNames.set(index, name);
+          if (!titles.has(index)) titles.set(index, name);
+        }
+      } finally {
+        annotationRows.close();
+      }
+      const assignments: Map<number, CachedChapterAssignment> = new Map();
+      if (titles.size > 0) {
+        for (const item of CachedChapterRealign.plan(CachedChapterRealign.markRows(titles, previous), chapters).assignments) {
+          assignments.set(item.from, item);
+        }
+      }
+
+      // 划线没有唯一约束，按章挪；先换成负数临时序号，免得 A→B、B→C 连着挪时被挪两次。
+      let annotationMoved = false;
+      for (const item of assignments.values()) {
+        if (!annotationNames.has(item.from)) continue;
+        if (item.from !== item.to) {
+          await transaction.execute('UPDATE book_annotations SET chapterIndex=?,chapterName=? WHERE bookUrl=? AND chapterIndex=?',
+            [-1 - item.to, item.title, bookUrl, item.from]);
+          annotationMoved = true;
+          changed = true;
+        } else if (item.title !== annotationNames.get(item.from)) {
+          await transaction.execute('UPDATE book_annotations SET chapterName=? WHERE bookUrl=? AND chapterIndex=?',
+            [item.title, bookUrl, item.from]);
+          changed = true;
+        }
+      }
+      if (annotationMoved) {
+        await transaction.execute('UPDATE book_annotations SET chapterIndex=-1-chapterIndex WHERE bookUrl=? AND chapterIndex<0',
+          [bookUrl]);
+      }
+
+      const indexMap: Map<number, number> = new Map();
+      assignments.forEach((item: CachedChapterAssignment): void => {
+        if (item.from !== item.to) indexMap.set(item.from, item.to);
+      });
+      const moves = CachedChapterRealign.bookmarkMoves(bookmarks, indexMap);
+      for (const slot of bookmarks) {
+        const item = assignments.get(slot.index);
+        if (!item) continue;
+        const next = moves.get(slot.id);
+        if (next !== undefined) {
+          await transaction.execute('UPDATE bookmarks SET chapterIndex=?,chapterName=? WHERE id=?', [-1 - next, item.title, slot.id]);
+          changed = true;
+        } else if (item.from === item.to && item.title !== bookmarkNames.get(slot.id)) {
+          await transaction.execute('UPDATE bookmarks SET chapterName=? WHERE id=?', [item.title, slot.id]);
+          changed = true;
+        }
+      }
+      if (moves.size > 0) {
+        await transaction.execute('UPDATE bookmarks SET chapterIndex=-1-chapterIndex WHERE bookUrl=? AND chapterIndex<0',
+          [bookUrl]);
+      }
+      await transaction.commit();
+    } catch (e) {
+      await transaction.rollback();
+      throw e as Error;
+    }
+    if (changed) {
+      console.info('[AppDatabase] realigned bookmarks/annotations:', bookUrl);
+      CloudSyncChangeTracker.markDataChanged();
+    }
+    return changed;
   }
 
   /**
@@ -2874,6 +3091,42 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   /** 在线正文缓存的条件：本地导入书的正文只存在这张表里，任何清理都不能碰。 */
   private static readonly ONLINE_CONTENT_WHERE: string =
     "bookUrl NOT LIKE 'local://%' AND bookUrl NOT IN (SELECT bookUrl FROM books WHERE origin = 'local')";
+
+  private contentIndexStore: relationalStore.RdbStore | null = null;
+  private contentIndexTask: Promise<void> = Promise.resolve();
+
+  /**
+   * book_contents 的辅助索引。querySql 的结果集是懒执行的，查询在主线程 goToFirstRow/goToNextRow 时才真正跑。
+   * 这张表每行带整章正文，pinned、cacheDate、contentBytes 等列排在 content 后面，从表里取它们要把正文的溢出页
+   * 一并读出来；整表扫或按书扫时，页缓存一冷就是整段读盘，主线程卡满 6 秒被判 THREAD_BLOCK。
+   * - 两个部分索引：补算检查只看待补的行，补完即为空；
+   * - budget 覆盖索引：缓存统计、列出缓存、离线书只读索引；
+   * - book 覆盖索引：按书取各章缓存时间（每次读目录都要）、按章判断是否手动缓存，不碰正文。
+   * 首次在大表上建索引要扫全表，不放进 init 的等待链：打开数据库后在 RDB 线程上后台建，用到的查询先等它建完。
+   */
+  ensureContentIndexes(): Promise<void> {
+    const store = this.store;
+    if (!store) return Promise.resolve();
+    if (this.contentIndexStore !== store) {
+      this.contentIndexStore = store;
+      this.contentIndexTask = (async (): Promise<void> => {
+        // contentBytes 打头，规划器才会按 contentBytes<? 只查这个部分索引，而不是整扫 budget 覆盖索引。
+        await store.executeSql('CREATE INDEX IF NOT EXISTS idx_book_contents_unsized ' +
+          'ON book_contents(contentBytes, bookUrl) WHERE contentBytes < 0');
+        await store.executeSql('CREATE INDEX IF NOT EXISTS idx_book_contents_unindexed ' +
+          'ON book_contents(bookUrl) WHERE imagesIndexed = 0');
+        await store.executeSql('CREATE INDEX IF NOT EXISTS idx_book_contents_budget ' +
+          'ON book_contents(pinned, bookUrl, contentBytes, accessDate, cacheDate, chapterIndex, cacheRevision)');
+        await store.executeSql('CREATE INDEX IF NOT EXISTS idx_book_contents_book ' +
+          'ON book_contents(bookUrl, chapterIndex, pinned, cacheDate)');
+      })().catch((e: Error): void => {
+        // 建不成就下次再试；查询照常进行，只是慢。
+        if (this.contentIndexStore === store) this.contentIndexStore = null;
+        console.warn('[AppDatabase] create book_contents index failed', e);
+      });
+    }
+    return this.contentIndexTask;
+  }
 
   /** 升级前写入的行没有字节数，分批补算；返回本批补了多少行，0 表示已补完。 */
   async backfillCachedContentBytes(batchSize: number = 400): Promise<number> {
@@ -3000,10 +3253,17 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   async imagePaths(offlineOnly: boolean = false, protectedBooks: string[] = []): Promise<string[]> {
     if (!this.store) throw new Error('数据库未就绪');
     const marks = protectedBooks.map((): string => '?').join(',');
-    const rs = await this.store.querySql('SELECT DISTINCT r.path FROM reader_image_refs r JOIN book_contents c ' +
-      'ON c.bookUrl=r.bookUrl AND c.chapterIndex=r.chapterIndex' + (offlineOnly ?
-      ' WHERE (c.pinned=1 OR c.bookUrl LIKE \'local://%\' OR c.bookUrl IN (SELECT bookUrl FROM books WHERE origin=\'local\')' +
-      (marks ? ` OR c.bookUrl IN (${marks})` : '') + ')' : ''), offlineOnly ? protectedBooks : []);
+    let sql = 'SELECT DISTINCT r.path FROM reader_image_refs r JOIN book_contents c ' +
+      'ON c.bookUrl=r.bookUrl AND c.chapterIndex=r.chapterIndex';
+    if (offlineOnly) {
+      // 写成行值 IN 子查询：按 JOIN 写时规划器走主键索引回表取 pinned，要读正文溢出页；
+      // 子查询只扫 idx_book_contents_book 覆盖索引，不碰正文。
+      await this.ensureContentIndexes();
+      sql = 'SELECT DISTINCT r.path FROM reader_image_refs r WHERE (r.bookUrl, r.chapterIndex) IN ' +
+        '(SELECT c.bookUrl, c.chapterIndex FROM book_contents c WHERE c.pinned=1 OR c.bookUrl LIKE \'local://%\' OR ' +
+        'c.bookUrl IN (SELECT bookUrl FROM books WHERE origin=\'local\')' + (marks ? ` OR c.bookUrl IN (${marks})` : '') + ')';
+    }
+    const rs = await this.store.querySql(sql, offlineOnly ? protectedBooks : []);
     const paths: string[] = [];
     try { while (rs.goToNextRow()) paths.push(rs.getString(0)); } finally { rs.close(); }
     return paths;
@@ -3311,6 +3571,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   /** 有离线内容的在线书：下载过音频，或有手动缓存的正文/漫画。书架封面的"离线"标识用它。 */
   async getOfflineBookUrls(): Promise<string[]> {
     if (!this.store) return [];
+    await this.ensureContentIndexes();
     const rs = await this.store.querySql('SELECT DISTINCT bookUrl FROM audio_offline_files UNION ' +
       `SELECT DISTINCT bookUrl FROM book_contents WHERE pinned=1 AND ${AppDatabase.ONLINE_CONTENT_WHERE}`);
     const urls: string[] = [];
@@ -3329,6 +3590,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   async getBookChapterCacheDateMap(bookUrl: string): Promise<Map<number, number>> {
     const cacheDates: Map<number, number> = new Map();
     if (!this.store) return cacheDates;
+    await this.ensureContentIndexes();
     const predicates = new relationalStore.RdbPredicates('book_contents');
     predicates.equalTo('bookUrl', bookUrl);
     const resultSet = await this.store.querySql('SELECT c.chapterIndex,c.cacheDate FROM book_contents c WHERE c.bookUrl=? ' +
@@ -3517,7 +3779,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     await this.readStatsWriteTask;
     // 游客历史继续在本机展示，但不改成当前账号所有，也不自动上传。
     const resultSet = await this.store.querySql(`SELECT r.dayKey, r.bookUrl, r.bookKey,
-      r.deviceId, MAX(r.deviceName) AS deviceName, SUM(r.durationMs) AS durationMs,
+      r.deviceId, MAX(r.deviceName) AS deviceName, SUM(r.durationMs) AS durationMs, MAX(r.lastReadAt) AS lastReadAt,
       COALESCE(NULLIF(b.name, ''), m.name, '') AS name,
       COALESCE(b.author, m.author, '') AS author,
       COALESCE(NULLIF(b.customCoverUrl, ''), b.coverUrl, m.coverUrl, '') AS coverUrl,
@@ -3543,12 +3805,89 @@ export class AppDatabase implements BookSourceRuntimePersistence {
         row.author = this.getStringColumn(resultSet, 'author');
         row.coverUrl = this.getStringColumn(resultSet, 'coverUrl');
         row.onShelf = this.getLongColumn(resultSet, 'onShelf') === 1;
+        row.lastReadAt = this.getLongColumn(resultSet, 'lastReadAt');
         rows.push(row);
       }
     } finally {
       resultSet.close();
     }
     return rows;
+  }
+
+  /**
+   * 单本书的阅读记录，所有设备合计。书名和作者都有时按作品归并，换源前后的记录算同一本；
+   * 这里不排除隐私书，调用方是这本书自己的详情页。
+   */
+  async getBookReadStatsRecords(bookUrl: string, name: string, author: string,
+    ownerId: string): Promise<BookReadStatsRecord[]> {
+    const records: BookReadStatsRecord[] = [];
+    if (!this.store || !bookUrl) return records;
+    await this.readStatsWriteTask;
+    const work = name && author ? 1 : 0;
+    const resultSet = await this.store.querySql(`SELECT r.dayKey, r.durationMs, r.startedAt
+      FROM read_stats_records r
+      WHERE r.deletedAt = 0 AND (r.ownerId = '' OR r.ownerId = ?)
+      AND (r.bookUrl = ? OR (? = 1 AND r.bookUrl IN (
+        SELECT bookUrl FROM books WHERE name = ? AND author = ?
+        UNION SELECT bookUrl FROM read_stats_books WHERE name = ? AND author = ?)))`,
+      [ownerId, bookUrl, work, name, author, name, author]);
+    try {
+      while (resultSet.goToNextRow()) {
+        const record = new BookReadStatsRecord();
+        record.dayKey = resultSet.getString(0);
+        record.durationMs = resultSet.getLong(1);
+        record.startedAt = resultSet.getLong(2);
+        records.push(record);
+      }
+    } finally {
+      resultSet.close();
+    }
+    return records;
+  }
+
+  /**
+   * 票夹用：所有阅读记录按（书的地址, 日子）合计，带上书架或统计里登记的书名作者，
+   * 由 ReadingTicketRules.build 按作品归并到各条标记。所有设备合计，不排除隐私书（与详情页统计一致）。
+   */
+  async getTicketStatsRows(ownerId: string): Promise<TicketStatsRow[]> {
+    const rows: TicketStatsRow[] = [];
+    if (!this.store) return rows;
+    await this.readStatsWriteTask;
+    const resultSet = await this.store.querySql(`SELECT r.bookUrl, r.dayKey, SUM(r.durationMs) AS durationMs,
+      COALESCE(NULLIF(b.name, ''), m.name, '') AS name, COALESCE(NULLIF(b.author, ''), m.author, '') AS author
+      FROM read_stats_records r
+      LEFT JOIN books b ON b.bookUrl = r.bookUrl
+      LEFT JOIN read_stats_books m ON m.bookUrl = r.bookUrl
+      WHERE r.deletedAt = 0 AND (r.ownerId = '' OR r.ownerId = ?)
+      GROUP BY r.bookUrl, r.dayKey`, [ownerId]);
+    try {
+      while (resultSet.goToNextRow()) {
+        const row = new TicketStatsRow();
+        row.bookUrl = resultSet.getString(0);
+        row.dayKey = resultSet.getString(1);
+        row.durationMs = resultSet.getLong(2);
+        row.name = resultSet.getString(3) || '';
+        row.author = resultSet.getString(4) || '';
+        rows.push(row);
+      }
+    } finally {
+      resultSet.close();
+    }
+    return rows;
+  }
+
+  /** 这本书的划线数量：[全部, 写了想法的, 收进摘录的]。 */
+  async getBookAnnotationCounts(bookUrl: string): Promise<number[]> {
+    if (!this.store || !bookUrl) return [0, 0, 0];
+    const resultSet = await this.store.querySql(`SELECT COUNT(*),
+      COALESCE(SUM(CASE WHEN note <> '' THEN 1 ELSE 0 END), 0),
+      COALESCE(SUM(CASE WHEN excerpt = 1 THEN 1 ELSE 0 END), 0)
+      FROM book_annotations WHERE bookUrl = ?`, [bookUrl]);
+    try {
+      return resultSet.goToFirstRow() ? [resultSet.getLong(0), resultSet.getLong(1), resultSet.getLong(2)] : [0, 0, 0];
+    } finally {
+      resultSet.close();
+    }
   }
 
   async getReadStatsDevices(ownerId: string): Promise<ReadStatsDeviceOption[]> {

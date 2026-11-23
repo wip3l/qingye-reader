@@ -72,6 +72,18 @@ try {
   equal(AudioUrlResolver.invalidAudioAddressMessage('{"code":403,"msg":"会员专享"}'), '音频接口未返回可播放地址：会员专享',
     '接口给出的原因要带出来');
   equal(AudioUrlResolver.invalidAudioAddressMessage('<html></html>'), '正文规则没有返回有效音频地址', '没有原因时用通用说明');
+  const storage = new Map();
+  globalThis.AppStorage = { get: (key) => storage.get(key) };
+  storage.set('bookSourceStageLastError', '别的书源的错误');
+  equal(AudioUrlResolver.invalidAudioAddressMessage('', '音频取不到：ILLEGAL_ACCESS（code=110）'),
+    '音频取不到：ILLEGAL_ACCESS（code=110）', '空内容时优先用这一章记下的原因，不读全局键');
+  equal(AudioUrlResolver.invalidAudioAddressMessage(''), '别的书源的错误', '没传原因时才用全局键兜底');
+  storage.clear();
+  equal(AudioUrlResolver.invalidAudioAddressMessage('  '), '书源没有返回音频地址，也没有说明原因', '空内容又没有原因');
+  equal(AudioUrlResolver.invalidAudioAddressMessage('本章为听书音频，点右上角播放；无文字正文。'),
+    '书源返回的不是音频地址：本章为听书音频，点右上角播放；无文字正文。', '书源给的说明文字原样带出');
+  equal(AudioUrlResolver.invalidAudioAddressMessage('字'.repeat(200)), `书源返回的不是音频地址：${'字'.repeat(117)}…`,
+    '过长的说明截断');
 
   // 请求头：书源头只发到书源自己的站点，地址自带的头总是生效，Cookie 按媒体地址取。
   const source = new BookSource();

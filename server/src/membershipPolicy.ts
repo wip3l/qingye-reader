@@ -1,6 +1,6 @@
 /** Versioned business rules. No client-supplied membership or price is authoritative. */
 // v2: quotes carry the charged price and promotion; v1 quotes are refused after deploy.
-export const MEMBERSHIP_POLICY_VERSION = 2;
+export const MEMBERSHIP_POLICY_VERSION = 3;
 export type MembershipSku = 'MONTHLY' | 'ANNUAL' | 'LIFETIME' | 'SUPER_LIFETIME';
 export type MembershipTier = 'STANDARD' | 'SUPER';
 export type VoiceTier = 'STANDARD' | 'PREMIUM';
@@ -205,8 +205,9 @@ export function planMembershipPurchase(
       anchorAt,
       paidMonths,
       expiresAt,
-      // A later upgrade credits what this permanent product actually cost, promotion and coupon included.
-      permanentCreditPoints: product.months === null ? pricePoints - couponPoints : 0,
+      // A later upgrade credits the price this permanent product sold at. A coupon spent on it is
+      // credited too: it is single-use, so clawing it back on upgrade would leave it worth nothing.
+      permanentCreditPoints: product.months === null ? pricePoints : 0,
       revision: (current?.revision ?? 0) + 1
     },
     term: expiresAt === null ? null : {

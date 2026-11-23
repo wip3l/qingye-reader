@@ -146,6 +146,10 @@ for (const file of walk(ETS)) {
   if (/^\s*import\s+(?!lazy\b|type\b)[^;]*from\s*'@kit\.UIDesignKit'/m.test(source)) {
     problems.push(`${rel} 静态引用了 @kit.UIDesignKit（HdsTabs 用 import lazy，其它从 platform/Hds 取）`);
   }
+  // 华为专有能力（手表 Wear Engine）同理：只能延迟引入，并在安卓上不走到。
+  if (/^\s*import\s+(?!lazy\b|type\b)[^;]*from\s*'@kit\.WearEngine'/m.test(source)) {
+    problems.push(`${rel} 静态引用了 @kit.WearEngine（用 import lazy，并在安卓上关闭）`);
+  }
   if (/from '@kit\.ShareKit'/.test(source) && !(ALLOWED.get(rel) || []).includes('@kit.ShareKit')) {
     problems.push(`${rel} 直接用了 @kit.ShareKit（用 platform/Share）`);
   }

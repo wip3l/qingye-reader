@@ -33,7 +33,8 @@ function coverHarness() {
   const cover = vm.runInContext(compile(`({${body}})`), sandbox);
   Object.assign(cover, { mounted: true, covers: [], displayCovers: [], activeIndex: 0,
     loadedRevision: 0, loadedUrls: new Set(), coverLoadSerial: 0, requestSerial: 0,
-    retryTimers: new Map(), retryCounts: new Map(), onReadyCover: value => ready.push(value) });
+    retryTimers: new Map(), retryCounts: new Map(), readyTimer: -1, readyPending: '', readyNotified: null,
+    onReadyCover: value => ready.push(value) });
   const fire = async () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn()); await tick(); };
   return { cover, requests, invalidated, ready, timers, cache, fire };
 }
@@ -48,9 +49,13 @@ test('cold source covers update the mounted image and backdrop without a global 
   f.requests[0].resolve('file:///cache/1.jpg');
   await tick();
   assert.equal(f.cover.activeCover(), 'file:///cache/1.jpg');
+  assert.equal(f.ready.length, 0, 'the parent is never called back inside the same task');
+  await f.fire();
   assert.equal(f.ready.at(-1), '', 'backdrop waits for native image decode');
   f.cover.markLoaded('file:///cache/1.jpg');
-  assert.equal(f.ready.at(-1), 'file:///cache/1.jpg');
+  f.cover.notifyReadyCover();
+  await f.fire();
+  assert.deepEqual(f.ready, ['', 'file:///cache/1.jpg'], 'one callback per change');
   assert.equal(f.cover.covers[0], url, 'persistent source selection stays unchanged');
 });
 
@@ -83,7 +88,7 @@ test('changing books and unmounting reject old downloads and cancel retry timers
   f.requests[1].resolve('file:///new');
   await tick();
   f.cover.markFailed('file:///new');
-  assert.equal(f.timers.size, 1);
+  assert.equal(f.cover.retryTimers.size, 1);
   f.cover.aboutToDisappear();
   assert.equal(f.timers.size, 0);
   await f.fire();

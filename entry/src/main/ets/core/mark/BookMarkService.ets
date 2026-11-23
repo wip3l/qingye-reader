@@ -266,6 +266,8 @@ export class BookMarkService {
       params['type'] = `${mark.bookType}`;
     }
     params['promptAddToShelfOnBack'] = 'false';
+    // 从标记进来的详情页直接显示“标记”页签。
+    params['initialTab'] = 'mark';
     router.pushUrl({ url: 'pages/SearchBookDetail', params: params });
   }
 

@@ -314,6 +314,12 @@ test('v2 manifest: assets optional, packageId charset, credits and description k
   assert.equal(m.assetsDeclared, false);
   assert.equal(m.version, '1.0');
   assert.equal(m.baseTheme, 'plain-default');
+  // 没写 baseRevision 是素笺之前的包（导入时按原默认主题打底）；写了就原样往返。
+  assert.equal(m.baseRevision, 0);
+  const revised = format.decodeManifest(JSON.stringify(manifestV2({ baseRevision: 2 })));
+  assert.equal(revised.baseRevision, 2);
+  assert.equal(format.decodeManifest(format.encodeManifest(revised)).baseRevision, 2);
+  assert.equal(format.decodeManifest(JSON.stringify(manifestV2({ baseRevision: '2' }))).baseRevision, 0);
   assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ packageId: '../x' }))), /packageId/);
   assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ packageId: 'a b' }))), /packageId/);
   const credits = format.decodeManifest(JSON.stringify(manifestV2({
@@ -329,6 +335,17 @@ test('v2 manifest: assets optional, packageId charset, credits and description k
   assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ assets: [{ path: 'assets/a.png', kind: 'font' }] }))), /损坏/);
   assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ assets: [{ path: 'assets/f.ttf' }] }))), /损坏/,
     'fonts need the fonts-v1 feature');
+  // 素材最多 128 个；超过老版本的 64 个要声明 assets-128-v1，老版本不认得这个功能会提示先更新。
+  const manyAssets = (count) => Array.from({ length: count }, (_, i) => ({ path: `assets/a${i}.png` }));
+  const v2Base = manifestV2().requires;
+  assert.equal(format.decodeManifest(JSON.stringify(manifestV2({ assets: manyAssets(64) }))).assets.length, 64);
+  assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ assets: manyAssets(65) }))), /assets-128-v1/);
+  const v2Many = manifestV2({ requires: [...v2Base, 'assets-128-v1'], assets: manyAssets(128) });
+  assert.equal(format.decodeManifest(JSON.stringify(v2Many)).assets.length, 128);
+  assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ requires: [...v2Base, 'assets-128-v1'],
+    assets: manyAssets(129) }))), /数量超出上限/);
+  assert.equal(format.ThemePackageLimits.MAX_ASSETS, 128);
+  assert.equal(format.ThemePackageFeatures.KNOWN.includes('assets-128-v1'), true);
   assert.equal(format.assetPathExtension('assets/Cover_01.jpeg'), 'jpg');
   assert.equal(format.assetPathExtension('assets/sub/a.png'), '');
 });
@@ -439,6 +456,7 @@ test('v2 theme: parts resolve by path, settings optional, kinds and required fie
   onlyTrailing.light.reader.leading = '';
   onlyTrailing.light.reader.trailingScale = 1.5;
   onlyTrailing.light.reader.leadingScale = 0.7;
+  onlyTrailing.light.reader.trailingInset = 0;
   const decodedSingle = format.decodeTheme(JSON.stringify({ parts: onlyTrailing }), singleManifest).parts;
   assert.equal(decodedSingle.light.reader.leading, '');
   assert.match(decodedSingle.light.reader.trailing, /^qytheme-asset:[0-9a-f]{24}$/);
@@ -452,6 +470,14 @@ test('v2 theme: parts resolve by path, settings optional, kinds and required fie
   assert.equal(format.normalizeOrnamentScale(9), 2);
   assert.equal(format.normalizeOrnamentScale(0.1), 0.5);
   assert.equal(format.normalizeOrnamentScale(undefined), 1);
+  // 两角边距缺省按 1，0 是贴边要保留，超出范围夹到 0–3。
+  assert.equal(decodedSingle.light.reader.trailingInset, 0);
+  assert.equal(decodedSingle.light.reader.leadingInset, 1);
+  assert.equal(parts.light.reader.leadingInset, 1);
+  assert.equal(format.normalizeOrnamentInset(0), 0);
+  assert.equal(format.normalizeOrnamentInset(9), 3);
+  assert.equal(format.normalizeOrnamentInset(-1), 0);
+  assert.equal(format.normalizeOrnamentInset(undefined), 1);
   broken(j => { j.ttsPanel.light.glowColor = ''; }, /artwork、skyColor/);
   broken(j => { j.radius.card = 99; }, /0 到 48/);
   broken(j => { j.book.covers = Array(17).fill('assets/cover_01.jpg'); }, /最多 16 张/);
@@ -475,6 +501,56 @@ test('v2 theme: parts resolve by path, settings optional, kinds and required fie
   assert.equal(format.ThemePackageFeatures.KNOWN.includes('book-covers-16-v1'), true);
   broken(j => { j.logo = 'assets/missing.svg'; }, /不存在/);
   broken(j => { j.bubble = { frame: 'assets/frame.svg' }; }, /需要 cap/);
+  // 位图边框、只有边框没有端饰都要声明 bubble-frame-v1；拉伸设置原样读写，越界的夹住、不认得的丢掉。
+  broken(j => { j.bubble = { cap: 'assets/cap.svg', frame: 'assets/cover_01.jpg' }; }, /需要SVG/);
+  const frameManifest = withAssets(manifestV2({ requires: ['custom-scheme-v1', 'reader-layout-v1', 'theme-parts-v1',
+    'bubble-frame-v1'] }), PARTS_FILES);
+  const frameOnly = partsJson();
+  frameOnly.bubble = { frame: 'assets/cover_01.jpg', frameSlice: { left: 0.2, right: 0.9, top: 0.1, bottom: -1 },
+    frameRepeat: 'round', frameBreak: 'zigzag', frameTint: true };
+  const decodedFrame = format.decodeTheme(JSON.stringify({ parts: frameOnly }), frameManifest).parts;
+  assert.equal(decodedFrame.bubble.cap, '');
+  assert.match(decodedFrame.bubble.frame, /^qytheme-asset:[0-9a-f]{24}$/);
+  assert.deepEqual({ ...decodedFrame.bubble.frameSlice }, { left: 0.2, right: 0.49, top: 0.1, bottom: 0 });
+  assert.equal(decodedFrame.bubble.frameRepeat, 'round');
+  assert.equal(decodedFrame.bubble.frameBreak, '');
+  assert.equal(decodedFrame.bubble.frameTint, true);
+  assert.deepEqual(Object.keys(format.encodeParts(decodedFrame).bubble).sort(),
+    ['frame', 'frameRepeat', 'frameSlice', 'frameTint']);
+  assert.deepEqual(format.encodeParts(parts).bubble, { cap: parts.bubble.cap }, '没有边框时不写拉伸设置');
+  assert.equal(format.describeParts(decodedFrame).includes('强调气泡边框'), true);
+  broken(j => { j.bubble = {}; }, /需要 cap/);
+  assert.throws(() => format.decodeTheme(JSON.stringify({ parts: { ...partsJson(), bubble: {} } }), frameManifest),
+    /至少要有 cap 或 frame/);
+  const usesFrame = bubble => format.partsUseBubbleFrameFeature({ bubble });
+  assert.equal(usesFrame({ cap: 'assets/c.svg', frame: 'assets/f.svg' }), false);
+  assert.equal(usesFrame({ cap: 'assets/c.svg', frame: 'assets/f.png' }), true);
+  assert.equal(usesFrame({ cap: '', frame: 'assets/f.svg' }), true);
+  assert.equal(usesFrame({ cap: 'assets/c.svg', frame: '' }), false);
+  assert.equal(format.ThemePackageFeatures.KNOWN.includes('bubble-frame-v1'), true);
+  // 端饰、书架边框用位图（深色那张也算）要声明 bitmap-cap-shelf-frame-v1，没声明时只收 SVG。
+  broken(j => { j.bubble = { cap: 'assets/cover_01.jpg' }; }, /需要SVG/);
+  broken(j => { j.book.shelfFrame = 'assets/cover_01.jpg'; }, /需要SVG/);
+  broken(j => { j.book.shelfFrameDark = 'assets/cover_01.jpg'; }, /需要SVG/);
+  const bitmapManifest = withAssets(manifestV2({ requires: ['custom-scheme-v1', 'reader-layout-v1', 'theme-parts-v1',
+    'bitmap-cap-shelf-frame-v1'] }), PARTS_FILES);
+  const bitmapParts = partsJson();
+  bitmapParts.bubble = { cap: 'assets/cover_01.jpg' };
+  bitmapParts.book.shelfFrame = 'assets/cover_02.jpg';
+  const decodedBitmap = format.decodeTheme(JSON.stringify({ parts: bitmapParts }), bitmapManifest).parts;
+  assert.match(decodedBitmap.bubble.cap, /^qytheme-asset:[0-9a-f]{24}$/);
+  assert.match(decodedBitmap.book.shelfFrame, /^qytheme-asset:[0-9a-f]{24}$/);
+  const usesBitmap = value => format.partsUseBitmapCapOrShelfFrame(value);
+  assert.equal(usesBitmap(parts), false);
+  assert.equal(usesBitmap({ bubble: { cap: 'assets/c.svg', frame: 'assets/f.png' } }), false);
+  assert.equal(usesBitmap({ bubble: { cap: 'assets/c.png' } }), true);
+  assert.equal(usesBitmap({ bubble: { cap: 'assets/c.svg' }, bubbleDark: { cap: 'assets/c.webp' } }), true);
+  assert.equal(usesBitmap({ book: { shelfFrame: 'assets/f.svg' } }), false);
+  assert.equal(usesBitmap({ book: { shelfFrame: 'assets/f.svg', shelfFrameDark: 'assets/f.gif' } }), true);
+  assert.equal(format.ThemePackageFeatures.KNOWN.includes('bitmap-cap-shelf-frame-v1'), true);
+  // 默认拉伸线：上下贴边，左右各留图高 × 0.6、最多 30%。
+  assert.deepEqual({ ...format.defaultBubbleFrameSlice(3.75) }, { left: 0.16, right: 0.16, top: 0, bottom: 0 });
+  assert.deepEqual({ ...format.defaultBubbleFrameSlice(1) }, { left: 0.3, right: 0.3, top: 0, bottom: 0 });
   // 没有 parts 也没有 settings 不行；parts 需要清单声明 theme-parts-v1。
   assert.throws(() => format.decodeTheme(JSON.stringify({}), manifest), /主题设置已损坏/);
   const noFeature = withAssets(manifestV2({ requires: ['custom-scheme-v1', 'reader-layout-v1'] }), PARTS_FILES);
@@ -696,4 +772,317 @@ test('scheme overrides travel in settings and are gated by scheme-overrides-v1',
   const decoded = JSON.parse(theme.settingsJson);
   assert.equal(decoded.customLightPalette.pageColor, '#F1F7F3');
   assert.equal(decoded.customDarkEmphasis.bubbleStyle, 'moon-halo');
+});
+
+test('v2 theme: dark-mode bubble art, shelf frame, nav icons and comment bubbles', () => {
+  const manifest = withAssets(manifestV2(), PARTS_FILES);
+  const decode = json => format.decodeTheme(JSON.stringify({ parts: json }), manifest).parts;
+  const byPath = parts => format.mapPartsAssetRefs(parts, ref => format.findAsset(manifest, format.assetIdFromRef(ref)).path);
+
+  // 老主题包没有这些字段：深色沿用浅色，导出不多出字段。
+  const legacy = byPath(decode(partsJson()));
+  assert.equal(legacy.bubbleDark, null);
+  assert.equal(format.bubbleFor(legacy, true).cap, 'assets/cap.svg');
+  assert.equal(format.bookShelfFrameFor(legacy.book, true), 'assets/frame.svg');
+  const legacyEncoded = format.encodeParts(legacy);
+  assert.equal('bubbleDark' in legacyEncoded, false);
+  assert.equal('navigationDark' in legacyEncoded, false);
+  assert.equal('shelfFrameDark' in legacyEncoded.book, false);
+  assert.equal('commentBubble' in legacyEncoded.light, false);
+
+  // 深色只换边框（不用声明 bubble-frame-v1，位图也收），端饰按项沿用浅色。
+  const json = partsJson();
+  json.bubbleDark = { frame: 'assets/cover_01.jpg', frameSlice: { left: 0.2, right: 0.2, top: 0, bottom: 0 }, frameTint: true };
+  json.book.shelfFrameDark = 'assets/logo.svg';
+  json.navigationDark = { bookshelf: 'assets/cover_02.jpg', mineSelected: 'assets/logo.svg', labels: 'hidden' };
+  json.light.commentBubble = { shape: 'rounded', radius: 0.9, fill: '#FFB98546', text: '#fff6e6', ornament: 'star' };
+  json.dark.commentBubble = { shape: 'hexagon', ornament: 'sparkle', ornamentColor: '#F0D18F' };
+  const parts = byPath(decode(json));
+  const night = format.bubbleFor(parts, true);
+  assert.equal(night.cap, 'assets/cap.svg');
+  assert.equal(night.frame, 'assets/cover_01.jpg');
+  assert.equal(night.frameTint, true);
+  // 只有一种模式有边框时另一种也用它（同封面）。
+  assert.equal(format.bubbleFor(parts, false).frame, 'assets/cover_01.jpg');
+  assert.equal(format.bookShelfFrameFor(parts.book, true), 'assets/logo.svg');
+  assert.equal(format.bookShelfFrameFor(parts.book, false), 'assets/frame.svg');
+  assert.equal(parts.navigationDark.bookshelf, 'assets/cover_02.jpg');
+  assert.equal(parts.navigationDark.labels, '', 'labels only come from navigation');
+  assert.deepEqual({ ...parts.light.commentBubble },
+    { shape: 'rounded', radius: 0.5, fill: '#FFB98546', stroke: '', text: '#FFF6E6', ornament: 'star', ornamentColor: '',
+      image: '', imageSlice: null, imageText: null, imageRepeat: '', imageBreak: '', imageTint: false, ornamentImage: '',
+      ornamentCorner: '', ornamentSize: -1 });
+  assert.equal(parts.dark.commentBubble.shape, '', 'unknown shapes fall back to the bubble style');
+  assert.equal(parts.dark.commentBubble.ornament, 'sparkle');
+  assert.equal(format.describeParts(parts).includes('段评气泡'), true);
+  assert.equal(format.partsAssetRefs(parts).includes('assets/logo.svg'), true);
+  assert.throws(() => decode({ ...partsJson(), light: { commentBubble: { fill: 'red' } } }), /commentBubble/);
+
+  const encoded = format.encodeParts(parts);
+  // 浅色那套借了深色的边框，写进 bubble；深色和浅色一样了，bubbleDark 不写。
+  assert.equal(encoded.bubble.frame, 'assets/cover_01.jpg');
+  assert.equal('bubbleDark' in encoded, false);
+  assert.equal(encoded.book.shelfFrameDark, 'assets/logo.svg');
+  assert.deepEqual(encoded.navigationDark, { bookshelf: 'assets/cover_02.jpg', mineSelected: 'assets/logo.svg' });
+  assert.deepEqual(encoded.dark.commentBubble, { ornament: 'sparkle', ornamentColor: '#F0D18F' });
+  // 浅色有自己的 SVG 边框时，深色的位图边框单独写，浅色那套不用声明 bubble-frame-v1。
+  parts.bubble = { ...parts.bubble, frame: 'assets/frame.svg', frameSlice: null, frameRepeat: '', frameBreak: '', frameTint: false };
+  const split = format.encodeParts(parts);
+  assert.deepEqual(split.bubble, { cap: 'assets/cap.svg', frame: 'assets/frame.svg' });
+  assert.deepEqual(split.bubbleDark, { frame: 'assets/cover_01.jpg', frameSlice: { left: 0.2, right: 0.2, top: 0, bottom: 0 }, frameTint: true });
+  assert.equal(format.partsUseBubbleFrameFeature(parts), false);
+
+  // 只有深色书架边框、只有深色气泡：导出写成浅色字段，老版本也认。
+  const onlyDark = byPath(decode(partsJson()));
+  onlyDark.book.shelfFrameDark = onlyDark.book.shelfFrame;
+  onlyDark.book.shelfFrame = '';
+  onlyDark.bubbleDark = onlyDark.bubble;
+  onlyDark.bubble = null;
+  const onlyEncoded = format.encodeParts(onlyDark);
+  assert.equal(onlyEncoded.book.shelfFrame, 'assets/frame.svg');
+  assert.equal('shelfFrameDark' in onlyEncoded.book, false);
+  assert.deepEqual(onlyEncoded.bubble, { cap: 'assets/cap.svg' });
+  assert.equal('bubbleDark' in onlyEncoded, false);
+
+  // 没有 navigation 时深色图标整节不读。
+  const noNav = partsJson();
+  delete noNav.navigation;
+  noNav.navigationDark = { bookshelf: 'assets/cover_02.jpg' };
+  assert.equal(decode(noNav).navigationDark, null);
+});
+
+test('chapter head: decode, per-mode fallback, refs, encode, pack:self', () => {
+  const manifest = withAssets(manifestV2(), PARTS_FILES);
+  const decode = json => format.decodeTheme(JSON.stringify({ parts: json }), manifest).parts;
+  const byPath = parts => format.mapPartsAssetRefs(parts, ref => format.findAsset(manifest, format.assetIdFromRef(ref)).path);
+  const json = partsJson();
+  json.light.chapterHead = { image: 'assets/logo.svg', placement: 'top', scale: 1.5, numberColor: '#8d8478' };
+  json.dark.chapterHead = { numberColor: '#99FFFFFF', placement: 'bottom' };
+  const parts = byPath(decode(json));
+  const noCap = { dropCapLines: 0, dropCapImage: '', dropCapColor: '', dropCapRatio: 0.62 };
+  assert.deepEqual({ ...parts.light.chapterHead },
+    { image: 'assets/logo.svg', placement: 'top', scale: 1.5, numberColor: '#8D8478', ...noCap });
+  // 深色没写饰图：沿用浅色那张和它的位置、大小，颜色用自己的；自己写的位置没有图可跟，不生效。
+  const night = format.chapterHeadFor(parts, true);
+  assert.deepEqual({ ...night }, { image: 'assets/logo.svg', placement: 'top', scale: 1.5, numberColor: '#99FFFFFF', ...noCap });
+  assert.equal(format.partsAssetRefs(parts).includes('assets/logo.svg'), true);
+  assert.equal(format.describeParts(parts).includes('章首装饰（标题饰图、序号行颜色）'), true);
+  const encoded = format.encodeParts(parts);
+  assert.deepEqual(encoded.light.chapterHead, { image: 'assets/logo.svg', placement: 'top', scale: 1.5, numberColor: '#8D8478' });
+  assert.deepEqual(encoded.dark.chapterHead, { numberColor: '#99FFFFFF' });
+  const exported = new format.ThemePackageTheme();
+  exported.parts = parts;
+  const again = byPath(format.decodeTheme(format.encodeTheme(exported), manifest).parts);
+  assert.equal(again.light.chapterHead.image, 'assets/logo.svg');
+  assert.equal(again.dark.chapterHead.numberColor, '#99FFFFFF');
+  // 缺省值不写；不认得的位置按标题左侧；大小夹在 0.5–2。
+  const plain = decode({ ...partsJson(), light: { chapterHead: { image: 'assets/logo.svg', placement: 'corner', scale: 9 } } });
+  assert.equal(plain.light.chapterHead.placement, '');
+  assert.equal(plain.light.chapterHead.scale, 2);
+  assert.deepEqual(format.encodeParts(byPath(decode({ ...partsJson(), light: { chapterHead: { image: 'assets/logo.svg' } } }))).light.chapterHead,
+    { image: 'assets/logo.svg' });
+  // 旧包没有这一节：编码不多出字段，取值为 null。
+  const legacy = byPath(decode(partsJson()));
+  assert.equal('chapterHead' in format.encodeParts(legacy).light, false);
+  assert.equal(format.chapterHeadFor(legacy, false), null);
+  assert.throws(() => decode({ ...partsJson(), light: { chapterHead: { image: 'assets/missing.png' } } }), /chapterHead\.image/);
+  assert.throws(() => decode({ ...partsJson(), light: { chapterHead: { numberColor: 'red' } } }), /chapterHead\.numberColor/);
+  // 首字装饰：行数 2 或 3，只写了印章图时按 2 行；字占比夹在 0.4–0.9；深色没设时沿用浅色整套，颜色可以另写。
+  const capJson = partsJson();
+  capJson.light.chapterHead = { dropCapLines: 3, dropCapImage: 'assets/logo.svg', dropCapColor: '#b5402f', dropCapRatio: 0.95 };
+  capJson.dark.chapterHead = { dropCapColor: '#FFE0A0' };
+  const cap = byPath(decode(capJson));
+  assert.equal(cap.light.chapterHead.dropCapLines, 3);
+  assert.equal(cap.light.chapterHead.dropCapRatio, 0.9);
+  assert.equal(format.partsAssetRefs(cap).includes('assets/logo.svg'), true);
+  const capNight = format.chapterHeadFor(cap, true);
+  assert.deepEqual([capNight.dropCapLines, capNight.dropCapImage, capNight.dropCapRatio, capNight.dropCapColor],
+    [3, 'assets/logo.svg', 0.9, '#FFE0A0']);
+  assert.equal(format.describeParts(cap).includes('章首装饰（首字装饰）'), true);
+  const capEncoded = format.encodeParts(cap);
+  assert.deepEqual(capEncoded.light.chapterHead,
+    { dropCapLines: 3, dropCapImage: 'assets/logo.svg', dropCapRatio: 0.9, dropCapColor: '#B5402F' });
+  assert.deepEqual(capEncoded.dark.chapterHead, { dropCapColor: '#FFE0A0' });
+  assert.equal(decode({ ...partsJson(), light: { chapterHead: { dropCapImage: 'assets/logo.svg' } } }).light.chapterHead.dropCapLines, 2);
+  assert.deepEqual(format.encodeParts(byPath(decode({ ...partsJson(), light: { chapterHead: { dropCapLines: 2, dropCapRatio: 0.62 } } }))).light.chapterHead,
+    { dropCapLines: 2 });
+  assert.equal(decode({ ...partsJson(), light: { chapterHead: { dropCapLines: 7 } } }).light.chapterHead, null);
+  assert.throws(() => decode({ ...partsJson(), light: { chapterHead: { dropCapLines: 2, dropCapColor: 'red' } } }), /chapterHead\.dropCapColor/);
+  // 方案覆盖里的 pack:self。
+  const settings = { customLightEmphasis: { chapterHead: 'pack:self' }, customDarkEmphasis: { chapterHead: 'none' } };
+  format.replaceSelfPackId(settings, 'pack:demo');
+  assert.equal(settings.customLightEmphasis.chapterHead, 'pack:demo');
+  assert.equal(settings.customDarkEmphasis.chapterHead, 'none');
+  format.replaceOwnPackIdWithSelf(settings, 'pack:demo');
+  assert.equal(settings.customLightEmphasis.chapterHead, 'pack:self');
+});
+
+test('title emphasis and title bubble: decode, per-mode fallback, refs, encode, pack:self', () => {
+  const manifest = withAssets(manifestV2(), PARTS_FILES);
+  const decode = json => format.decodeTheme(JSON.stringify({ parts: json }), manifest).parts;
+  const byPath = parts => format.mapPartsAssetRefs(parts, ref => format.findAsset(manifest, format.assetIdFromRef(ref)).path);
+  const json = partsJson();
+  json.light.titleEmphasis = { mode: 'bubble', color: '#E9D3A8', textColor: '#5a3a1c' };
+  json.dark.titleEmphasis = { mode: 'highlight', bubbleStyle: 'emphasis' };
+  // 位图端饰和边框都收，不需要 bubble-frame-v1 / bitmap-cap-shelf-frame-v1。
+  json.titleBubble = { cap: 'assets/cover_01.jpg', frame: 'assets/cover_02.jpg', frameSlice: { left: 0.16, right: 0.16, top: 0.1, bottom: 0.1 } };
+  json.titleBubbleDark = { frame: 'assets/logo.svg' };
+  const parts = byPath(decode(json));
+  assert.deepEqual({ ...parts.light.titleEmphasis }, { mode: 'bubble', bubbleStyle: '', color: '#E9D3A8', textColor: '#5A3A1C' });
+  assert.equal(parts.dark.titleEmphasis.bubbleStyle, 'emphasis');
+  const night = format.titleBubbleFor(parts, true);
+  assert.equal(night.cap, 'assets/cover_01.jpg', 'dark keeps the light cap');
+  assert.equal(night.frame, 'assets/logo.svg');
+  assert.equal(format.titleBubbleFor(parts, false).frame, 'assets/cover_02.jpg');
+  assert.equal(format.partsAssetRefs(parts).includes('assets/cover_02.jpg'), true);
+  assert.equal(format.describeParts(parts).includes('标题强调与标题气泡（含深色）'), true);
+  const encoded = format.encodeParts(parts);
+  assert.deepEqual(encoded.light.titleEmphasis, { mode: 'bubble', color: '#E9D3A8', textColor: '#5A3A1C' });
+  assert.deepEqual(encoded.titleBubbleDark, { frame: 'assets/logo.svg' });
+  const exported = new format.ThemePackageTheme();
+  exported.parts = parts;
+  const again = byPath(format.decodeTheme(format.encodeTheme(exported), manifest).parts);
+  assert.equal(again.titleBubble.frame, 'assets/cover_02.jpg');
+  assert.equal(again.dark.titleEmphasis.mode, 'highlight');
+  // 旧包没有这几节：编码不多出字段。
+  const legacy = format.encodeParts(byPath(decode(partsJson())));
+  assert.equal('titleBubble' in legacy, false);
+  assert.equal('titleEmphasis' in legacy.light, false);
+  assert.throws(() => decode({ ...partsJson(), light: { titleEmphasis: { mode: 'glow' } } }), /titleEmphasis\.mode/);
+  // 样式 ID 与方案覆盖里的 pack:self。
+  assert.equal(format.packTitleBubbleStyleId('pack:demo'), 'pack:demo:title');
+  assert.equal(format.isPackTitleBubbleStyle('pack:demo:title'), true);
+  assert.equal(format.isPackTitleBubbleStyle('pack:demo'), false);
+  const settings = { customLightEmphasis: { title: { mode: 'bubble', bubbleStyle: 'pack:custom-0011aabb:title' } } };
+  format.replaceOwnPackIdWithSelf(settings, 'pack:custom-0011aabb');
+  assert.equal(settings.customLightEmphasis.title.bubbleStyle, 'pack:self:title');
+  format.replaceSelfPackId(settings, 'pack:demo-pack');
+  assert.equal(settings.customLightEmphasis.title.bubbleStyle, 'pack:demo-pack:title');
+});
+
+test('comment bubble image and custom ornament: decode, per-mode fallback, refs, encode, pack:self', () => {
+  const manifest = withAssets(manifestV2(), PARTS_FILES);
+  const decode = json => format.decodeTheme(JSON.stringify({ parts: json }), manifest).parts;
+  const byPath = parts => format.mapPartsAssetRefs(parts, ref => format.findAsset(manifest, format.assetIdFromRef(ref)).path);
+  const json = partsJson();
+  json.light.commentBubble = {
+    shape: 'rounded', fill: '#B98546', text: '#4A3423',
+    image: 'assets/cover_01.jpg', imageSlice: { left: 0.28, right: 0.7, top: 0.3, bottom: 0.3 },
+    imageText: { left: 0.1, right: 0.1, top: 0.14, bottom: 0.3 }, imageRepeat: 'round', imageBreak: 'full', imageTint: true,
+    ornament: 'custom', ornamentImage: 'assets/logo.svg', ornamentCorner: 'bottomRight', ornamentSize: 3
+  };
+  json.dark.commentBubble = { text: '#F2DEAE' };
+  const parts = byPath(decode(json));
+  const light = parts.light.commentBubble;
+  assert.equal(light.image, 'assets/cover_01.jpg');
+  assert.deepEqual({ ...light.imageSlice }, { left: 0.28, right: 0.49, top: 0, bottom: 0 }, 'only left / right stretch lines');
+  assert.deepEqual({ ...light.imageText }, { left: 0.1, right: 0.1, top: 0.14, bottom: 0.3 });
+  assert.equal(light.imageRepeat, 'round');
+  assert.equal(light.imageBreak, 'full');
+  assert.equal(light.imageTint, true);
+  assert.equal(light.ornament, 'custom');
+  assert.equal(light.ornamentCorner, 'bottomRight');
+  assert.equal(light.ornamentSize, 1.5, 'size is clamped to 0.5–1.5');
+  // 深色没给图：气泡图与角标图沿用浅色，深色自己的文字色保留。
+  const night = format.commentBubbleFor(parts, true);
+  assert.equal(night.image, 'assets/cover_01.jpg');
+  assert.equal(night.ornamentImage, 'assets/logo.svg');
+  assert.equal(night.ornament, 'custom');
+  assert.equal(night.text, '#F2DEAE');
+  // 'none' 不沿用另一模式的图。
+  parts.dark.commentBubble = { ...parts.dark.commentBubble, image: 'none' };
+  assert.equal(format.commentBubbleHasImage(format.commentBubbleFor(parts, true)), false);
+  assert.equal(format.partsAssetRefs(parts).includes('assets/cover_01.jpg'), true);
+  assert.equal(format.partsAssetRefs(parts).includes('none'), false);
+  assert.equal(format.describeParts(parts).includes('段评气泡（含气泡图）'), true);
+  const encoded = format.encodeParts(parts);
+  assert.deepEqual(encoded.light.commentBubble.imageSlice, { left: 0.28, right: 0.49 });
+  assert.equal(encoded.light.commentBubble.ornamentSize, 1.5);
+  assert.equal(encoded.dark.commentBubble.image, 'none');
+  assert.equal('imageSlice' in encoded.dark.commentBubble, false);
+  // 往返。
+  const exported = new format.ThemePackageTheme();
+  exported.parts = parts;
+  const again = byPath(format.decodeTheme(format.encodeTheme(exported), manifest).parts);
+  assert.deepEqual({ ...again.light.commentBubble }, { ...parts.light.commentBubble,
+    imageSlice: { ...parts.light.commentBubble.imageSlice }, imageText: { ...parts.light.commentBubble.imageText } });
+  // 引用不存在的素材、字体当图片都报错；不认得的角标位置按右上。
+  assert.throws(() => decode({ ...partsJson(), light: { commentBubble: { image: 'assets/missing.png' } } }), /commentBubble\.image/);
+  const odd = decode({ ...partsJson(), light: { commentBubble: { ornament: 'custom', ornamentImage: 'assets/logo.svg', ornamentCorner: 'middle' } } });
+  assert.equal(odd.light.commentBubble.ornamentCorner, '');
+  // 默认拉伸线与文字区、上下超出比例。
+  assert.deepEqual({ ...format.defaultCommentImageSlice(2) }, { left: 0.3, right: 0.3, top: 0, bottom: 0 });
+  assert.deepEqual({ ...format.defaultCommentImageText(2.5) }, { left: 0.14, right: 0.14, top: 0.12, bottom: 0.2 });
+  const [up, down] = format.commentImageOverhang({ left: 0, right: 0, top: 0.14, bottom: 0.3 });
+  assert.equal(Math.round(up * 100), 25);
+  assert.equal(Math.round(down * 100), 54);
+  // 方案覆盖里的 pack:<id> 导出写成 pack:self，导入换回来。
+  const settings = { customLightEmphasis: { comment: { image: 'pack:custom-0011aabb', ornamentImage: 'pack:custom-0011aabb' } },
+    customDarkEmphasis: { comment: { image: 'none' } } };
+  format.replaceOwnPackIdWithSelf(settings, 'pack:custom-0011aabb');
+  assert.equal(settings.customLightEmphasis.comment.image, 'pack:self');
+  assert.equal(settings.customLightEmphasis.comment.ornamentImage, 'pack:self');
+  assert.equal(settings.customDarkEmphasis.comment.image, 'none');
+  format.replaceSelfPackId(settings, 'pack:demo-pack');
+  assert.equal(settings.customLightEmphasis.comment.image, 'pack:demo-pack');
+  // 旧数据里的覆盖只有颜色：不算有图。
+  assert.equal(format.commentBubbleIsEmpty({ image: 'none' }), false);
+  assert.equal(format.commentBubbleIsEmpty({}), true);
+});
+
+test('installed pack record keeps every parts field when read back', async () => {
+  // 本机记录读回时逐个字段拷贝：ThemePackageParts 加了字段而这里没跟上，装好的包重启后就丢那一部分。
+  const { readFileSync } = await import('node:fs');
+  const store = readFileSync(path.join(projectRoot, 'entry', 'src', 'main', 'ets', 'utils', 'ThemePackStore.ets'), 'utf8');
+  const start = store.indexOf('private static normalizeParts(');
+  assert(start >= 0);
+  const body = store.substring(start, store.indexOf('\n  }\n', start));
+  for (const key of Object.keys(new format.ThemePackageParts())) {
+    assert(body.includes(`parts.${key} = `), `ThemePackStore.normalizeParts 漏了 ${key}`);
+  }
+});
+
+test('v2 theme: shelf frame and folder can be turned off per mode', () => {
+  const manifest = withAssets(manifestV2(), PARTS_FILES);
+  const decode = json => format.decodeTheme(JSON.stringify({ parts: json }), manifest).parts;
+  const byPath = parts => format.mapPartsAssetRefs(parts, ref => format.findAsset(manifest, format.assetIdFromRef(ref)).path);
+
+  // 老主题包没有这些字段：一样都不算“不用”，导出也不多出字段。
+  const legacy = byPath(decode(partsJson()));
+  assert.equal(format.bookHasOffParts(legacy.book), false);
+  assert.equal('noShelfFrame' in format.encodeParts(legacy).book, false);
+
+  // 浅色不用边框，深色没单独设：两种模式都不画；文件夹只是深色不用。
+  const json = { book: { covers: ['assets/cover_01.jpg'], noShelfFrame: true, shelfFolder: 'assets/folder.jpg', noShelfFolderDark: true },
+    logo: 'assets/logo.svg' };
+  const parts = byPath(decode(json));
+  assert.equal(format.bookShelfFrameOff(parts.book, false), true);
+  assert.equal(format.bookShelfFrameOff(parts.book, true), true);
+  assert.equal(format.bookShelfFrameFor(parts.book, true), '');
+  assert.equal(format.bookFolderOff(parts.book, false), false);
+  assert.equal(format.bookFolderFor(parts.book, false), 'assets/folder.jpg');
+  assert.equal(format.bookFolderOff(parts.book, true), true);
+  assert.equal(format.bookFolderFor(parts.book, true), '');
+  const encoded = format.encodeParts(parts).book;
+  assert.equal(encoded.noShelfFrame, true);
+  assert.equal('noShelfFrameDark' in encoded, false);
+  assert.equal(encoded.noShelfFolderDark, true);
+  assert.equal(format.describeParts(parts).includes('封面 1 张、文件夹插画、不用书架边框、不用文件夹插画'), true);
+
+  // 浅色不用、深色有图：深色那张不并到 shelfFrame（否则浅色也会显示它）。
+  const darkOnly = byPath(decode({ book: { noShelfFrame: true, shelfFrameDark: 'assets/frame.svg' }, logo: 'assets/logo.svg' }));
+  assert.equal(format.bookShelfFrameFor(darkOnly.book, false), '');
+  assert.equal(format.bookShelfFrameFor(darkOnly.book, true), 'assets/frame.svg');
+  const darkEncoded = format.encodeParts(darkOnly).book;
+  assert.equal('shelfFrame' in darkEncoded, false);
+  assert.equal(darkEncoded.shelfFrameDark, 'assets/frame.svg');
+  assert.equal(darkEncoded.noShelfFrame, true);
+
+  // 同一模式有图时“不用”不起作用；只带“不用”的 book 不算空。
+  const both = byPath(decode({ book: { shelfFrame: 'assets/frame.svg', noShelfFrame: true }, logo: 'assets/logo.svg' }));
+  assert.equal(both.book.noShelfFrame, false);
+  assert.equal(format.bookShelfFrameFor(both.book, false), 'assets/frame.svg');
+  const onlyOff = decode({ book: { noShelfFolder: true }, logo: 'assets/logo.svg' });
+  assert.notEqual(onlyOff.book, null);
+  assert.equal(format.bookIsEmpty(onlyOff.book), false);
 });

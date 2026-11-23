@@ -1,5 +1,6 @@
 import { Book } from '@legado/sourceengine';
 import { CoverUrlNormalizer } from './CoverUrlNormalizer';
+import { CoverFailures } from './CoverFailures';
 import { GlassTagModifier, ImmersiveTagModifier } from './ImmersiveMaterialRuntime';
 
 class CoverData {
@@ -171,12 +172,24 @@ export class BookDisplayHelper {
     return CoverUrlNormalizer.normalize(book.coverUrl);
   }
 
+  /** 书有单独设置的封面（网络、本地上传或从图集选的）：它比图集、主题封面都优先。 */
+  /** 单独设置的封面里显示得出来的那些；确认取不到的（见 CoverFailures）不算。编辑封面时要完整列表，用 decodeCoverList。 */
+  static usableCustomCovers(book: Book | null | undefined): string[] {
+    return book ? CoverFailures.usable(BookDisplayHelper.decodeCoverList(book.customCoverUrl)) : [];
+  }
+
+  /** 这本书有没有显示得出来的单独封面：决定取图顺序用。 */
+  static hasCustomCover(book: Book | null | undefined): boolean {
+    return BookDisplayHelper.usableCustomCovers(book).length > 0;
+  }
+
+  /** 这本书自己的封面（单独设置的优先，其次书源给的），已去掉确认取不到的；空表示按“没有封面”处理。 */
   static getCoverList(book: Book): string[] {
-    const customCovers = BookDisplayHelper.decodeCoverList(book.customCoverUrl);
+    const customCovers = BookDisplayHelper.usableCustomCovers(book);
     if (customCovers.length > 0) {
       return customCovers;
     }
-    return BookDisplayHelper.cleanCoverList(book.coverUrl ? [book.coverUrl] : []);
+    return CoverFailures.usable(BookDisplayHelper.cleanCoverList(book.coverUrl ? [book.coverUrl] : []));
   }
 
   static encodeCustomCovers(covers: string[]): string {

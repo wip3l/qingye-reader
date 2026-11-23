@@ -602,7 +602,9 @@ struct ReaderReplaceRulesPage {
           // 底部避让 spacer 必须按 lanes 列数复制占满整行，否则多列时最后一行卡片没有底部避让。
           ForEach(this.ruleListSpacerKeys(), (_spacerKey: string) => {
             ListItem() {
-              Column().height(84)
+              Column()
+                .height(this.ruleListBottomInset())
+                .hitTestBehavior(HitTestMode.None)
             }
           }, (spacerKey: string) => spacerKey)
         }
@@ -1284,6 +1286,12 @@ struct ReaderReplaceRulesPage {
       `${rule.name}\n${rule.pattern}`.toLowerCase().includes(keyword));
   }
 
+  // 列表底部避让：右下角悬浮新增按钮（52 高，底边距 navBarHeight+22）必须完整让出，
+  // 否则最后一条卡片被按钮盖住，左滑露出的删除键无法点按。
+  ruleListBottomInset(): number {
+    return Math.max(20, this.navBarHeight + 88);
+  }
+
   // List.lanes 的列数；底部避让 spacer 按列数复制，保证多列时占满一整行。
   ruleListSpacerKeys(): string[] {
     const laneCount = ResponsiveManagerListLayout.laneCount(this.contextViewportWidth);
@@ -1744,8 +1752,8 @@ struct ReaderReplaceRulesPage {
   async dissolveRulesAndSave(ids: number[], next: ReaderReplaceRule[]): Promise<boolean> {
     const keys = ids.map((id: number) => `${id}`);
     // 单条和批量删除都从确认框里点，等它退场再开始。
-    const fade = ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
-      this.dissolvingRuleKeys = [...this.dissolvingRuleKeys, key];
+    const fade = ListDissolve.fadeOutBatch(this.getUIContext(), keys, (batch: string[]) => {
+      this.dissolvingRuleKeys = this.dissolvingRuleKeys.concat(batch);
     }, this.ruleDeleteParticles(), ListDissolve.AFTER_DIALOG_MS);
     try {
       await ReaderReplaceRuleStore.save(getContext(this), next);

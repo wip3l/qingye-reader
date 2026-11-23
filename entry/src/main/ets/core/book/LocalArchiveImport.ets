@@ -1,7 +1,9 @@
 import fs from '@ohos.file.fs';
 import util from '@ohos.util';
 import zlib from '@ohos.zlib';
-import { ZipArchiveEntry, ZipArchiveIndex, ZipCentralDirectoryInfo, ZipSingleEntryParts } from './ZipArchiveIndex';
+import {
+  ZipArchiveEntry, ZipArchiveIndex, ZipCentralDirectoryInfo, ZipComicLayout, ZipSingleEntryParts
+} from './ZipArchiveIndex';
 
 /** 从压缩包里解出的一本书，文件在临时目录，导入完由调用方删掉。 */
 export class ArchiveBookFile {
@@ -17,6 +19,20 @@ export class ArchiveExtractResult {
   files: ArchiveBookFile[] = [];
   /** 不能导入的条目，“包内路径：原因”。 */
   failures: string[] = [];
+  /** 包里的漫画图片数；没有书时用来判断能不能当漫画（CBZ）导入。 */
+  imageCount: number = 0;
+}
+
+export class ComicArchiveChapter {
+  title: string = '';
+  /** 本章图片所在目录，图片按序号命名（00001.jpg…），按文件名排序即阅读顺序。 */
+  dir: string = '';
+  images: string[] = [];
+}
+
+export class ComicArchiveContent {
+  chapters: ComicArchiveChapter[] = [];
+  coverPath: string = '';
 }
 
 /** 本地导入时的压缩包展开：只解出书籍条目，见 ZipArchiveIndex。 */
@@ -34,6 +50,7 @@ export class LocalArchiveImport {
     try {
       const entries = await LocalArchiveImport.readEntries(archive.fd);
       const books = ZipArchiveIndex.bookEntries(entries, bookFormats);
+      result.imageCount = ZipArchiveIndex.imageEntries(entries).length;
       if (!fs.accessSync(workDir)) fs.mkdirSync(workDir, true);
       for (let i = 0; i < books.length; i++) {
         const entry = books[i];
@@ -58,6 +75,54 @@ export class LocalArchiveImport {
       await fs.close(archive);
     }
     return result;
+  }
+
+  /**
+   * 把纯图片包（CBZ）的图片解到 extractRoot：每章一个目录 c0001、c0002…，图片改名为序号保留扩展名，
+   * 这样不受包内文件名编码影响，阅读时按目录列文件就能重建正文。坏掉的单张图跳过，一张都解不出来才报错。
+   */
+  static async extractComic(archivePath: string, extractRoot: string): Promise<ComicArchiveContent> {
+    const content = new ComicArchiveContent();
+    const workDir = `${extractRoot}/.work`;
+    const archive = await fs.open(archivePath, fs.OpenMode.READ_ONLY);
+    try {
+      const layout: ZipComicLayout = ZipArchiveIndex.comicLayout(await LocalArchiveImport.readEntries(archive.fd));
+      if (layout.chapters.length === 0) throw new Error('压缩包里没有可阅读的图片');
+      fs.mkdirSync(workDir, true);
+      let firstProblem = '';
+      let serial = 0;
+      for (let c = 0; c < layout.chapters.length; c++) {
+        const source = layout.chapters[c];
+        const chapter = new ComicArchiveChapter();
+        chapter.title = source.title;
+        chapter.dir = `${extractRoot}/c${LocalArchiveImport.pad(c + 1, 4)}`;
+        fs.mkdirSync(chapter.dir, true);
+        for (let i = 0; i < source.entries.length; i++) {
+          const entry = source.entries[i];
+          const problem = ZipArchiveIndex.entryProblem(entry);
+          if (problem) {
+            if (!firstProblem) firstProblem = problem;
+            continue;
+          }
+          const target = `${chapter.dir}/${LocalArchiveImport.pad(i + 1, 5)}.${ZipArchiveIndex.extensionOf(entry.name)}`;
+          try {
+            await LocalArchiveImport.writeEntry(archive.fd, entry, workDir, serial++, target);
+            chapter.images.push(target);
+            if (entry === layout.cover) content.coverPath = target;
+          } catch (e) {
+            console.warn('[LocalArchiveImport] comic image skipped:', entry.name, e);
+            if (!firstProblem) firstProblem = '图片解压失败，压缩包可能已损坏';
+          }
+        }
+        if (chapter.images.length > 0) content.chapters.push(chapter);
+      }
+      if (content.chapters.length === 0) throw new Error(firstProblem || '压缩包里没有可阅读的图片');
+      if (!content.coverPath) content.coverPath = content.chapters[0].images[0];
+    } finally {
+      await fs.close(archive);
+      LocalArchiveImport.removeWorkDir(workDir);
+    }
+    return content;
   }
 
   static removeWorkDir(workDir: string): void {
@@ -90,44 +155,13 @@ export class LocalArchiveImport {
     });
   }
 
-  /** 把条目的压缩数据套上单条目 ZIP 头写成小包，再用系统解压；返回解出的文件路径。 */
+  /** 解出一本书到 workDir/entry_<index>/book.<format>，返回文件路径。 */
   private static async extractEntry(fd: number, entry: ZipArchiveEntry, workDir: string, index: number,
     format: string): Promise<string> {
-    const localHeader = await LocalArchiveImport.readAt(fd, entry.localHeaderOffset, ZipArchiveIndex.LOCAL_HEADER_SIZE);
-    const dataOffset = ZipArchiveIndex.localDataOffset(localHeader, entry.localHeaderOffset);
-    const storedName = `book.${format}`;
-    const parts: ZipSingleEntryParts = ZipArchiveIndex.singleEntryArchive(entry, storedName);
-    const packPath = `${workDir}/entry_${index}.zip`;
     const outDir = `${workDir}/entry_${index}`;
-    const pack = await fs.open(packPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-    try {
-      let position = 0;
-      position += await LocalArchiveImport.writeAt(pack.fd, parts.header, position);
-      let copied = 0;
-      while (copied < entry.compressedSize) {
-        const length = Math.min(LocalArchiveImport.COPY_CHUNK, entry.compressedSize - copied);
-        const chunk = await LocalArchiveImport.readAt(fd, dataOffset + copied, length);
-        if (chunk.length < length) throw new Error('压缩包数据不完整');
-        position += await LocalArchiveImport.writeAt(pack.fd, chunk, position);
-        copied += length;
-      }
-      await LocalArchiveImport.writeAt(pack.fd, parts.trailer, position);
-    } finally {
-      await fs.close(pack);
-    }
-    try {
-      if (!fs.accessSync(outDir)) fs.mkdirSync(outDir, true);
-      await zlib.decompressFile(packPath, outDir);
-    } finally {
-      try {
-        fs.unlinkSync(packPath);
-      } catch (_) {
-      }
-    }
-    const path = `${outDir}/${storedName}`;
-    if (!fs.accessSync(path) || fs.statSync(path).size !== entry.uncompressedSize) {
-      throw new Error('解压结果不完整');
-    }
+    if (!fs.accessSync(outDir)) fs.mkdirSync(outDir, true);
+    const path = `${outDir}/book.${format}`;
+    await LocalArchiveImport.writeEntry(fd, entry, workDir, index, path);
     // 修改时间取包内记录的时间，同一个包再导入时内容没变就不用重新解析。
     const modified = ZipArchiveIndex.modifiedMillis(entry);
     if (modified > 0) {
@@ -137,6 +171,74 @@ export class LocalArchiveImport {
       }
     }
     return path;
+  }
+
+  /**
+   * 把一个条目解到 target。未压缩的条目直接拷贝数据；压缩的条目把压缩数据套上单条目 ZIP 头写成小包，
+   * 再用系统解压（workDir 放小包和解压出的临时文件），最后挪到 target。
+   */
+  private static async writeEntry(fd: number, entry: ZipArchiveEntry, workDir: string, index: number,
+    target: string): Promise<void> {
+    const localHeader = await LocalArchiveImport.readAt(fd, entry.localHeaderOffset, ZipArchiveIndex.LOCAL_HEADER_SIZE);
+    const dataOffset = ZipArchiveIndex.localDataOffset(localHeader, entry.localHeaderOffset);
+    if (entry.method === 0) {
+      const out = await fs.open(target, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      try {
+        await LocalArchiveImport.copyRange(fd, dataOffset, entry.compressedSize, out.fd, 0);
+      } finally {
+        await fs.close(out);
+      }
+      if (fs.statSync(target).size !== entry.uncompressedSize) throw new Error('解压结果不完整');
+      return;
+    }
+    const storedName = `entry.${ZipArchiveIndex.extensionOf(target) || 'bin'}`;
+    const parts: ZipSingleEntryParts = ZipArchiveIndex.singleEntryArchive(entry, storedName);
+    const packPath = `${workDir}/pack_${index}.zip`;
+    const outDir = `${workDir}/pack_${index}`;
+    const pack = await fs.open(packPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    try {
+      let position = await LocalArchiveImport.writeAt(pack.fd, parts.header, 0);
+      position += await LocalArchiveImport.copyRange(fd, dataOffset, entry.compressedSize, pack.fd, position);
+      await LocalArchiveImport.writeAt(pack.fd, parts.trailer, position);
+    } finally {
+      await fs.close(pack);
+    }
+    try {
+      if (!fs.accessSync(outDir)) fs.mkdirSync(outDir, true);
+      await zlib.decompressFile(packPath, outDir);
+      const unpacked = `${outDir}/${storedName}`;
+      if (!fs.accessSync(unpacked) || fs.statSync(unpacked).size !== entry.uncompressedSize) {
+        throw new Error('解压结果不完整');
+      }
+      if (fs.accessSync(target)) fs.unlinkSync(target);
+      fs.renameSync(unpacked, target);
+    } finally {
+      try {
+        fs.unlinkSync(packPath);
+      } catch (_) {
+      }
+      LocalArchiveImport.removeWorkDir(outDir);
+    }
+  }
+
+  /** 从 fd 的 offset 起拷 length 字节到 out 的 position，返回写入的字节数。 */
+  private static async copyRange(fd: number, offset: number, length: number, out: number,
+    position: number): Promise<number> {
+    let copied = 0;
+    while (copied < length) {
+      const size = Math.min(LocalArchiveImport.COPY_CHUNK, length - copied);
+      const chunk = await LocalArchiveImport.readAt(fd, offset + copied, size);
+      if (chunk.length < size) throw new Error('压缩包数据不完整');
+      await LocalArchiveImport.writeAt(out, chunk, position + copied);
+      copied += size;
+    }
+    return copied;
+  }
+
+  private static pad(value: number, width: number): string {
+    let text = `${value}`;
+    while (text.length < width) text = `0${text}`;
+    return text;
   }
 
   private static async readAt(fd: number, offset: number, length: number): Promise<Uint8Array> {

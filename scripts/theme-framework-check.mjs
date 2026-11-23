@@ -86,8 +86,11 @@ const pages = JSON.parse(read('entry/src/main/resources/base/profile/main_pages.
 const expectedThemes = [
   'classic-blue', 'warm-paper', 'forest-mist', 'ink-wash', 'neon-night', 'sword-frost',
   'qingluan-water', 'cat-pipi', 'azure-mecha', 'starwish-magic', 'letterpress-page', 'obsidian-archive', 'neon-harbor',
-  'celestial-vault'
+  'celestial-vault', 'morning-mist'
 ];
+// 晨雾和默认主题（素笺）一样免费，不进服务端主题目录。
+assert(/static isFree\(themeId: string\)[\s\S]*?ThemeIds\.MORNING_MIST/.test(registry),
+  'Morning Mist must be a free builtin theme');
 for (const themeId of expectedThemes) {
   assert(models.includes(`'${themeId}'`), `Theme id is missing from ThemeModels: ${themeId}`);
   assert(registry.includes(`ThemeIds.`), 'Builtin registry is not using stable ThemeIds');
@@ -162,13 +165,13 @@ for (const name of ['paper', 'forest', 'ink', 'neon', 'strawberry', 'crimson', '
 const ttsPanelThemeNames = [
   'plain_default', 'classic_blue', 'warm_paper', 'forest_mist', 'ink_wash', 'neon_night', 'strawberry_cream',
   'crimson_archive', 'plum_tea', 'rose_letter', 'moon_crane', 'sword_frost', 'qingluan_water', 'cat_pipi',
-  'azure_mecha', 'starwish_magic', 'letterpress_page', 'neon_harbor'
+  'azure_mecha', 'starwish_magic', 'letterpress_page', 'neon_harbor', 'morning_mist'
 ];
 const ttsPanelStyles = read('entry/src/main/ets/theme/TtsPanelThemeStyles.ets');
 for (const themeName of ttsPanelThemeNames) {
   for (const mode of ['light', 'dark']) {
     const resourceName = `tts_panel_${themeName}_${mode}`;
-    if (themeName === 'neon_harbor') {
+    if (['neon_harbor', 'plain_default', 'morning_mist'].includes(themeName)) {
       const dimensions = jpegDimensions(path.join(mediaRoot, `${resourceName}.jpg`));
       assert(dimensions.width === 720 && dimensions.height === 520, `Invalid TTS bitmap dimensions: ${resourceName}`);
       assert(ttsPanelStyles.includes(`app.media.${resourceName}`), `Unmapped TTS bitmap: ${resourceName}`);
@@ -185,8 +188,8 @@ for (const themeName of ttsPanelThemeNames) {
 }
 assert(read('entry/src/main/ets/components/ReaderTtsPlayerPanel.ets').includes('TtsPanelThemeBackground('),
   'TTS player panel must draw the themed panel background');
-assert(themePage.includes('this.detailListenCard(entry)') &&
-  themePage.includes('TtsPanelThemeBackground({'),
+assert(themePage.includes("this.detailSceneCard(entry, 'listen')") &&
+  read('entry/src/main/ets/components/theme/ThemeDetailScene.ets').includes('TtsPanelThemeBackground({'),
   'Theme previews must include the TTS panel card');
 
 const themedIconFiles = fs.readdirSync(mediaRoot).filter(fileName => /^ic_theme_.*\.svg$/.test(fileName));
@@ -216,6 +219,21 @@ const swordFrostJpegs = [
   'theme_cover_sword_frost_05.jpg', 'theme_cover_sword_frost_06.jpg',
   'theme_folder_art_sword_frost.jpg'
 ];
+// 默认主题（素笺）与晨雾的即梦位图；默认主题走系统启动页，没有启动封面。
+for (const [fileName, width, height] of [
+  ...['plain_default', 'morning_mist'].flatMap(name => [
+    ...Array.from({ length: 4 }, (_, i) => [`theme_cover_${name}_0${i + 1}.jpg`, 450, 660]),
+    [`theme_folder_art_${name}.jpg`, 450, 660]
+  ]),
+  ['theme_startup_morning_mist.jpg', 841, 1870],
+  ...['plain_default', 'morning_mist'].flatMap(name => [
+    [`home_bg_${name}_light.jpg`, 1080, 1350],
+    [`home_bg_${name}_dark.jpg`, 1080, 1350]
+  ])
+]) {
+  const dimensions = jpegDimensions(path.join(mediaRoot, fileName));
+  assert(dimensions.width === width && dimensions.height === height, `Invalid theme artwork dimensions: ${fileName}`);
+}
 for (const fileName of ['theme_startup_neon_harbor.jpg', 'theme_folder_art_neon_harbor.jpg',
   ...Array.from({ length: 6 }, (_, i) => `theme_cover_neon_harbor_0${i + 1}.jpg`)]) {
   const dimensions = jpegDimensions(path.join(mediaRoot, fileName));
@@ -324,14 +342,18 @@ assert(reader.includes('readerV2TtsHighlightRects(') && reader.includes('this.re
   'TTS highlight overlay is missing');
 assert(reader.includes('start >= displayText.length || regex.lastIndex >= displayText.length'),
   'Reader zero-length regex guard is missing');
-assert(regexSettings.includes('start >= text.length || regex.lastIndex >= text.length'),
+// 预览改用正文同一套排版后，零长度命中的写法是先判断到头再推进 lastIndex。
+assert(regexSettings.includes('if (start >= content.length) break;') &&
+  regexSettings.includes('regex.lastIndex = Math.max(regex.lastIndex + 1, start + 1)'),
   'Preview zero-length regex guard is missing');
 
 assert(readerThemes.includes('APP_THEME_INDEX: number = 4'), 'Reader app-theme compatibility index is missing');
 assert(runtime.includes("KEY_THEME_REVISION"), 'Theme runtime revision broadcast is missing');
 assert(readerBackgroundComponent.includes('ThemeAssetRegistry.readerBackgroundDecoration'),
   'Responsive reader background decoration resolver is not connected');
-assert(reader.includes('ReaderThemeBackground({') && reader.includes('customImageFit: this.getBackgroundImageFit()'),
+assert(reader.includes('ReaderThemeBackground({') &&
+  reader.includes('customImageFit: this.currentReaderTheme().backgroundImageFit') &&
+  reader.includes('customImagePosition: this.currentReaderTheme().backgroundImagePosition'),
   'Reader root surface does not draw the responsive theme background');
 assert(readerBackgroundComponent.includes('.objectFit(ImageFit.Contain)') &&
   !readerBackgroundComponent.includes('.border('),
@@ -346,7 +368,7 @@ for (const [layout, builder] of [['immersiveTabs', 'bottomTabBar'], ['compatTabs
 }
 assert(indexPage.includes('BottomTabBarStyle.of(this.navigationIcon(tabId, index)') &&
   indexPage.includes('Image(this.navigationIcon(tabId, index))') &&
-  indexPage.includes('ThemeAssetRegistry.navigationIcon(iconPackId, tabId, selected)'),
+  indexPage.includes('ThemeAssetRegistry.navigationIcon(iconPackId, tabId, selected, dark)'),
   'Tab bar builders do not resolve themed navigation icons');
 // 可选的第四个页签（听 / 足迹）：每个内置图标包都有自己的一套，主题包缺图标时回退到基底主题。
 for (const fileName of fs.readdirSync(mediaRoot).filter(name => /^ic_theme_[a-z_]+_mine\.(svg|png)$/.test(name))) {
@@ -446,7 +468,7 @@ assert(!themeColorPage.includes("'pages/AppIconSettings'") &&
 // 主题页“我的”只露几套已拥有主题，自定义方案紧跟其后，不会被大量已拥有主题挤到下面。
 const mineContent = themePage.match(/  mineContent\(\) \{[\s\S]*?\n  \}\n/)?.[0] || '';
 assert(mineContent.indexOf('this.ownedPreviewEntries()') >= 0 &&
-  mineContent.indexOf('this.ownedPreviewEntries()') < mineContent.indexOf('this.schemeEntries()') &&
+  mineContent.indexOf('this.ownedPreviewEntries()') < mineContent.indexOf('this.schemePreviewEntries()') &&
   themePage.includes('.slice(0, OWNED_PREVIEW_COUNT)') &&
   themePage.includes("url: 'pages/ThemeColorSettings'"),
   'Theme page does not expose the custom theme before builtin themes');

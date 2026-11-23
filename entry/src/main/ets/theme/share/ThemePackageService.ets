@@ -19,7 +19,7 @@ import { ReaderFontHelper } from '../../utils/ReaderFontHelper';
 import { ReaderSettings, ReaderSettingsStore } from '../../utils/ReaderSettingsStore';
 import { ReaderThemeHelper } from '../../utils/ReaderThemeHelper';
 import { BuiltinThemeRegistry } from '../BuiltinThemeRegistry';
-import { SuperExclusiveThemes, ThemeIds, ThemePack } from '../ThemeModels';
+import { DefaultBaseRevision, SuperExclusiveThemes, ThemeIds, ThemePack } from '../ThemeModels';
 import { InstalledThemePack, ThemePackRecord, ThemePackRegistry } from '../ThemePackRegistry';
 import { ThemePackStore } from '../../utils/ThemePackStore';
 import {
@@ -28,6 +28,8 @@ import {
   assetPath,
   assetPathExtension,
   assetRef,
+  bubbleDarkDifference,
+  bubbleFor,
   checkSvgSource,
   decodeManifest,
   decodeTheme,
@@ -41,13 +43,17 @@ import {
   isPackThemeId,
   kindForExtension,
   mapPartsAssetRefs,
+  maxAssetsFor,
   maxBytesForKind,
   mergeRules,
+  navigationIsEmpty,
   packageFileName,
   packageIdOfThemeId,
   packThemeId,
   partsAssetRefs,
   partsUseManyCovers,
+  partsUseBubbleFrameFeature,
+  partsUseBitmapCapOrShelfFrame,
   partsUseSingleCorner,
   pickLayout,
   QYTHEME_EXTENSION,
@@ -61,6 +67,7 @@ import {
   sniffAssetExtension,
   SourceRestriction,
   THEME_SOURCE_FIELDS,
+  tooManyAssetsMessage,
   ThemePackageAsset,
   ThemePackageAssetKinds,
   ThemePackageCredits,
@@ -318,9 +325,16 @@ export class ThemePackageService {
         if (partsUseManyCovers(bundled.record.parts)) {
           manifest.requires.push(ThemePackageFeatures.BOOK_COVERS_16);
         }
+        if (partsUseBubbleFrameFeature(bundled.record.parts)) {
+          manifest.requires.push(ThemePackageFeatures.BUBBLE_FRAME);
+        }
+        if (partsUseBitmapCapOrShelfFrame(bundled.record.parts)) {
+          manifest.requires.push(ThemePackageFeatures.BITMAP_CAP_SHELF_FRAME);
+        }
         manifest.version = bundled.version;
         if (!manifest.description) manifest.description = bundled.description;
         manifest.baseTheme = bundled.baseTheme;
+        manifest.baseRevision = DefaultBaseRevision.CURRENT;
         if (scheme.packageId === bundled.packageId) {
           manifest.credits = bundled.credits;
         } else {
@@ -336,6 +350,7 @@ export class ThemePackageService {
       const settingsRecord = ThemePackageService.settingsRecord(scheme.settings);
       // 是否使用主题封面、应用时是否带排版是本机偏好，不随主题走。
       settingsRecord['themeBookCoverEnabled'] = false;
+      settingsRecord['themeBookFrameEnabled'] = false;
       settingsRecord['themeApplyLayoutEnabled'] = false;
       if (AppThemeSettingsStore.hasOverrides(scheme.settings)) {
         manifest.requires.push(ThemePackageFeatures.SCHEME_OVERRIDES);
@@ -417,6 +432,9 @@ export class ThemePackageService {
       }
       if (manifest.assets.length > ThemePackageLimits.MAX_ASSETS) {
         throw new Error('主题素材过多，无法导出');
+      }
+      if (manifest.assets.length > ThemePackageLimits.LEGACY_MAX_ASSETS) {
+        manifest.requires.push(ThemePackageFeatures.ASSETS_128);
       }
 
       ThemePackageService.writeText(`${pkgDir}/manifest.json`, encodeManifest(manifest));
@@ -729,6 +747,7 @@ export class ThemePackageService {
       }
       schemeSettings.themeId = ThemeIds.CUSTOM;
       schemeSettings.themeBookCoverEnabled = false;
+      schemeSettings.themeBookFrameEnabled = false;
       schemeSettings.themeApplyLayoutEnabled = false;
       const scheme = await CustomThemeSchemeStore.addImported(context, appSettings, manifest.name, schemeSettings,
         manifest.author, replaceSchemeId, parts ? manifest.packageId : '', manifest.description);
@@ -778,8 +797,11 @@ export class ThemePackageService {
     record.author = manifest.author;
     record.version = manifest.version;
     record.description = manifest.description;
-    record.baseTheme = isPackThemeId(manifest.baseTheme) ? BuiltinThemeRegistry.DEFAULT_THEME_ID :
+    const baseTheme = isPackThemeId(manifest.baseTheme) ? BuiltinThemeRegistry.DEFAULT_THEME_ID :
       BuiltinThemeRegistry.normalizeBuiltinId(manifest.baseTheme);
+    // 素笺之前导出的包（清单没写 baseRevision）照着旧默认主题设计，没写的部件按原默认主题补。
+    record.baseTheme = DefaultBaseRevision.isLegacy(manifest.baseRevision) ?
+      DefaultBaseRevision.upgradeId(baseTheme) : baseTheme;
     record.installedAt = Date.now();
     record.credits = manifest.credits;
     record.parts = mapPartsAssetRefs(parts, (ref: string): string => paths.get(ref) || '');
@@ -795,6 +817,12 @@ export class ThemePackageService {
     if (navigation && !(navigation.bookshelf && navigation.explore && navigation.mine)) {
       record.navigation = null;
     }
+    if (!record.navigation || navigationIsEmpty(record.navigationDark)) record.navigationDark = null;
+    // 深色气泡只带与浅色不同的那几项，素材清单也只收用得到的文件。
+    const lightBubble = bubbleFor(record, false);
+    const darkBubble = bubbleDarkDifference(record);
+    record.bubble = lightBubble;
+    record.bubbleDark = darkBubble;
     for (const relativePath of partsAssetRefs(record)) {
       const source = `${bundled.dir}/${relativePath}`;
       if (!ThemePackageService.exists(source)) {
@@ -1073,8 +1101,8 @@ export class ThemePackageService {
       }
       let asset = findAssetByPath(manifest, name);
       if (!asset) {
-        if (manifest.assets.length >= ThemePackageLimits.MAX_ASSETS) {
-          throw new Error('主题包素材数量超出上限');
+        if (manifest.assets.length >= maxAssetsFor(manifest.requires)) {
+          throw new Error(tooManyAssetsMessage(manifest.assets.length + 1, manifest.requires));
         }
         asset = new ThemePackageAsset();
         asset.path = name;
@@ -1142,6 +1170,33 @@ export class ThemePackageService {
       const override = settings[key];
       if (!override || typeof override !== 'object') continue;
       const record = override as Record<string, Object>;
+      // 段评气泡图、角标图指向的包（不是这个包自己、这台设备也没装）取不到素材：改回跟随。
+      const comment = record['comment'];
+      if (comment && typeof comment === 'object') {
+        const commentRecord = comment as Record<string, Object>;
+        for (const field of ['image', 'ornamentImage']) {
+          const value = commentRecord[field];
+          if (typeof value === 'string' && isPackThemeId(value) && value !== ownThemeId &&
+            !ThemePackRegistry.has(value)) {
+            commentRecord[field] = '';
+          }
+        }
+      }
+      // 章首装饰指向的包同理。
+      const head = record['chapterHead'];
+      if (typeof head === 'string' && isPackThemeId(head) && head !== ownThemeId && !ThemePackRegistry.has(head)) {
+        record['chapterHead'] = '';
+      }
+      // 标题强调的气泡样式用不了时同样改回跟随（不另列提示）。
+      const title = record['title'];
+      if (title && typeof title === 'object') {
+        const titleRecord = title as Record<string, Object>;
+        const titleStyle = typeof titleRecord['bubbleStyle'] === 'string' ? titleRecord['bubbleStyle'] as string : '';
+        if (titleStyle && titleStyle !== 'emphasis' && !titleStyle.startsWith(`${ownThemeId}:`) &&
+          !ThemeAccessPolicy.canUseBubbleStyle(titleStyle)) {
+          titleRecord['bubbleStyle'] = '';
+        }
+      }
       const style = typeof record['bubbleStyle'] === 'string' ? record['bubbleStyle'] as string : '';
       if (!style || style === ownThemeId || ThemeAccessPolicy.canUseBubbleStyle(style)) continue;
       record['bubbleStyle'] = '';

@@ -13,6 +13,11 @@ export struct RecentReadCarousel {
   @Prop secondaryColor: string = '';
   /** 多本时每张卡占视口宽度的比例；小于 1 时两侧露出相邻卡片，等于 1 时整卡切换。 */
   @Prop itemWidthRatio: number = 0.74;
+  /**
+   * 卡片槽位的裁切圆角，小于 0 时用主题卡片圆角。陪伴书架的继续阅读卡没有底色，大书贴着卡片左上角，
+   * 按主题圆角裁会切掉封面一角，所以传 0。
+   */
+  @Prop slotRadius: number = -1;
   @BuilderParam cardContent: (book: Book) => void;
   renderKey: (book: Book) => string = (book: Book): string => book.bookUrl;
   onOpen: (book: Book, event: GestureEvent) => void = (_book: Book, _event: GestureEvent): void => {};
@@ -117,7 +122,7 @@ export struct RecentReadCarousel {
         }
         .width(this.itemWidth())
         .height(this.cardHeight)
-        .borderRadius(ThemeRuntime.cardRadius())
+        .borderRadius(this.slotRadius >= 0 ? this.slotRadius : ThemeRuntime.cardRadius())
         .clip(true)
         .translate({ x: this.itemTranslation(slot) })
         .hitTestBehavior(HitTestMode.None)

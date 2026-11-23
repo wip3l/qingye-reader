@@ -31,11 +31,39 @@ export class ReaderReplaceRuleCheck {
   compatibilityNotes: string[] = [];
 }
 
+/**
+ * 一条对标题生效的规则。规则列表换新时整理一次，各本书共用：范围词已拆好，正则到第一次用上才编译。
+ * 书架一屏有很多本书，不能每本书都把全部规则重新整理、编译一遍。
+ */
+class ReaderTitleReplaceStep {
+  name: string = '';
+  pattern: string = '';
+  replacement: string = '';
+  isRegex: boolean = false;
+  includes: string[] = [];
+  excludes: string[] = [];
+  regex: RegExp | null = null;
+  /** 正则编译不了：之后直接跳过，不逐次重试。 */
+  broken: boolean = false;
+}
+
 export class ReaderReplaceRuleStore {
   static readonly UPDATE_TIME_KEY: string = 'readerReplaceRulesUpdateTime';
   private static readonly STORE_NAME: string = 'reader_replace_rules';
   private static readonly RULES_KEY: string = 'rulesV1';
   private static cachedRules: ReaderReplaceRule[] | null = null;
+  /** cachedRules 对应的落盘原文；强制重读时原文没变就沿用同一个数组，按数组引用记的标题缓存不作废。 */
+  private static cachedRaw: string | null = null;
+  private static titleStepsRules: ReaderReplaceRule[] | null = null;
+  private static titleSteps: ReaderTitleReplaceStep[] = [];
+  private static readonly TITLE_RESULT_LIMIT: number = 2000;
+  private static titlePlanRules: ReaderReplaceRule[] | null = null;
+  private static titlePlanScope: string = '';
+  private static titlePlan: ReaderTitleReplaceStep[] = [];
+  private static titleResults: Map<string, string> = new Map<string, string>();
+  private static displayPlanRules: ReaderReplaceRule[] | null = null;
+  private static displayPlans: Map<string, ReaderTitleReplaceStep[]> = new Map<string, ReaderTitleReplaceStep[]>();
+  private static displayResults: Map<string, string> = new Map<string, string>();
   /** 内置“移除标题”：开启后正文顶部不排版章节名，顶栏、目录等处照常显示。 */
   static readonly BUILTIN_REMOVE_TITLE: string = 'removeChapterTitle';
   // 固定编号让多设备同步时是同一条；取远大于时间戳的值，避开导入规则自带的小编号。旧版客户端回传会丢掉
@@ -52,17 +80,23 @@ export class ReaderReplaceRuleStore {
     const store = await preferences.getPreferences(context, ReaderReplaceRuleStore.STORE_NAME);
     const value = await store.get(ReaderReplaceRuleStore.RULES_KEY, '');
     const raw = typeof value === 'string' ? value : '';
+    if (ReaderReplaceRuleStore.cachedRules && raw === ReaderReplaceRuleStore.cachedRaw) {
+      return ReaderReplaceRuleStore.cloneRules(ReaderReplaceRuleStore.cachedRules);
+    }
     const rules = ReaderReplaceRuleStore.decode(raw);
     ReaderReplaceRuleStore.cachedRules = ReaderReplaceRuleStore.cloneRules(rules);
+    ReaderReplaceRuleStore.cachedRaw = raw;
     return rules;
   }
 
   static async save(context: Context, rules: ReaderReplaceRule[]): Promise<void> {
     const normalized = ReaderReplaceRuleStore.withBuiltins(
       rules.map((rule: ReaderReplaceRule) => ReaderReplaceRuleStore.normalize(rule)));
+    const raw = JSON.stringify(normalized);
     ReaderReplaceRuleStore.cachedRules = ReaderReplaceRuleStore.cloneRules(normalized);
+    ReaderReplaceRuleStore.cachedRaw = raw;
     const store = await preferences.getPreferences(context, ReaderReplaceRuleStore.STORE_NAME);
-    await store.put(ReaderReplaceRuleStore.RULES_KEY, JSON.stringify(normalized));
+    await store.put(ReaderReplaceRuleStore.RULES_KEY, raw);
     await store.flush();
     AppStorage.setOrCreate(ReaderReplaceRuleStore.UPDATE_TIME_KEY, Date.now());
     CloudSyncChangeTracker.markPreferenceChanged();
@@ -102,6 +136,140 @@ export class ReaderReplaceRuleStore {
 
   static applyTitle(text: string, rules: ReaderReplaceRule[], book: Book | null): string {
     return ReaderReplaceRuleStore.apply(text, rules, book, true);
+  }
+
+  /**
+   * 阅读页取章节名用。页眉页脚每次刷新（滚动阅读时随进度不断刷新）都要取章节名，逐次对全部规则
+   * 判断范围、编译正则会拖住主线程，所以按“规则列表 + 书籍”预先筛出适用的标题规则并编译好，
+   * 再按标题原文记住结果。规则列表按引用识别：调用方换规则时必须换一个新数组，不能原地修改。
+   */
+  static applyTitleCached(text: string, rules: ReaderReplaceRule[], book: Book | null): string {
+    if (!text || rules.length === 0) {
+      return text;
+    }
+    const scope = ReaderReplaceRuleStore.bookScopeText(book);
+    if (rules !== ReaderReplaceRuleStore.titlePlanRules || scope !== ReaderReplaceRuleStore.titlePlanScope) {
+      ReaderReplaceRuleStore.titlePlan = ReaderReplaceRuleStore.buildTitlePlan(rules, book);
+      ReaderReplaceRuleStore.titlePlanRules = rules;
+      ReaderReplaceRuleStore.titlePlanScope = scope;
+      ReaderReplaceRuleStore.titleResults.clear();
+    }
+    const plan = ReaderReplaceRuleStore.titlePlan;
+    if (plan.length === 0) {
+      return text;
+    }
+    const cached = ReaderReplaceRuleStore.titleResults.get(text);
+    if (cached !== undefined) {
+      return cached;
+    }
+    let result = text;
+    for (const step of plan) {
+      result = ReaderReplaceRuleStore.runTitleStep(step, result);
+    }
+    if (ReaderReplaceRuleStore.titleResults.size >= ReaderReplaceRuleStore.TITLE_RESULT_LIMIT) {
+      ReaderReplaceRuleStore.titleResults.clear();
+    }
+    ReaderReplaceRuleStore.titleResults.set(text, result);
+    return result;
+  }
+
+  /**
+   * 阅读页以外（书架等）显示章节名用：库里存的是书源原始章节名，这里按已载入的规则净化后再显示，
+   * 与阅读页看到的一致。规则还没载入时原样返回，调用方应先 load 一次并在载入后刷新。
+   * 书架一屏有很多本书，所以适用规则按书各记一份，不与阅读页的单书缓存共用。
+   */
+  static displayTitle(text: string, book: Book | null): string {
+    const rules = ReaderReplaceRuleStore.cachedRules;
+    if (!text || !rules || rules.length === 0) {
+      return text;
+    }
+    if (rules !== ReaderReplaceRuleStore.displayPlanRules) {
+      ReaderReplaceRuleStore.displayPlanRules = rules;
+      ReaderReplaceRuleStore.displayPlans.clear();
+      ReaderReplaceRuleStore.displayResults.clear();
+    }
+    const scope = ReaderReplaceRuleStore.bookScopeText(book);
+    let plan = ReaderReplaceRuleStore.displayPlans.get(scope);
+    if (plan === undefined) {
+      plan = ReaderReplaceRuleStore.buildTitlePlan(rules, book);
+      ReaderReplaceRuleStore.displayPlans.set(scope, plan);
+    }
+    if (plan.length === 0) {
+      return text;
+    }
+    const key = `${scope}\n\n${text}`;
+    const cached = ReaderReplaceRuleStore.displayResults.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+    let result = text;
+    for (const step of plan) {
+      result = ReaderReplaceRuleStore.runTitleStep(step, result);
+    }
+    // 规则把章节名整个删空时退回原文，书架上不留空行。
+    result = result.trim() || text;
+    if (ReaderReplaceRuleStore.displayResults.size >= ReaderReplaceRuleStore.TITLE_RESULT_LIMIT) {
+      ReaderReplaceRuleStore.displayResults.clear();
+    }
+    ReaderReplaceRuleStore.displayResults.set(key, result);
+    return result;
+  }
+
+  /** 这本书适用的标题规则：从整理好的规则里按书籍范围挑，顺序不变。 */
+  private static buildTitlePlan(rules: ReaderReplaceRule[], book: Book | null): ReaderTitleReplaceStep[] {
+    const steps = ReaderReplaceRuleStore.titleStepsFor(rules);
+    if (steps.length === 0) {
+      return steps;
+    }
+    const target = ReaderReplaceRuleStore.bookScopeText(book);
+    return steps.filter((step: ReaderTitleReplaceStep): boolean =>
+      ReaderReplaceRuleStore.scopeMatches(step.includes, step.excludes, target));
+  }
+
+  /** 规则列表里对标题生效的规则，按数组引用记住，同一份规则只整理一次。 */
+  private static titleStepsFor(rules: ReaderReplaceRule[]): ReaderTitleReplaceStep[] {
+    if (rules === ReaderReplaceRuleStore.titleStepsRules) {
+      return ReaderReplaceRuleStore.titleSteps;
+    }
+    const steps: ReaderTitleReplaceStep[] = [];
+    for (const sourceRule of rules) {
+      const rule = ReaderReplaceRuleStore.normalize(sourceRule);
+      if (!rule.enabled || !rule.pattern || !rule.applyToTitle) {
+        continue;
+      }
+      const step = new ReaderTitleReplaceStep();
+      step.name = rule.name;
+      step.pattern = rule.pattern;
+      step.replacement = rule.replacement;
+      step.isRegex = rule.isRegex;
+      step.includes = ReaderReplaceRuleStore.scopeTokens(rule.scope);
+      step.excludes = ReaderReplaceRuleStore.scopeTokens(rule.excludeScope);
+      steps.push(step);
+    }
+    ReaderReplaceRuleStore.titleStepsRules = rules;
+    ReaderReplaceRuleStore.titleSteps = steps;
+    return steps;
+  }
+
+  private static runTitleStep(step: ReaderTitleReplaceStep, text: string): string {
+    if (step.broken) {
+      return text;
+    }
+    try {
+      if (!step.isRegex) {
+        return text.split(step.pattern).join(step.replacement);
+      }
+      if (!step.regex) {
+        // 带 g 的正则各本书共用：String.replace 每次从头匹配，不受 lastIndex 影响。
+        step.regex = JavaRegexCompat.compile(step.pattern, 'g');
+        step.replacement = JavaRegexCompat.convertReplacement(step.replacement);
+      }
+      return text.replace(step.regex, step.replacement);
+    } catch (error) {
+      step.broken = true;
+      console.warn(`替换净化规则无效: ${step.name || step.pattern}`, error);
+      return text;
+    }
   }
 
   static applyContent(text: string, rules: ReaderReplaceRule[], book: Book | null): string {
@@ -211,22 +379,27 @@ export class ReaderReplaceRuleStore {
   }
 
   private static matchesBookScope(rule: ReaderReplaceRule, book: Book | null): boolean {
-    const target = ReaderReplaceRuleStore.bookScopeText(book);
-    const includes = ReaderReplaceRuleStore.scopeTokens(rule.scope);
+    return ReaderReplaceRuleStore.scopeMatches(ReaderReplaceRuleStore.scopeTokens(rule.scope),
+      ReaderReplaceRuleStore.scopeTokens(rule.excludeScope), ReaderReplaceRuleStore.bookScopeText(book));
+  }
+
+  /** includes、excludes 是 scopeTokens 拆好的范围词，target 是 bookScopeText 的结果。 */
+  private static scopeMatches(includes: string[], excludes: string[], target: string): boolean {
     if (includes.length > 0 && !includes.some((token: string) =>
       ReaderReplaceRuleStore.scopeTokenMatches(token, target))) {
       return false;
     }
-    const excludes = ReaderReplaceRuleStore.scopeTokens(rule.excludeScope);
-    return !excludes.some((token: string) => ReaderReplaceRuleStore.scopeTokenMatches(token, target));
+    return excludes.length === 0 ||
+      !excludes.some((token: string) => ReaderReplaceRuleStore.scopeTokenMatches(token, target));
   }
 
   private static bookScopeText(book: Book | null): string {
     if (!book) {
       return '';
     }
-    return `${book.name || ''}\n${book.author || ''}\n${book.originName || ''}\n` +
-      `${book.origin || ''}\n${book.bookUrl || ''}`.toLowerCase();
+    // 范围词在 scopeTokens 里已转小写，这里整串一起转，与正文净化（ReaderContentPreprocessor）的口径一致。
+    return (`${book.name || ''}\n${book.author || ''}\n${book.originName || ''}\n` +
+      `${book.origin || ''}\n${book.bookUrl || ''}`).toLowerCase();
   }
 
   private static scopeTokens(value: string): string[] {

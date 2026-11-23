@@ -20,12 +20,14 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { ReaderThemeBackground } from '../components/ReaderThemeBackground';
 import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
+import { ThemeModeSwitch } from '../components/theme/ThemeModeSwitch';
 import {
   ReaderHeaderFooterEditor,
   ReaderTypographyField,
   ReaderTypographyStepper
 } from '../components/reader/ReaderLayoutSettings';
 import { ReaderInfoBarRow } from '../components/reader/ReaderInfoBar';
+import { ReaderSettingsPreviewNavigation } from '../components/reader/ReaderSettingsPreview';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { SettingNavRow, SettingRow, SettingSwitchRow } from '../components/common/SettingRow';
@@ -63,17 +65,22 @@ class TypographyPreviewSlice {
   key: string = '';
 }
 
-/** 一页能放下多少正文：标题的行数、完整显示的段落数，以及最后一段截到第几行（0 表示不截）。 */
+/** 一页能放下多少正文：标题的行数与上方留白、完整显示的段落数，以及最后一段截到第几行（0 表示不截）。 */
 class TypographyPreviewFit {
   titleLines: number = 0;
+  titleTop: number = 0;
   paragraphCount: number = 0;
   lastLines: number = 0;
 }
 
 const TOOLBAR_CONTROL_HEIGHT: number = 40;
 const MODE_SWITCH_WIDTH: number = 152;
-const MODE_SWITCH_INSET: number = 4;
 const FULL_PREVIEW_BUTTON_WIDTH: number = 112;
+const PAGE_SWITCH_MAX_WIDTH: number = 136;
+const PAGE_SWITCH_MIN_WIDTH: number = 104;
+/** 标题单页时预览分两页：标题页与紧随其后的正文页。 */
+const PREVIEW_TITLE_PAGE: number = 0;
+const PREVIEW_BODY_PAGE: number = 1;
 const PREVIEW_BOOK_NAME: string = '长街灯火';
 const PREVIEW_AUTHOR: string = '佚名';
 const PREVIEW_CHAPTER_TITLE: string = '第一章 风起';
@@ -131,6 +138,10 @@ struct ThemeTypographySettingsPage {
   @State previewRevision: number = 0;
   @State windowFit: TypographyPreviewFit = new TypographyPreviewFit();
   @State fullFit: TypographyPreviewFit = new TypographyPreviewFit();
+  @State windowTitleFit: TypographyPreviewFit = new TypographyPreviewFit();
+  @State fullTitleFit: TypographyPreviewFit = new TypographyPreviewFit();
+  @State previewPageIndex: number = PREVIEW_BODY_PAGE;
+  private windowPager: SwiperController = new SwiperController();
   private schemeId: string = '';
   private profileId: string = '';
   private themePack: ThemePack | null = null;
@@ -231,7 +242,24 @@ struct ThemeTypographySettingsPage {
   previewWindow() {
     Stack({ alignContent: Alignment.TopStart }) {
       if (this.loaded) {
-        this.previewPage(false)
+        if (this.titleSinglePage()) {
+          Swiper(this.windowPager) {
+            this.previewPageHost(false, PREVIEW_TITLE_PAGE)
+            this.previewPageHost(false, PREVIEW_BODY_PAGE)
+          }
+          .id('theme_typography_preview_pages')
+          .width('100%')
+          .height('100%')
+          .index(this.previewPageIndex)
+          .loop(false)
+          .indicator(false)
+          .duration(220)
+          .onChange((index: number) => {
+            this.previewPageIndex = index;
+          })
+        } else {
+          this.previewPage(false, PREVIEW_BODY_PAGE)
+        }
       }
     }
     .width(this.previewWindowWidth())
@@ -242,19 +270,38 @@ struct ThemeTypographySettingsPage {
     .border({ width: 0.5, color: ThemeRuntime.hairlineColor(this.appDarkMode) })
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.XS })
     .onClick(() => this.openFullPreview())
-    .accessibilityText('正文预览，轻触全屏查看')
+    .accessibilityText(this.titleSinglePage() ? '正文预览，左右滑动切换标题页与正文页，轻触全屏查看' :
+      '正文预览，轻触全屏查看')
   }
 
   @Builder
   previewToolbar() {
     Row({ space: AppSpacing.MD }) {
-      this.previewModeSwitch()
+      ThemeModeSwitch({
+        selectedDark: this.previewDark,
+        darkMode: this.appDarkMode,
+        accentColor: this.accentColor(),
+        subTextColor: this.subTextColor(),
+        fallbackColor: this.cardColor(),
+        switchWidth: MODE_SWITCH_WIDTH,
+        switchHeight: TOOLBAR_CONTROL_HEIGHT,
+        onChange: (dark: boolean) => this.setPreviewDark(dark)
+      })
 
       Blank()
         .layoutWeight(1)
 
+      if (this.titleSinglePage()) {
+        ReaderSettingsPreviewNavigation({
+          selectedIndex: this.previewPageIndex,
+          darkMode: this.appDarkMode,
+          navigationWidth: this.pageSwitchWidth(),
+          onSelect: (index: number): void => this.showPreviewPage(index)
+        })
+      }
+
       ImmersiveMaterialSurface({
-        surfaceWidth: FULL_PREVIEW_BUTTON_WIDTH,
+        surfaceWidth: this.titleSinglePage() ? TOOLBAR_CONTROL_HEIGHT : FULL_PREVIEW_BUTTON_WIDTH,
         surfaceHeight: TOOLBAR_CONTROL_HEIGHT,
         darkMode: this.appDarkMode,
         fallbackColor: this.cardColor(),
@@ -264,79 +311,26 @@ struct ThemeTypographySettingsPage {
           SymbolGlyph($r('sys.symbol.arrow_up_left_and_arrow_down_right'))
             .fontSize(16)
             .fontColor([this.accentColor()])
-          Text('全屏预览')
-            .fontSize(AppFontSize.BODY)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.accentColor())
+          // 多出页面切换后把文字让出来，窄屏也排得下；点预览窗同样进全屏。
+          if (!this.titleSinglePage()) {
+            Text('全屏预览')
+              .fontSize(AppFontSize.BODY)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.accentColor())
+          }
         }
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.Center)
+        .accessibilityGroup(true)
         .accessibilityText('全屏预览')
+        .accessibilityRole(AccessibilityRoleType.BUTTON)
         .onClick(() => this.openFullPreview())
       }
     }
     .width('100%')
     .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.MD, bottom: AppSpacing.XS })
     .alignItems(VerticalAlign.Center)
-  }
-
-  /**
-   * 浅色/深色预览切换：沉浸光感胶囊底板上两段等宽选项，选中项下面垫一块滑动的强调色底。
-   * 选中状态在 builder 里直接读 previewDark，不经参数按值传入，点按后立即刷新。
-   */
-  @Builder
-  previewModeSwitch() {
-    ImmersiveMaterialSurface({
-      surfaceWidth: MODE_SWITCH_WIDTH,
-      surfaceHeight: TOOLBAR_CONTROL_HEIGHT,
-      darkMode: this.appDarkMode,
-      fallbackColor: this.cardColor(),
-      glowColor: this.accentGlowColor()
-    }) {
-      Stack({ alignContent: Alignment.Start }) {
-        Row()
-          .width(this.modeOptionWidth() - MODE_SWITCH_INSET * 2)
-          .height(TOOLBAR_CONTROL_HEIGHT - MODE_SWITCH_INSET * 2)
-          .borderRadius((TOOLBAR_CONTROL_HEIGHT - MODE_SWITCH_INSET * 2) / 2)
-          .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
-          .translate({ x: MODE_SWITCH_INSET + (this.previewDark ? this.modeOptionWidth() : 0) })
-          .animation({ duration: 280, curve: Curve.Friction })
-          .hitTestBehavior(HitTestMode.None)
-        Row() {
-          this.previewModeOption(false)
-          this.previewModeOption(true)
-        }
-        .width('100%')
-        .height('100%')
-      }
-      .width('100%')
-      .height('100%')
-    }
-  }
-
-  @Builder
-  previewModeOption(dark: boolean) {
-    Row({ space: AppSpacing.XS }) {
-      SymbolGlyph(dark ? $r('sys.symbol.moon') : $r('sys.symbol.sun_max'))
-        .fontSize(15)
-        .fontColor([this.previewDark === dark ? this.accentColor() : this.subTextColor()])
-      Text(dark ? '深色' : '浅色')
-        .fontSize(AppFontSize.BODY)
-        .fontWeight(this.previewDark === dark ? FontWeight.Medium : FontWeight.Regular)
-        .fontColor(this.previewDark === dark ? this.accentColor() : this.subTextColor())
-        .animation({ duration: 180, curve: Curve.Friction })
-    }
-    .width(this.modeOptionWidth())
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .accessibilityText(dark ? '预览深色模式' : '预览浅色模式')
-    .accessibilitySelected(this.previewDark === dark)
-    .onClick(() => this.setPreviewDark(dark))
-  }
-
-  modeOptionWidth(): number {
-    return MODE_SWITCH_WIDTH / 2;
   }
 
   accentGlowColor(): string {
@@ -346,7 +340,24 @@ struct ThemeTypographySettingsPage {
   @Builder
   fullPreviewOverlay() {
     Stack({ alignContent: Alignment.TopStart }) {
-      this.previewPage(true)
+      if (this.titleSinglePage()) {
+        Swiper() {
+          this.previewPageHost(true, PREVIEW_TITLE_PAGE)
+          this.previewPageHost(true, PREVIEW_BODY_PAGE)
+        }
+        .id('theme_typography_full_preview_pages')
+        .width('100%')
+        .height('100%')
+        .index(this.previewPageIndex)
+        .loop(false)
+        .indicator(false)
+        .duration(220)
+        .onChange((index: number) => {
+          this.previewPageIndex = index;
+        })
+      } else {
+        this.previewPage(true, PREVIEW_BODY_PAGE)
+      }
     }
     .width('100%')
     .height('100%')
@@ -357,9 +368,23 @@ struct ThemeTypographySettingsPage {
     .onClick(() => this.closeFullPreview())
   }
 
-  /** 一页正文：背景、页眉、标题与段落、页脚。full 为 true 时按整屏（含状态栏与导航条）排布。 */
+  /** 翻页容器里的一页；full 与 page 只传固定值，页内内容靠读状态刷新。 */
   @Builder
-  previewPage(full: boolean) {
+  previewPageHost(full: boolean, page: number) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      this.previewPage(full, page)
+    }
+    .width('100%')
+    .height('100%')
+    .clip(true)
+  }
+
+  /**
+   * 一页正文：背景、页眉、标题与段落、页脚。full 为 true 时按整屏（含状态栏与导航条）排布。
+   * 标题单页时 page 区分标题页与正文页，其余情况只有正文页。
+   */
+  @Builder
+  previewPage(full: boolean, page: number) {
     ReaderThemeBackground({
       surfaceColor: this.previewTheme().backgroundColor,
       backgroundAssetId: this.previewTheme().backgroundAssetId,
@@ -370,9 +395,9 @@ struct ThemeTypographySettingsPage {
       Column({ space: 3 }) {
         Row() {
           ReaderInfoBarRow({
-            leftText: this.infoSlotText(this.infoConfig().headerLeft),
-            centerText: this.infoSlotText(this.infoConfig().headerCenter),
-            rightText: this.infoSlotText(this.infoConfig().headerRight),
+            leftText: this.infoSlotText(this.infoConfig().headerLeft, page),
+            centerText: this.infoSlotText(this.infoConfig().headerCenter, page),
+            rightText: this.infoSlotText(this.infoConfig().headerRight, page),
             leftBattery: this.infoSlotBattery(this.infoConfig().headerLeft),
             centerBattery: this.infoSlotBattery(this.infoConfig().headerCenter),
             rightBattery: this.infoSlotBattery(this.infoConfig().headerRight),
@@ -400,18 +425,18 @@ struct ThemeTypographySettingsPage {
     }
 
     Column() {
-      if (this.fitFor(full).titleLines > 0) {
+      if (this.pageFit(full, page).titleLines > 0) {
         ReaderWeightedText({ spans: [ReaderWeightedTextSpan.create(this.getUIContext(), PREVIEW_CHAPTER_TITLE,
           this.draft.titleFontSize, this.titleFontFamily(), this.previewTheme().textColor,
           this.titleLineBox(), this.draft.letterSpacing)], weight: this.draft.titleFontWeight,
-          maxLines: this.fitFor(full).titleLines, alignment: this.titlePreviewAlignment() })
+          maxLines: this.pageFit(full, page).titleLines, alignment: this.titlePreviewAlignment() })
           .width('100%')
-          .margin({ top: this.titleLayout().marginTop,
+          .margin({ top: this.pageFit(full, page).titleTop,
             bottom: this.draft.paragraphSpacing + this.titleLayout().marginBottom })
       }
-      ForEach(this.visibleParagraphIndexes(full), (index: number) => {
-        this.previewParagraph(index, this.paragraphMaxLines(full, index))
-      }, (index: number) => `paragraph_${index}_${this.paragraphMaxLines(full, index)}`)
+      ForEach(this.visibleParagraphIndexes(full, page), (index: number) => {
+        this.previewParagraph(index, this.paragraphMaxLines(full, page, index))
+      }, (index: number) => `paragraph_${index}_${this.paragraphMaxLines(full, page, index)}`)
     }
     .width('100%')
     .height(Math.max(0, this.bodyLimit(full) - this.bodyTop(full)))
@@ -428,9 +453,9 @@ struct ThemeTypographySettingsPage {
           this.infoAccentLine(false)
         }
         ReaderInfoBarRow({
-          leftText: this.infoSlotText(this.infoConfig().footerLeft),
-          centerText: this.infoSlotText(this.infoConfig().footerCenter),
-          rightText: this.infoSlotText(this.infoConfig().footerRight),
+          leftText: this.infoSlotText(this.infoConfig().footerLeft, page),
+          centerText: this.infoSlotText(this.infoConfig().footerCenter, page),
+          rightText: this.infoSlotText(this.infoConfig().footerRight, page),
           leftBattery: this.infoSlotBattery(this.infoConfig().footerLeft),
           centerBattery: this.infoSlotBattery(this.infoConfig().footerCenter),
           rightBattery: this.infoSlotBattery(this.infoConfig().footerRight),
@@ -530,12 +555,12 @@ struct ThemeTypographySettingsPage {
         this.selectItem('段首缩进', '正文每段首行的缩进字符数', this.indentOptions(),
           ReaderParagraphIndent.normalize(this.draft.paragraphIndent), (index: number) => {
             this.draft.paragraphIndent = ReaderParagraphIndent.normalize(index);
-            this.onDraftChanged();
+            this.onBodyDraftChanged();
           }, 'theme_typography_indent_select')
         this.selectItem('正文对齐方式', '正文段落的水平对齐', this.alignOptions(), this.alignIndex(),
           (index: number) => {
             this.draft.textAlign = this.alignValues()[Math.max(0, Math.min(index, 2))];
-            this.onDraftChanged();
+            this.onBodyDraftChanged();
           }, 'theme_typography_align_select')
         SettingSwitchRow({
           title: '正文扩展至状态栏',
@@ -609,7 +634,7 @@ struct ThemeTypographySettingsPage {
         }
         SettingNavRow({
           title: '恢复默认排版',
-          description: '字号、间距、边距与页眉页脚恢复默认，字体和强调规则保留',
+          description: '排版与页眉页脚恢复默认，字体和强调规则保留',
           showDivider: false,
           onTap: () => this.confirmResetLayout()
         })
@@ -727,6 +752,12 @@ struct ThemeTypographySettingsPage {
     this.refreshPreview();
   }
 
+  /** 改的是正文排版：标题单页时把预览带到正文页，改完马上看得到。 */
+  onBodyDraftChanged(): void {
+    this.onDraftChanged();
+    this.showPreviewPage(PREVIEW_BODY_PAGE);
+  }
+
   typographyValues(): number[] {
     const values: number[] = new Array<number>(ReaderTypographyField.COUNT).fill(0);
     values[ReaderTypographyField.FONT_SIZE] = this.draft.fontSize;
@@ -754,7 +785,7 @@ struct ThemeTypographySettingsPage {
     this.draft.marginTop = values[ReaderTypographyField.MARGIN_TOP];
     this.draft.marginBottom = values[ReaderTypographyField.MARGIN_BOTTOM];
     this.draft.commentBubbleSize = values[ReaderTypographyField.COMMENT_BUBBLE_SIZE];
-    this.onDraftChanged();
+    this.onBodyDraftChanged();
   }
 
   openFontSettings(): void {
@@ -788,8 +819,13 @@ struct ThemeTypographySettingsPage {
       next.regexFontSize = fontDraft.regexFontSize;
       next.regexShadowColor = fontDraft.regexShadowColor;
       next.regexFontRulesRaw = fontDraft.regexFontRulesRaw;
+      const titleChanged = next.titleStyleRaw !== this.draft.titleStyleRaw ||
+        next.titleFontSize !== this.draft.titleFontSize || next.titleFontWeight !== this.draft.titleFontWeight ||
+        next.titleFontMode !== this.draft.titleFontMode || next.titleFontFamily !== this.draft.titleFontFamily;
       this.applyDraft(next);
       this.onDraftChanged();
+      // 回来后停在刚改过的那一页：动了标题看标题页，否则看正文页。
+      this.showPreviewPage(titleChanged ? PREVIEW_TITLE_PAGE : PREVIEW_BODY_PAGE);
     }
     ThemeTypographyDraft.end();
     this.fontDraftRevision = -1;
@@ -939,10 +975,28 @@ struct ThemeTypographySettingsPage {
     this.previewRevision++;
     this.windowFit = this.computeFit(false);
     this.fullFit = this.computeFit(true);
+    this.windowTitleFit = this.computeTitleFit(false);
+    this.fullTitleFit = this.computeTitleFit(true);
   }
 
-  fitFor(full: boolean): TypographyPreviewFit {
+  titleSinglePage(): boolean {
+    return this.titleLayout().singlePage;
+  }
+
+  pageFit(full: boolean, page: number): TypographyPreviewFit {
+    if (page === PREVIEW_TITLE_PAGE && this.titleSinglePage()) return full ? this.fullTitleFit : this.windowTitleFit;
     return full ? this.fullFit : this.windowFit;
+  }
+
+  pageSwitchWidth(): number {
+    const spare = this.pageWidth() - AppSpacing.LG * 2 - MODE_SWITCH_WIDTH - TOOLBAR_CONTROL_HEIGHT - AppSpacing.MD * 2;
+    return Math.max(PAGE_SWITCH_MIN_WIDTH, Math.min(PAGE_SWITCH_MAX_WIDTH, spare));
+  }
+
+  showPreviewPage(page: number): void {
+    if (!this.titleSinglePage() || this.previewPageIndex === page) return;
+    this.previewPageIndex = page;
+    this.windowPager.changeIndex(page, true);
   }
 
   previewWindowWidth(): number {
@@ -1076,13 +1130,17 @@ struct ThemeTypographySettingsPage {
     if (available <= 0) return fit;
     const titleBox = this.titleLineBox();
     const titleLayout = this.titleLayout();
-    const titleMargins = titleLayout.marginTop + titleLayout.marginBottom;
-    const titleLines = this.measureLines(PREVIEW_CHAPTER_TITLE, this.draft.titleFontSize, this.draft.titleFontWeight,
-      this.titleFontFamily(), titleBox, width);
-    fit.titleLines = Math.min(titleLines, Math.floor(Math.max(0, available - titleMargins) / titleBox));
-    if (fit.titleLines < titleLines) return fit;
-    if (titleLayout.singlePage) return fit;
-    let y = titleMargins + titleLines * titleBox + Math.max(0, this.draft.paragraphSpacing);
+    let y = 0;
+    // 标题单页时标题另占一页（见 computeTitleFit），正文页从页顶排起。
+    if (!titleLayout.singlePage) {
+      const titleMargins = titleLayout.marginTop + titleLayout.marginBottom;
+      const titleLines = this.measureLines(PREVIEW_CHAPTER_TITLE, this.draft.titleFontSize,
+        this.draft.titleFontWeight, this.titleFontFamily(), titleBox, width);
+      fit.titleTop = titleLayout.marginTop;
+      fit.titleLines = Math.min(titleLines, Math.floor(Math.max(0, available - titleMargins) / titleBox));
+      if (fit.titleLines < titleLines) return fit;
+      y = titleMargins + titleLines * titleBox + Math.max(0, this.draft.paragraphSpacing);
+    }
     const lineBox = this.bodyLineBox();
     const family = this.bodyFontFamily();
     for (let index = 0; index < PREVIEW_PARAGRAPHS.length; index++) {
@@ -1103,16 +1161,37 @@ struct ThemeTypographySettingsPage {
     return fit;
   }
 
-  visibleParagraphIndexes(full: boolean): number[] {
+  /**
+   * 标题单页的那一页。预览窗比整屏矮，标题上方的留白按两者正文区高度的比例换算，
+   * 标题落在与阅读页相同的相对位置；留白再大也保证标题排得进来。
+   */
+  computeTitleFit(full: boolean): TypographyPreviewFit {
+    const fit = new TypographyPreviewFit();
+    const available = this.bodyLimit(full) - this.bodyTop(full);
+    if (available <= 0) return fit;
+    const titleBox = this.titleLineBox();
+    const titleLines = this.measureLines(PREVIEW_CHAPTER_TITLE, this.draft.titleFontSize, this.draft.titleFontWeight,
+      this.titleFontFamily(), titleBox, this.contentWidth(full));
+    fit.titleLines = Math.max(1, Math.min(titleLines, Math.floor(available / titleBox)));
+    let top = Math.max(0, this.titleLayout().marginTop);
+    if (!full) {
+      const fullAvailable = this.bodyLimit(true) - this.bodyTop(true);
+      if (fullAvailable > 0) top = top * available / fullAvailable;
+    }
+    fit.titleTop = Math.max(0, Math.min(top, available - fit.titleLines * titleBox));
+    return fit;
+  }
+
+  visibleParagraphIndexes(full: boolean, page: number): number[] {
     const result: number[] = [];
-    for (let index = 0; index < this.fitFor(full).paragraphCount; index++) {
+    for (let index = 0; index < this.pageFit(full, page).paragraphCount; index++) {
       result.push(index);
     }
     return result;
   }
 
-  paragraphMaxLines(full: boolean, index: number): number {
-    const fit = this.fitFor(full);
+  paragraphMaxLines(full: boolean, page: number, index: number): number {
+    const fit = this.pageFit(full, page);
     return index === fit.paragraphCount - 1 ? fit.lastLines : 0;
   }
 
@@ -1238,22 +1317,22 @@ struct ThemeTypographySettingsPage {
 
   // ---------- 页眉页脚示例内容 ----------
 
-  infoContext(): ReaderInfoBarContext {
+  infoContext(page: number = PREVIEW_BODY_PAGE): ReaderInfoBarContext {
     const context = new ReaderInfoBarContext();
     context.bookName = PREVIEW_BOOK_NAME;
     context.author = PREVIEW_AUTHOR;
     context.chapterTitle = PREVIEW_CHAPTER_TITLE;
     context.chapterIndex = 0;
     context.chapterCount = 36;
-    context.pageIndex = 1;
+    context.pageIndex = this.titleSinglePage() ? page : 1;
     context.pageCount = 9;
     context.timeText = this.timeText;
     context.batteryPercent = this.batteryPercent >= 0 ? this.batteryPercent : 80;
     return context;
   }
 
-  infoSlotText(item: string): string {
-    return ReaderInfoBarText.leading(item, this.infoContext());
+  infoSlotText(item: string, page: number): string {
+    return ReaderInfoBarText.leading(item, this.infoContext(page));
   }
 
   infoSlotBattery(item: string): number {

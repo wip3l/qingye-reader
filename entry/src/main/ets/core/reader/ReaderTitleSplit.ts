@@ -29,7 +29,7 @@ export class ReaderTitleSplit {
   }
 
   static normalizeScale(scale: number): number {
-    return Number.isFinite(scale) ? Math.round(Math.max(0.5, Math.min(2, scale)) * 10) / 10 : 1.4;
+    return Number.isFinite(scale) ? Math.round(Math.max(0.5, Math.min(3, scale)) * 10) / 10 : 1.4;
   }
 
   static normalizeGap(gap: number): number {

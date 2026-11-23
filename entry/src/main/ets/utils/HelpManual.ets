@@ -318,6 +318,8 @@ export class HelpManual {
         return $r('sys.symbol.checkmark_shield');
       case 'list_bullet':
         return $r('sys.symbol.list_bullet');
+      case 'worldclock':
+        return $r('sys.symbol.worldclock');
       default:
         return $r('sys.symbol.questionmark_circle');
     }

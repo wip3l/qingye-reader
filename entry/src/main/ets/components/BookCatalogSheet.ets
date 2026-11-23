@@ -77,6 +77,15 @@ export struct BookCatalogSheet {
   @State searchVisible: boolean = false;
   /** 收起的卷（卷首章在 chapters 里的位置）。 */
   @State collapsedVolumes: number[] = [];
+  /** 列表第一行的下标与一屏行数、列表高度，“去顶部/去底部”按它们判断显示与方向。 */
+  @State firstVisibleIndex: number = 0;
+  @State visibleItemCount: number = 1;
+  @State listViewportHeight: number = 0;
+  /**
+   * 按钮方向：1 去底部、-1 去顶部、0 还没手动滑过（按位置判断）。手指上滑变去底部、下滑变去顶部；
+   * 只认手指拖动，程序定位和松手后的惯性、回弹不改方向。
+   */
+  @State edgeJumpDirection: number = 0;
   private volumeStarts: number[] = [];
   /** 当前列表按顺序对应的章节位置。 */
   private displayPositions: number[] = [];
@@ -167,27 +176,21 @@ export struct BookCatalogSheet {
           .margin({ left: AppSpacing.SM })
 
         if (this.loadState === LOAD_READY) {
-          Stack({ alignContent: Alignment.Center }) {
-            Column({ space: 0 }) {
-              SymbolGlyph($r('sys.symbol.chevron_up'))
-                .fontSize(11)
-                .fontColor([this.reverseOrder ? this.accentColor() : this.primaryTextColor()])
-              SymbolGlyph($r('sys.symbol.chevron_down'))
-                .fontSize(11)
-                .fontColor([this.reverseOrder ? this.accentColor() : this.primaryTextColor()])
-            }
-            .alignItems(HorizontalAlign.Center)
-          }
-          .width(34)
-          .height(34)
-          .borderRadius(17)
-          .backgroundColor(this.reverseOrder ? ThemeRuntime.accentSurfaceColor(this.appDarkMode) :
-            ThemeRuntime.softFillColor(this.appDarkMode))
-          .accessibilityText(this.reverseOrder ? '切换为正序目录' : '切换为倒序目录')
-          .onClick((): void => {
-            this.toggleOrder();
+          ImmersiveBackButton({
+            icon: $r('sys.symbol.text_arrow_up_and_down'),
+            iconOffsetX: 0,
+            iconColor: this.reverseOrder ? this.accentColor() : this.primaryTextColor(),
+            darkMode: this.appDarkMode,
+            buttonSize: 34,
+            containerWidth: 34,
+            containerHeight: 34,
+            startInset: 0,
+            materialScale: 0.7,
+            compactLayout: true,
+            accessibilityLabel: this.reverseOrder ? '切换为正序目录' : '切换为倒序目录',
+            onBack: () => this.toggleOrder()
           })
-          .margin({ left: AppSpacing.MD })
+            .margin({ left: AppSpacing.MD })
         }
 
         Blank()
@@ -295,6 +298,43 @@ export struct BookCatalogSheet {
 
   @Builder
   chapterList() {
+    Stack({ alignContent: Alignment.BottomEnd }) {
+      this.chapterListBody()
+      this.edgeJumpButton()
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .onAreaChange((_oldValue: Area, newValue: Area) => {
+      this.listViewportHeight = Number(newValue.height);
+    })
+  }
+
+  @Builder
+  edgeJumpButton() {
+    if (this.shouldShowEdgeJump()) {
+      ImmersiveBackButton({
+        icon: this.edgeJumpGoesDown() ? $r('sys.symbol.arrow_down_to_line') : $r('sys.symbol.arrow_up_to_line'),
+        iconOffsetX: 0,
+        iconSize: 20,
+        iconColor: this.accentColor(),
+        darkMode: this.appDarkMode,
+        buttonSize: 40,
+        containerWidth: 40,
+        containerHeight: 40,
+        startInset: 0,
+        materialScale: 0.83,
+        compactLayout: true,
+        accessibilityLabel: this.edgeJumpGoesDown() ? '去底部' : '去顶部',
+        onBack: () => this.jumpToListEdge(this.edgeJumpGoesDown())
+      })
+        // 列表底部留给系统导航条，按钮跟着抬高；右侧让出系统滚动条。
+        .margin({ right: AppSpacing.XL, bottom: this.navBarHeight + AppSpacing.LG })
+        .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.FastOutSlowIn }))
+    }
+  }
+
+  @Builder
+  chapterListBody() {
     List({ scroller: this.scroller }) {
       LazyForEach(this.dataSource, (chapter: BookChapter) => {
         ListItem() {
@@ -339,13 +379,24 @@ export struct BookCatalogSheet {
                 .width(18)
                 .textAlign(TextAlign.Center)
 
-              Text(chapter.title || `第${chapter.index + 1}${this.unitText()}`)
-                .fontSize(AppFontSize.BODY_LARGE)
-                .fontWeight(chapter.index === this.currentIndex ? FontWeight.Medium : FontWeight.Regular)
-                .fontColor(chapter.index === this.currentIndex ? this.accentColor() : this.primaryTextColor())
-                .maxLines(2)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .layoutWeight(1)
+              // 书源目录给了章节更新时间、字数时显示在章节名下方。
+              Column({ space: 2 }) {
+                Text(chapter.title || `第${chapter.index + 1}${this.unitText()}`)
+                  .fontSize(AppFontSize.BODY_LARGE)
+                  .fontWeight(chapter.index === this.currentIndex ? FontWeight.Medium : FontWeight.Regular)
+                  .fontColor(chapter.index === this.currentIndex ? this.accentColor() : this.primaryTextColor())
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                if (BookChapter.metaTextOf(chapter)) {
+                  Text(BookChapter.metaTextOf(chapter))
+                    .fontSize(AppFontSize.MICRO)
+                    .fontColor(this.subTextColor())
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
 
               if (chapter.cacheDate > 0) {
                 Text('已缓存')
@@ -372,11 +423,47 @@ export struct BookCatalogSheet {
         `${this.isVolumeCollapsed(this.volumeHeadOf(chapter)) ? '_c' : ''}_${this.reverseOrder ? 'r' : 'f'}`)
     }
     .width('100%')
-    .layoutWeight(1)
+    .height('100%')
     .contentEndOffset(this.navBarHeight + 16)
     .scrollBar(BarState.Auto)
     .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     .cachedCount(6)
+    .onScrollIndex((start: number, end: number): void => {
+      this.firstVisibleIndex = Math.max(0, start);
+      this.visibleItemCount = Math.max(1, end - start + 1);
+    })
+    .onDidScroll((delta: number, state: ScrollState): void => this.trackEdgeJumpDirection(delta, state))
+  }
+
+  /** 列表超过约 3 屏才显示；搜索框开着但还没输入时不显示。 */
+  private shouldShowEdgeJump(): boolean {
+    if (this.listViewportHeight <= 0) return false;
+    if (this.searchVisible && !this.searchActive()) return false;
+    return this.displayedCount > this.visibleItemCount * 3;
+  }
+
+  /** 手指上滑过就去底部、下滑过就去顶部；还没滑过时第一屏中点在前半段去底部，否则去顶部。倒序时顶部是最新章。 */
+  private edgeJumpGoesDown(): boolean {
+    if (this.edgeJumpDirection !== 0) return this.edgeJumpDirection > 0;
+    return this.firstVisibleIndex + this.visibleItemCount / 2 < this.displayedCount / 2;
+  }
+
+  private trackEdgeJumpDirection(delta: number, state: ScrollState): void {
+    if (state !== ScrollState.Scroll || Math.abs(delta) < 1) return;
+    const direction = delta > 0 ? 1 : -1;
+    if (direction !== this.edgeJumpDirection) this.edgeJumpDirection = direction;
+  }
+
+  private jumpToListEdge(toBottom: boolean): void {
+    const count = this.displayedCount;
+    if (count === 0) return;
+    // 到了一端，按钮换成回另一端。
+    this.edgeJumpDirection = toBottom ? -1 : 1;
+    try {
+      this.scroller.scrollToIndex(toBottom ? count - 1 : 0, false, toBottom ? ScrollAlign.END : ScrollAlign.START);
+    } catch (e) {
+      console.warn('目录去顶部/底部失败:', e);
+    }
   }
 
   private async loadChapters(): Promise<void> {

@@ -6,7 +6,7 @@
 
 - **编译期主题包** `ThemePack`：一个主题的全部设计令牌，在 `BuiltinThemeRegistry` 中注册。
 - **运行时** `ThemeRuntime`：把当前主题展开为扁平的 `AppStorage` 令牌，供组件读取。
-- **持久化** `AppThemeSettingsStore`：保存 `themeId`、主题封面开关和用户颜色覆盖值。
+- **持久化** `AppThemeSettingsStore`：保存 `themeId`、主题封面与主题边框两个开关和用户颜色覆盖值。
 
 `Resource`、背景图片、封面和图标由 `ThemeAssetRegistry` 按 ID 解析，不写入 Preferences。
 
@@ -61,12 +61,15 @@ entry/src/main/resources/base/media/
 
 | ID | 说明 |
 | --- | --- |
-| `plain-default` | 默认主题，`BuiltinThemeRegistry.DEFAULT_THEME_ID`，也是所有令牌的回退来源。 |
+| `plain-default` | 默认主题“素笺”，`BuiltinThemeRegistry.DEFAULT_THEME_ID`，也是所有令牌的回退来源。暖白纸底、墨蓝强调，带封面、文件夹、书架边框、首页背景、听书面板位图和章首饰图 `theme_chapter_head_plain_default_*`；启动走系统启动页，没有启动封面。 |
+| `morning-mist` | 晨雾：免费的内置主题，有封面、文件夹、书架边框、启动封面、首页背景和听书面板位图。默认主题与晨雾的听书面板都取自各自首页背景的上部，素材记录见 [生成记录](../scripts/assets/default-theme-refresh-generation.json)。 |
 | `classic-blue`、`warm-paper`、`forest-mist`、`ink-wash`、`neon-night`、`strawberry-cream`、`crimson-archive`、`plum-tea`、`rose-letter`、`moon-crane` | 内置主题。 |
 | `sword-frost`、`qingluan-water`、`cat-pipi`、`azure-mecha`、`starwish-magic`、`letterpress-page` | 带整套位图资源的主题，`theme-framework-check` 会逐个校验其资源文件和尺寸。 |
 | `custom` | 自定义主题，不是独立的主题包：`BuiltinThemeRegistry.customTheme()` 以某个内置主题为基底克隆，再由 `ThemeComponentSourceIds` 按浅色、深色分别指定各部件来自哪个主题。 |
 
-`BuiltinThemeRegistry.isFree()` 只对 `plain-default` 返回 `true`。
+`plain-base`（`ThemeIds.PLAIN_BASE`）是默认主题改成素笺之前的原样，名称“原默认主题”，不在 `BuiltinThemeRegistry.all()` 里，只给改版前的自定义方案和主题包打底，数值不要再改。`DefaultBaseRevision` 标出 `plain-default` 的含义版本：方案设置的 `defaultBaseRevision`、主题包记录的 `baseRevision`、清单的 `baseRevision` 缺省或小于 2 时，读取时把其中的 `plain-default`（基底为空也算）换成 `plain-base`；主题页当前自定义设置在 `AppThemeSettingsStore.load()` 里只升级一次（`appCustomDefaultBaseRevision`）。方案编辑器只在方案正在用它时把它列进来源下拉。
+
+`BuiltinThemeRegistry.isFree()` 对 `plain-default`、`morning-mist`、`plain-base` 返回 `true`；免费主题不进服务端 `theme_catalog`。
 
 ## ThemePack 字段
 
@@ -90,7 +93,7 @@ entry/src/main/resources/base/media/
 | --- | --- |
 | `colors` | `pageColor`、`cardColor`、`inputColor`、`primaryTextColor`、`subTextColor`、`dividerColor`、`accentColor`、`buttonColor`、`dangerColor`。 |
 | `reader` | `backgroundColor`、`backgroundAssetId`、`backgroundImageFit`、`textColor`、`subTextColor`、`contentTone`（`light` / `dark`）。 |
-| `regexEmphasis` | `emphasisMode`、`bubbleStyle`、`emphasisColor`、`emphasisTextColor`。 |
+| `regexEmphasis` | `emphasisMode`、`bubbleStyle`、`emphasisColor`、`emphasisTextColor`，以及段评气泡外观 `commentBubble`（`ThemePackageCommentBubble`，字段为空时沿用气泡样式）和标题强调 `title`（`ThemeTitleEmphasisTokens`，`mode` 为空表示不设置；`ThemeRuntime.titleEmphasisTokens(dark)` 发布给阅读页，`ReaderTitleEmphasis.plan()` 把阅读设置的标题规则和它合成一次解析；`pack:<id>:title` 气泡样式取包里的 `titleBubble`），还有章首装饰 `chapterHead`（`ThemePackageChapterHead`：标题饰图的本机地址、位置、大小和序号行颜色；`ThemeRuntime.chapterHeadTokens(dark)` 发布给阅读页，`ReaderChapterHead.style()` 换成排版用的样式，饰图的尺寸与位置在 `ReaderV2ChapterHeadLayout`；首字装饰由 `ReaderV2Paginator` 把首段拆成绕排和整行两截、首字作为页面装饰单独画）。 |
 
 有效值优先级：
 
@@ -203,7 +206,7 @@ BuiltinThemeRegistry.register(theme);
 可选的调整点：
 
 - `readerBackgroundTrailingRotation()`：有独立右下角图案时返回 0；只有未登记右下角图案的资源才回退为左上角装饰旋转 180°。
-- 主题包的角饰可以只有一角（空着的那角不画，用 `readerBackgroundHasOrnaments()` 判断有没有角饰），左上、右下各自的大小由 `readerBackgroundOrnamentScale(assetId, trailing)` 给出的倍数乘在 `ReaderThemeDecorationLayout.size()` 上；内置背景倍数恒为 1。
+- 主题包的角饰可以只有一角（空着的那角不画，用 `readerBackgroundHasOrnaments()` 判断有没有角饰），左上、右下各自的大小由 `readerBackgroundOrnamentScale(assetId, trailing)` 给出的倍数乘在 `ReaderThemeDecorationLayout.size()` 上，离屏幕边缘的边距由 `readerBackgroundOrnamentInset(assetId, trailing)` 给出的倍数乘在 `ReaderThemeDecorationLayout.inset()` 上（0 是贴边）；内置背景两个倍数恒为 1。
 
 装饰锚定在左上和右下的正方形区域，使用 `ImageFit.Contain`。不要把内置主题改回 `Cover` 全屏壁纸，`theme-framework-check` 会检查这一点。旧版 `reader_bg_*` 仅作为兼容资源保留。
 
@@ -242,7 +245,7 @@ BuiltinThemeRegistry.register(theme);
    文件夹插画同理：`themeShelfFolder(assetId, darkMode)` 里给这个主题按模式返回两张（两套专属主题 `_light` 那张用于浅色），主题包字段是 `parts.book.shelfFolderDark`（`InstalledThemePack.shelfFolderFor()`）。
 3. 配置 `theme.book.coverAssetId`、`shelfFrameAssetId` 和 `shelfFolderAssetId`。
 
-是否启用主题封面由 `appThemeBookCoverEnabled` 持久化；是否套用主题排版由 `appThemeApplyLayoutEnabled` 持久化。
+是否启用主题封面由 `appThemeBookCoverEnabled` 持久化；书架封面是否套主题边框由 `appThemeBookFrameEnabled` 单独持久化，开着时不论封面来源（主题封面、书籍自带、图集、单独设置、首字占位）都套，取边框统一走 `ThemeBookCoverSettings.frameIf()`。旧数据没有边框这一项时沿用主题封面开关的值（`AppThemeSettingsStore.clone()`）。应用主题弹窗里“应用主题封面”“应用主题边框”分别设置这两项（主题有封面、有边框时才各自出现）。是否套用主题排版由 `appThemeApplyLayoutEnabled` 持久化。
 
 ### 导航图标包
 
@@ -261,13 +264,13 @@ BuiltinThemeRegistry.register(theme);
 
 ## 方案级覆盖
 
-自定义方案除了按部件选来源主题，还能逐项覆盖两组令牌，字段在 `AppThemeSettings` 里：`customLightPalette` / `customDarkPalette`（`ThemeColorOverrides`，页面、卡片、输入框、正副文字、分割线、危险色七项）和 `customLightEmphasis` / `customDarkEmphasis`（`ThemeEmphasisOverrides`，强调方式、气泡样式、强调底色与文字色）。空值表示跟随来源主题；`AppThemeSettingsStore.customTheme()` 在取完来源令牌后由 `applyOverrides()` 盖上去，强调色与按钮色仍是独立字段。同一套机制还有：`customAppFontFamily`（界面字体，取字体库里某款字体的 family，`applyOverrides()` 写进 `ThemePack.fontFamily`，`ReaderFontBootstrap.registerThemeFont()` 在应用方案时把它注册进字体表）、`customRadius`（`ThemeRadiusOverrides`，六档圆角逐项覆盖，-1 表示跟随）、`customLightStartupText` / `customDarkStartupText`（`ThemeStartupTextStyle`，启动封面主副标题的颜色与字号，空值与 0 表示默认）和 `customPreviewImagePath`（方案卡片预览图，本机文件，与启动封面图一样不同步、随包导出，存在 `files/theme_previews/`）。这些字段以 JSON 字符串持久化，随方案同步；导出时若有任何覆盖，清单 `requires` 加 `scheme-overrides-v1`，老版本应用会提示更新而不是丢掉颜色。导入时方案覆盖里用不了的气泡样式改回跟随，并列入预览提示。
+自定义方案除了按部件选来源主题，还能逐项覆盖两组令牌，字段在 `AppThemeSettings` 里：`customLightPalette` / `customDarkPalette`（`ThemeColorOverrides`，页面、卡片、输入框、正副文字、分割线、危险色七项）和 `customLightEmphasis` / `customDarkEmphasis`（`ThemeEmphasisOverrides`，强调方式、气泡样式、强调底色与文字色，以及 `comment` 段评气泡的逐项覆盖；`title` 标题强调的逐项覆盖（`mode` 为 `off` 时强制不设置，方案自己的标题气泡样式写 `pack:<id>:title`）；`comment.image` / `comment.ornamentImage` 只会是 `none` 或 `pack:<packageId>`，表示取方案素材包同一模式的气泡图与拉伸设置、角标图，素材本身存在包的 `light/dark.commentBubble` 里，导出时与 `bubbleStyle` 一样换成 `pack:self`）。空值表示跟随来源主题；`AppThemeSettingsStore.customTheme()` 在取完来源令牌后由 `applyOverrides()` 盖上去，强调色与按钮色仍是独立字段。同一套机制还有：`customAppFontFamily`（界面字体，取字体库里某款字体的 family，`applyOverrides()` 写进 `ThemePack.fontFamily`，`ReaderFontBootstrap.registerThemeFont()` 在应用方案时把它注册进字体表）、`customRadius`（`ThemeRadiusOverrides`，六档圆角逐项覆盖，-1 表示跟随）、`customLightStartupText` / `customDarkStartupText`（`ThemeStartupTextStyle`，启动封面主副标题的颜色与字号，空值与 0 表示默认）和 `customPreviewImagePath`（方案卡片预览图，本机文件，与启动封面图一样不同步、随包导出，存在 `files/theme_previews/`）。这些字段以 JSON 字符串持久化，随方案同步；导出时若有任何覆盖，清单 `requires` 加 `scheme-overrides-v1`，老版本应用会提示更新而不是丢掉颜色。导入时方案覆盖里用不了的气泡样式改回跟随，并列入预览提示。
 
 ## 方案自有素材包
 
 编辑器里上传的封面、书架边框、文件夹插画、导航图标、朗读面板插画、首页背景、气泡端饰与边框、阅读角饰或整图背景由 `utils/SchemeAssetService.ets` 收进方案自己的素材包：`theme_packs/custom-<随机>/`，与导入的主题包同一套存储（`ThemePackStore.importAsset()` 负责嗅探类型、限大小、SVG 自包含检查并按内容哈希命名），同样注册为 `pack:<packageId>`，方案的 `packageId` 指向它。上传后编辑器把对应部件来源（封面与图标两种模式一起，面板插画和首页背景按当前模式）指向这个包；包内气泡通过方案的强调覆盖 `bubbleStyle` 生效；阅读背景素材写进 `parts.light/dark.reader`，方案只把 `customLight/DarkReaderBackgroundAssetId` 指向 `pack:<id>:light/dark`，阅读来源主题与文字色不变。第一次上传时该部件原来所选的主题记为包的 `baseTheme`，没上传的那部分素材继续取自它；移除后来源退回 `baseTheme`，所有部件都移掉时整个包卸载、方案解绑。方案本身由主题包安装而来时直接写进那个包。导出时按格式 2 随包打出去（`packageId` 就是这个包的 ID，不算混搭），删除方案时由 `cleanupImportedFiles()` 一并清理。
 
-编辑器按素材槽逐个管理：封面可单张替换、删除和调整顺序（`replaceCover` / `removeCover` / `moveCover`），封面区跟着编辑器的浅色 / 深色切换，深色下加的封面进 `coversDark`（这几个方法的 `dark` 参数），`clearDarkCovers()` 去掉深色那套、回到沿用浅色封面，文件夹插画的格子同样跟着模式（`setShelfFolder` / `clearShelfFolder` 的 `dark` 参数，深色那张进 `shelfFolderDark`），书架边框、文件夹、气泡边框、主题标识（`parts.logo`）各自可移除，浅深色分开的阅读背景素材、朗读面板和首页背景可以 `copyToOtherMode()` 复制到另一种模式。朗读面板三色只在这个模式已有自传插画时可改（直接改 `parts.ttsPanelLight/Dark`）；整图铺放改 `parts.light/dark.reader.imageFit`。阅读底色、正文、页眉页脚与内容明暗是方案设置里的 `customLight/DarkReader*`，换阅读来源时整组重置为来源主题的值。
+编辑器按素材槽逐个管理：封面可单张替换、删除和调整顺序（`replaceCover` / `removeCover` / `moveCover`），封面区跟着编辑器的浅色 / 深色切换，深色下加的封面进 `coversDark`（这几个方法的 `dark` 参数），`clearDarkCovers()` 去掉深色那套、回到沿用浅色封面，文件夹插画和书架边框的格子同样跟着模式（`setShelfFolder` / `clearShelfFolder`、`setShelfFrame` / `clearShelfFrame` 的 `dark` 参数，深色那张进 `shelfFolderDark` / `shelfFrameDark`），气泡端饰与边框也跟着模式（`setBubbleCap` / `setBubbleFrame` / `setBubbleFrameSettings` / `clearBubbleCap` / `clearBubbleFrame` 的 `dark` 参数，深色那套进 `parts.bubbleDark`，没传的那一项沿用浅色），书架边框、文件夹、气泡边框、主题标识（`parts.logo`）各自可移除，浅深色分开的阅读背景素材、朗读面板和首页背景可以 `copyToOtherMode()` 复制到另一种模式。朗读面板三色只在这个模式已有自传插画时可改（直接改 `parts.ttsPanelLight/Dark`）；整图铺放改 `parts.light/dark.reader.imageFit`。阅读底色、正文、页眉页脚与内容明暗是方案设置里的 `customLight/DarkReader*`，换阅读来源时整组重置为来源主题的值。
 
 导航图标可以逐个上传，`parts.navigation` 在本机允许只有几张：`InstalledThemePack.hasAnyNavigation()` 为真时底栏就用包里的图标，缺的页签取 `ThemePackRecord.navFallbackIconPackId`（第一次上传时导航来源主题的内置图标包，只存在本机 `pack.json`，不进包格式）。“听”“足迹”两个页签的图标可以不传，同样回退到它。主题包格式仍要求书架、发现、我的三个普通图标齐全，所以 `ThemePackageService.packParts()` 导出时丢掉没传齐的 `navigation`。
 
@@ -281,6 +284,9 @@ BuiltinThemeRegistry.register(theme);
 - `BuiltinThemeRegistry.findById()` 对 `pack:` ID 到注册表取主题；`normalizeBuiltinId()` 对 `pack:` ID 原样保留，缺包时只回退显示、不改写方案里的来源（同步到没装包的设备时方案不会被破坏）。`all()` 只返回内置主题，主题商店列表不会出现包。
 - `ThemeAssetRegistry` 的各个解析函数遇到 `pack:` ID 返回包目录里文件的 `file://` URI；阅读背景用 `pack:<packageId>:light` / `:dark` 作素材键，角饰模式与内置主题走同一条装饰路径，整图模式由 `ReaderThemeHelper` 转成用户图片的那条路径，同时保留素材键，整图模式带的角饰由 `ReaderThemeBackground` 和自绘纹理叠在整图上。`navigationIcon()`、`themeLogo()` 和 `TtsPanelThemeStyle.artwork` 因此是 `ResourceStr`。自绘翻页纹理的 `ReaderRasterAssets.media()` 对字符串来源改从文件解码。
 - 包内气泡的样式 ID 就是 `pack:<packageId>`：`ReaderRegexFontCodec.normalizeBubbleStyleId()` 原样保留，`ReaderRegexBubbleStyleResolver` 用统一的圆角预设配端饰，`ThemeAccessPolicy` 以“包已安装”为可用条件。
+- 包内气泡分浅深：`bubbleFor(parts, dark)` 按项补齐（深色没有的端饰或边框用浅色的，反之亦然），安装时拼成 `InstalledThemePack.bubbleLight` / `bubbleDark`，取图走 `pack.bubble(dark)`。`ThemeAssetRegistry.regexBubbleCap()` / `regexBubbleFrame()` 与 `ThemePackRegistry.bubbleFrame()` 都带 `darkMode` 参数；正文的端饰由 `ReaderV2SpanStyleRange.decorationDark` → `ReaderV2RegexBubbleSegment.capDark` 带到绘制处。书架边框（`shelfFrameFor()`）、导航图标（`navDark`，`navigationIcon()` 的 `darkMode` 参数，首页只在包带深色图标时读深浅色）同理。
+- 段评气泡：`ReaderCommentBubbleStyles.resolveThemed()` 先按气泡样式查表，包内气泡改用强调底色、文字色、强调色推导，再盖上主题的 `commentBubble`（`ThemeRuntime.commentBubbleTokens(dark)`）；书源的段评颜色仍在最后覆盖。带气泡图时 `styleId` 为 `image`，`ReaderCommentBubblePainter.paint()` 按文字区缩放、左右拉伸线拉伸绘制，解码失败退回形状；排版在气泡前的空格和最后一个内边距上加字距，留出图片左右超出文字区的部分（`ReaderV2Paginator.commentImageReserve`）。
+- 包内气泡可以只有端饰、只有边框或两样都有（`InstalledThemePack.hasBubble()`）。边框只对包内气泡逐行画：`ThemePackRegistry.bubbleFrame()` 给出素材地址和补齐缺省的拉伸设置，三处强调样式构建（`ReadBook`、阅读设置预览、字体设置页）都经 `ReaderV2BubbleFrame.decorate()` 填进 `ReaderV2SpanStyleRange`。分页按 `ReaderV2BubbleFrame` 的固定文字带（字号 × 1.36）算端头宽度：整段首尾的端头和端饰一起由前一个字、末字的字距留位，换行处的端头画进页边距或平切；`ReaderV2PagePainter` 在原来画圆角底色的位置按行画边框，常驻页节点和自绘翻页纹理因此一致。内置样式的 `regex_frame_*` 是给整段设计的横幅，不逐行画。编辑器的拉伸区域页（`ThemeBubbleFrameStretcher`）与卡片小样共用 `BubbleFramePreviewPainter`，规则与正文相同。
 - 访问策略：已安装的包随方案走，不另设权益，会员过期后已导入的方案照常使用；导出和导入主题包本身仍要求有效会员。
 - `CustomThemeScheme.packageId` 记录方案来自哪个包：同一个 `packageId` 再次导入时原位更新（可以更新正在使用的方案，导入后重新应用），删除或替换方案后 `ThemePackageService.cleanupImportedFiles()` 清掉没有方案再引用的包目录。
 - 导出：方案由包安装而来、或部件里选了某个已安装的包时按格式 2 导出，包内素材复制进包，方案里指向它的来源写成 `pack:self`；混搭别人的包时换新 `packageId` 并把原包记进 `credits`。不带包内素材的方案仍按格式 1 导出，老版本应用可以导入。基底或任一部件来源用了 `SuperExclusiveThemes` 里的终身超级会员专属主题时不允许导出（`ThemePackageService.exclusiveThemeBlockingExport()`，入口弹窗说明，`planExport()` / `buildPackage()` 再兜底拒绝）。

@@ -29,6 +29,7 @@ struct AppearanceSettingsPage {
   @StorageLink('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('homeBackdropEnabled') homeBackdropEnabled: boolean = true;
   @StorageProp('headerFrosted') headerFrosted: boolean = true;
+  @StorageProp('mineSearchEntryVisible') mineSearchEntryVisible: boolean = true;
   @StorageProp('immersiveThemeTint') immersiveThemeTint: boolean = false;
   @StorageProp('animatedImagesEnabled') animatedImagesEnabled: boolean = true;
   @StorageProp('homeTabBarStyle') homeTabBarStyle: string = 'floating';
@@ -82,10 +83,16 @@ struct AppearanceSettingsPage {
       SettingNavRow({
         title: '图标设置',
         description: '更换桌面图标',
-        showDivider: false,
         onTap: () => {
           router.pushUrl({ url: 'pages/AppIconSettings' });
         }
+      })
+      SettingSwitchRow({
+        title: '显示设置项搜索框',
+        description: '在“我的”页顶部显示，可搜设置项和常见问题',
+        isOn: this.mineSearchEntryVisible,
+        showDivider: false,
+        onChange: (value: boolean) => { this.setMineSearchEntryVisible(value); }
       })
     }
     .width('calc(100% - 24vp)')
@@ -101,25 +108,25 @@ struct AppearanceSettingsPage {
       }
       SettingSwitchRow({
         title: '沉浸光感跟随主题色',
-        description: '菜单、弹窗、面板和悬浮按钮的半透明底色带上一点主题强调色；关闭时为中性色',
+        description: '菜单、弹窗等半透明底色带一点主题强调色',
         isOn: this.immersiveThemeTint,
         onChange: (value: boolean) => { this.setImmersiveThemeTint(value); }
       })
       SettingSwitchRow({
         title: '主题背景图',
-        description: '主题自带背景图时，铺在书架、发现、搜索和我的页顶部',
+        description: '主题自带背景图时，铺在各主页顶部',
         isOn: this.homeBackdropEnabled,
         onChange: (value: boolean) => { this.setHomeBackdropEnabled(value); }
       })
       SettingSwitchRow({
         title: '顶部磨砂',
-        description: '页面顶栏背后的内容先模糊再透出；关闭后顶栏完全透明',
+        description: '顶栏背后的内容模糊后透出；关闭则完全透明',
         isOn: this.headerFrosted,
         onChange: (value: boolean) => { this.setHeaderFrosted(value); }
       })
       SettingSwitchRow({
         title: '播放动图',
-        description: `书架封面、主题封面和背景图是 GIF 或动态 WebP 时播放动画；关闭后只显示第一帧，更省电。超过 ${AnimatedImagePolicy.MAX_PLAY_LABEL} 的动图始终只显示第一帧`,
+        description: `封面和背景图是动图时播放，关闭更省电；超过 ${AnimatedImagePolicy.MAX_PLAY_LABEL} 的只显示第一帧`,
         isOn: this.animatedImagesEnabled,
         showDivider: false,
         onChange: (value: boolean) => {
@@ -303,6 +310,14 @@ struct AppearanceSettingsPage {
     });
   }
 
+  setMineSearchEntryVisible(visible: boolean): void {
+    if (this.mineSearchEntryVisible === visible) return;
+    HomeBackdropSettingsStore.saveMineSearchEntry(getContext(this), visible).catch((error: Error) => {
+      console.warn('保存设置项搜索框开关失败:', error);
+      HdsFeedback.showToast('保存失败，请重试');
+    });
+  }
+
   setHomeBackdropEnabled(enabled: boolean): void {
     if (this.homeBackdropEnabled === enabled) return;
     HomeBackdropSettingsStore.save(getContext(this), enabled).catch((error: Error) => {
@@ -466,7 +481,7 @@ struct AppearanceSettingsPage {
       Row() {
         ForEach(this.previewTabIds(), (tabId: string, index: number) => {
           Column() {
-            Image(ThemeAssetRegistry.navigationIcon(ThemeRuntime.iconPackId(), tabId, false))
+            Image(ThemeAssetRegistry.navigationIcon(ThemeRuntime.iconPackId(), tabId, false, this.appDarkMode))
               .width(20)
               .height(20)
               .fillColor(index === 0 ? this.accentColor() : this.subTextColor())

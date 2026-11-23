@@ -21,6 +21,7 @@ const context = vm.createContext({
   AppStorage: { get: key => storage.get(key), setOrCreate: (key, value) => storage.set(key, value) },
   Curve: { Friction: 'friction', EaseInOut: 'easeInOut' },
   ReaderTtsFloatingSession: { isActive: () => false }, SHELF_UPDATE_BADGE_VARIABLE: 'shelfUpdateBadge',
+  WatchRemoteBridge: { notifyChanged: () => {} },
   setTimeout: (callback, delay) => { timers.set(++sequence, { callback, at: now + delay }); return sequence; },
   clearTimeout: id => timers.delete(id)
 });

@@ -216,6 +216,10 @@ export class LocalTtsImport {
       const phontab = `${dir}/${model.dataDir}/phontab`;
       if (!fs.accessSync(phontab)) throw new Error('espeak-ng-data 目录不完整（缺少 phontab）');
       model.files.push(new LocalTtsModelFile(`${model.dataDir}/phontab`, fs.statSync(phontab).size, ''));
+      // espeak-ng 遇到本语言词典查不到的字符会转去英文词典，缺了它原生层会崩溃。
+      const english = `${dir}/${model.dataDir}/en_dict`;
+      if (!fs.accessSync(english)) throw new Error('espeak-ng-data 目录不完整（缺少 en_dict）');
+      model.files.push(new LocalTtsModelFile(`${model.dataDir}/en_dict`, fs.statSync(english).size, ''));
     }
     const speakers = LocalTtsSpeakers.detect(dir, model.modelFile, model.kind, model.voicesFile);
     model.speakers = speakers.count;

@@ -4,6 +4,7 @@ import { AppFontSize } from '../../theme/AppFontSize';
 import { ImmersiveBackButton } from '../ImmersiveBackButton';
 import { CollapsingHeader } from '../../utils/CollapsingHeader';
 import { HeaderBackdrop } from './HeaderBackdrop';
+import { SettingsFocus } from '../../utils/SettingsFocus';
 
 /**
  * 二级页面的统一骨架：页面底色、沉浸式顶栏（返回、标题、右侧操作）和状态栏/导航条的留白。
@@ -31,7 +32,8 @@ export struct PageScaffold {
   @Prop collapsible: boolean = true;
   @Prop externalCollapse: number = 0;
   @State headerCollapse: number = 0;
-  private scroller: Scroller = new Scroller();
+  /** 页面需要自己调整滚动位置时（例如上方内容变高后保持下方不动）传入自己的 Scroller。 */
+  scroller: Scroller = new Scroller();
   @StorageProp('appDarkMode') appDarkMode: boolean = false;
   @StorageProp('themeRevision') themeRevision: number = 0;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -44,6 +46,11 @@ export struct PageScaffold {
 
   @Builder
   emptySlot() {
+  }
+
+  aboutToAppear(): void {
+    // 从设置搜索打开时，设置行靠这个 Scroller 滚到可见处。
+    if (this.scrollable) SettingsFocus.bindScroller(this.scroller);
   }
 
   build() {

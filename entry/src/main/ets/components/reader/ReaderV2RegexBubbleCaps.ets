@@ -9,7 +9,7 @@ import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
 @Builder
 export function ReaderV2RegexBubbleCapImages(segment: ReaderV2RegexBubbleSegment, uiContext: UIContext) {
   if (segment.leading && segment.leadingCapWidthPx > 0.5) {
-    Image(ThemeAssetRegistry.regexBubbleCap(segment.styleId))
+    Image(ThemeAssetRegistry.regexBubbleCap(segment.styleId, segment.capDark))
       .id('reader_regex_bubble_leading_cap')
       .width(uiContext.px2vp(segment.capSizePx))
       .height(uiContext.px2vp(segment.capSizePx))
@@ -22,7 +22,7 @@ export function ReaderV2RegexBubbleCapImages(segment: ReaderV2RegexBubbleSegment
       .accessibilityLevel('no')
   }
   if (segment.trailing && segment.trailingCapWidthPx > 0.5) {
-    Image(ThemeAssetRegistry.regexBubbleCap(segment.styleId))
+    Image(ThemeAssetRegistry.regexBubbleCap(segment.styleId, segment.capDark))
       .id('reader_regex_bubble_trailing_cap')
       .width(uiContext.px2vp(segment.capSizePx))
       .height(uiContext.px2vp(segment.capSizePx))

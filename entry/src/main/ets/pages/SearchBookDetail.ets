@@ -1,7 +1,7 @@
 import { router } from '@kit.ArkUI';
 import { motion } from '@kit.MultimodalAwarenessKit';
 import deviceInfo from '@ohos.deviceInfo';
-import { Book, SearchBook, BookChapter, BookFieldSanitizer, BookTypeSupport, BookUrlResolver } from '@legado/sourceengine';
+import { Book, BookGroup, SearchBook, BookChapter, BookFieldSanitizer, BookTypeSupport, BookUrlResolver } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { WebBookService } from '../core/book/WebBookService';
 import { syncSystemBars } from '../utils/SystemBars';
@@ -34,8 +34,19 @@ import { KnockShare } from '../utils/KnockShare';
 import { AudioSheetTransition, AUDIO_SHEET_ENTER_DURATION, AUDIO_SHEET_EXIT_DURATION } from '../utils/AudioSheetTransition';
 import { BookMark, BookMarkRules, BookMarkStatus } from '../model/book/BookMark';
 import { BookMarkService } from '../core/mark/BookMarkService';
-import { BookMarkStars } from '../components/book/BookMarkStars';
+import { BookMarkStars, bookMarkStarColor } from '../components/book/BookMarkStars';
+import { TicketStubRow } from '../components/ticket/TicketStubRow';
+import { TicketIssueOverlay } from '../components/ticket/TicketIssueOverlay';
+import { ReadingTicket, ReadingTicketRules } from '../core/ticket/ReadingTicket';
+import { ReadingTicketLoader } from '../core/ticket/ReadingTicketLoader';
+import { TicketAlbumStore } from '../utils/TicketAlbumStore';
 import { BookMarkSheet } from '../components/book/BookMarkSheet';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
+import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
+import { BookReadStatsPanel } from '../components/book/BookReadStatsPanel';
+import { BookReadStatsLoader, BookReadStatsSnapshot } from '../core/stats/BookReadStatsLoader';
+import { NewBookGroup } from '../utils/NewBookGroup';
+import { NewBookGroupStore } from '../utils/NewBookGroupStore';
 
 @Entry
 @Component
@@ -84,6 +95,19 @@ struct SearchBookDetailPage {
   private holdingHandCallback: (status: motion.HoldingHandStatus) => void =
     (status: motion.HoldingHandStatus): void => this.onHoldingHandChanged(status);
   @State isInShelf: boolean = false;
+  /** 书在书架里的分组（> 0 为自定义分组，0 为未分组）与分组名；分组被删掉时名字为空、按未分组显示。 */
+  @State shelfGroupId: number = 0;
+  @State shelfGroupName: string = '';
+  /** “放进分组”面板与面板里列出的分组。 */
+  @State showGroupSheet: boolean = false;
+  @State shelfGroupOptions: BookGroup[] = [];
+  @State newShelfGroupEditing: boolean = false;
+  @State newShelfGroupName: string = '';
+  /** 点顶栏书架钮加入后，底部停留几秒的“已加入书架　放进分组”提示条。 */
+  @State groupNudgeVisible: boolean = false;
+  @State groupNudgeText: string = '';
+  private groupNudgeTimer: number = -1;
+  private static readonly GROUP_NUDGE_MS: number = 4000;
   /** 库里这本书已有阅读进度（含未入架的临时阅读书），阅读按钮显示“继续…”。 */
   @State hasReadProgress: boolean = false;
   @State isSaving: boolean = false;
@@ -109,10 +133,40 @@ struct SearchBookDetailPage {
   /** 这部作品的“我的标记”；没有标记时为 null。 */
   @State bookMark: BookMark | null = null;
   @State showMarkSheet: boolean = false;
+  /** 刚标成读过、正在出的那张票；null 时不显示出票层。 */
+  @State issueTicket: ReadingTicket | null = null;
+  @State issueTicketStyle: string = TicketAlbumStore.STYLE_PAPER;
+  /** 标记面板正在专注写短评，面板拉到最高档。 */
+  @State markSheetFocused: boolean = false;
   @StorageProp('bookMarkRevision') @Watch('onBookMarkRevisionChanged') bookMarkRevision: number = 0;
   private markDraft: BookMark = new BookMark();
   private markCategories: string[] = [];
   private markLoadVersion: number = 0;
+  /** 标记页签里直接点选的常用标签：用过的标记标签和书架标签。 */
+  @State markQuickTags: string[] = [];
+  /** 打开标记面板后直接聚焦短评框。 */
+  private markSheetFocusReview: boolean = false;
+  /** 页签里连点星星、状态、标签时按顺序保存，后一次在前一次存好的标记上改。 */
+  private markSaveChain: Promise<void> = Promise.resolve();
+  /**
+   * 操作行下面的页签：简介、统计（有阅读记录才有）、标记。进详情页默认从简介开始；
+   * 从我的标记、足迹的标记卡进来（参数 initialTab=mark）时直接显示标记。
+   */
+  static readonly TAB_INTRO: number = 0;
+  static readonly TAB_STATS: number = 1;
+  static readonly TAB_MARK: number = 2;
+  static readonly TAB_LABELS: string[] = ['简介', '统计', '标记'];
+  /** 标记页签里最多直接列出几个标签（已选的不受限）。 */
+  static readonly MARK_QUICK_TAG_COUNT: number = 6;
+  @State detailTabBarWidth: number = 0;
+  private static readonly TAB_BAR_PADDING: number = 8;
+  private static readonly TAB_INDICATOR_WIDTH: number = 18;
+  private static readonly TAB_SWITCH_DURATION: number = 240;
+  /** 新内容从哪边进来：1 从右、-1 从左；0 表示还没手动切过，首次显示不做动画。 */
+  private detailTabSlide: number = 0;
+  @State detailTab: number = 0;
+  @State readStats: BookReadStatsSnapshot = new BookReadStatsSnapshot();
+  private readStatsLoadVersion: number = 0;
   /** 正文滚动距离：顶栏底色与书名随之渐显。 */
   @State detailScrollY: number = 0;
   @State headerCollapse: number = 0;
@@ -153,6 +207,7 @@ struct SearchBookDetailPage {
       this.promptAddToShelfOnBackFromResult = params['promptAddToShelfOnBack'] === 'true';
       this.autoStartRead = params['autoStartRead'] === 'true';
       this.readerBookUrl = params['readerBookUrl'] || '';
+      if (params['initialTab'] === 'mark') this.detailTab = SearchBookDetailPage.TAB_MARK;
       // Both operations initialize/read the same AppDatabase instance. Starting them at the
       // same time can make getBookSource() observe the store before initialization has completed,
       // leaving the detail page with an empty intro until the reader opens the book again.
@@ -162,6 +217,7 @@ struct SearchBookDetailPage {
         this.loadBookInfo();
         this.triggerAutoStartRead();
         this.loadBookMark();
+        this.loadReadStats();
       });
     }
   }
@@ -173,12 +229,18 @@ struct SearchBookDetailPage {
     this.startHoldingHandTracking();
     this.syncBars();
     this.checkShelf().then(() => {
+      // 试听时在播放面板里已加入书架，返回就不再问。
+      if (this.isInShelf && this.pendingAddToShelfBookUrl === this.bookUrl) {
+        this.promptAddToShelfAfterRead = false;
+        this.pendingAddToShelfBookUrl = '';
+      }
       if (this.shouldPromptAddToShelfOnBack()) {
         this.showAddToShelfOnBackPrompt();
       }
     });
     this.refreshChapterCount();
     this.loadBookMark();
+    this.loadReadStats();
     // Some source runtimes need one UI turn after the detail route is mounted (especially when the
     // hidden Web transport is still attaching). Do not keep an empty first response cached forever.
     if (!this.intro && !this.isLoadingBookInfo && this.bookUrl && this.origin) {
@@ -194,6 +256,7 @@ struct SearchBookDetailPage {
       clearTimeout(this.bookInfoRetryTimerId);
       this.bookInfoRetryTimerId = -1;
     }
+    this.clearGroupNudgeTimer();
   }
 
   onPageHide(): void {
@@ -294,41 +357,37 @@ struct SearchBookDetailPage {
                   .attributeModifier(this.neutralTagModifier())
                   .margin({ right: AppSpacing.MD, bottom: AppSpacing.MD })
               }
+
+              if (this.name) {
+                this.markSummaryChip()
+              }
             }
             .width('100%')
             .margin({ top: AppSpacing.XL })
 
-            Divider()
-              .strokeWidth(0.5)
-              .color(ThemeRuntime.hairlineColor(this.appDarkMode))
-              .margin({ top: AppSpacing.XS })
+            this.detailTabBar()
 
-            Row() {
-              this.detailShelfAction()
-              this.detailActionItem($r('sys.symbol.list_bullet'),
-                BookTypeSupport.isVideo(this.detailTypeProbe()) ? '选集' : '目录', () => {
-                  this.openChapterList();
-                })
-              this.detailActionItem($r('sys.symbol.arrow_left_arrow_right'), '换源', () => {
-                this.showChangeSourcePrompt();
-              })
-              this.detailActionItem($r('sys.symbol.person'), '同作者', () => {
-                this.showAuthorSearchPrompt();
-              })
+            // 每个分支各包一层，切换时新内容带着淡入和位移进来。
+            if (this.activeDetailTab() === SearchBookDetailPage.TAB_STATS) {
+              Column() {
+                BookReadStatsPanel({ snapshot: this.readStats, chapterUnit: this.chapterUnit() })
+              }
+              .width('100%')
+              .transition(this.detailTabTransition())
+            } else if (this.activeDetailTab() === SearchBookDetailPage.TAB_MARK) {
+              Column() {
+                this.detailMarkBlock()
+              }
+              .width('100%')
+              .transition(this.detailTabTransition())
+            } else {
+              Column() {
+                this.detailChapterRow()
+                this.detailIntro()
+              }
+              .width('100%')
+              .transition(this.detailTabTransition())
             }
-            .width('100%')
-            .padding({ top: AppSpacing.LG, bottom: AppSpacing.LG })
-
-            Divider()
-              .strokeWidth(0.5)
-              .color(ThemeRuntime.hairlineColor(this.appDarkMode))
-
-            if (this.name) {
-              this.detailMarkBlock()
-            }
-
-            this.detailChapterRow()
-            this.detailIntro()
           }
           .width('100%')
           .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: 64 + this.statusBarHeight,
@@ -397,8 +456,38 @@ struct SearchBookDetailPage {
       .onAreaChange((_oldArea: Area, newArea: Area): void => {
         this.readButtonBarWidth = Number(newArea.width);
       })
+      // 外层 Stack 和正文 Scroll 已各绑了目录、标记半模态，分组面板挂在常驻的阅读按钮这一行。
+      .bindSheet($$this.showGroupSheet, this.shelfGroupSheet(), this.shelfGroupSheetOptions())
+
+      if (this.groupNudgeVisible) {
+        Row() {
+          this.shelfGroupNudge()
+        }
+        .width('100%')
+        .padding({ left: AppSpacing.XL, right: AppSpacing.XL,
+          bottom: AppSpacing.XL + this.navBarHeight + 56 + AppSpacing.MD })
+        .position({ x: 0, y: '100%' })
+        .translate({ y: '-100%' })
+        .hitTestBehavior(HitTestMode.Transparent)
+        .transition(TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.Friction }))
+      }
 
       BookSourceStageRuntimeHost()
+
+      if (this.issueTicket) {
+        TicketIssueOverlay({
+          ticket: this.issueTicket as ReadingTicket,
+          ticketStyle: this.issueTicketStyle,
+          onOpen: (): void => {
+            const ticket = this.issueTicket;
+            if (!ticket) return;
+            router.pushUrl({ url: 'pages/TicketDetail', params: { workKey: ticket.workKey, fromDetail: 'true' } });
+          },
+          onClose: (): void => {
+            this.issueTicket = null;
+          }
+        })
+      }
     }
     .width('100%')
     .height('100%')
@@ -483,6 +572,31 @@ struct SearchBookDetailPage {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
+
+        // 书架与目录在顶栏右侧，和返回按钮同一种沉浸光感圆钮。同作者、换源分别是点作者行、书源行。
+        ImmersiveHeaderAction({
+          icon: this.isInShelf ? $r('sys.symbol.bookshelf_badge_checkmark_fill') :
+            $r('sys.symbol.bookshelf_badge_plus'),
+          tint: this.isInShelf ? this.accentColor() : '',
+          actionEnabled: !this.isSaving,
+          accessibilityLabel: this.isInShelf ? '已在书架，点按移出书架' : '加入书架',
+          onTap: (): void => {
+            if (this.isInShelf) {
+              this.removeFromShelf();
+            } else {
+              this.addToShelf(true);
+            }
+          }
+        })
+          .margin({ left: AppSpacing.MD })
+        ImmersiveHeaderAction({
+          icon: $r('sys.symbol.list_bullet'),
+          accessibilityLabel: BookTypeSupport.isVideo(this.detailTypeProbe()) ? '选集' : '目录',
+          onTap: (): void => {
+            this.openChapterList();
+          }
+        })
+          .margin({ left: AppSpacing.MD })
       }
       .width('100%')
       .height(56 + this.statusBarHeight)
@@ -605,6 +719,9 @@ struct SearchBookDetailPage {
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .flexShrink(1)
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(12)
+              .fontColor([this.subTextColor()])
           }
           .alignItems(VerticalAlign.Center)
           .margin({ top: AppSpacing.SM })
@@ -612,6 +729,10 @@ struct SearchBookDetailPage {
           .onClick(() => {
             this.showChangeSourcePrompt();
           })
+        }
+
+        if (this.isInShelf) {
+          this.shelfGroupChip()
         }
       }
       .layoutWeight(1)
@@ -622,93 +743,185 @@ struct SearchBookDetailPage {
     .alignItems(VerticalAlign.Center)
   }
 
-  /** 书架操作直接读取 isInShelf，加入或移出后同步刷新按钮。 */
-  @Builder
-  detailShelfAction() {
-    Column({ space: AppSpacing.SM }) {
-      SymbolGlyph(this.isInShelf ? $r('sys.symbol.bookshelf_badge_checkmark_fill') : $r('sys.symbol.bookshelf'))
-        .fontSize(24)
-        .fontColor([this.isInShelf ? this.accentColor() : this.primaryTextColor()])
-      Text(this.isSaving ? (this.isInShelf ? '移出中' : '加入中') : (this.isInShelf ? '移出书架' : '加入书架'))
-        .fontSize(AppFontSize.CAPTION)
-        .fontColor(this.isInShelf ? this.accentColor() : this.secondaryTextColor())
-        .maxLines(1)
-    }
-    .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
-    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.96 })
-    .accessibilityText(this.isInShelf ? '移出书架' : '加入书架')
-    .onClick(() => {
-      if (this.isSaving) return;
-      if (this.isInShelf) {
-        this.removeFromShelf();
-      } else {
-        this.addToShelf();
-      }
-    })
+  private hasReadStats(): boolean {
+    return this.readStats.stats.activeDays > 0;
   }
 
-  @Builder
-  detailActionItem(icon: Resource, label: string, onTap: () => void) {
-    Column({ space: AppSpacing.SM }) {
-      SymbolGlyph(icon)
-        .fontSize(24)
-        .fontColor([this.primaryTextColor()])
-      Text(label)
-        .fontSize(AppFontSize.CAPTION)
-        .fontColor(this.secondaryTextColor())
-        .maxLines(1)
+  /** 统计页签没有了（记录被删、换了一本书）或书名还没有时落回简介。 */
+  private activeDetailTab(): number {
+    if (this.detailTab === SearchBookDetailPage.TAB_STATS && !this.hasReadStats()) return SearchBookDetailPage.TAB_INTRO;
+    if (this.detailTab === SearchBookDetailPage.TAB_MARK && !this.name) return SearchBookDetailPage.TAB_INTRO;
+    return this.detailTab;
+  }
+
+  private chapterUnit(): string {
+    return BookTypeSupport.isVideo(this.detailTypeProbe()) || BookTypeSupport.isAudio(this.detailTypeProbe()) ? '集' :
+      LocalBookService.isPdfBook(this.detailTypeProbe()) ? '页' : '章';
+  }
+
+  private async loadReadStats(): Promise<void> {
+    const version = ++this.readStatsLoadVersion;
+    try {
+      const snapshot = await BookReadStatsLoader.load(getContext(this), this.bookUrl, this.name, this.author);
+      if (version === this.readStatsLoadVersion) this.readStats = snapshot;
+    } catch (error) {
+      console.warn('读取本书阅读统计失败:', error);
     }
-    .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
-    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.96 })
-    .accessibilityText(label)
-    .onClick(() => onTap())
+  }
+
+  /** 分段条上依次有哪些页签：统计要有阅读记录，标记要有书名。 */
+  private detailTabs(): number[] {
+    const tabs: number[] = [SearchBookDetailPage.TAB_INTRO];
+    if (this.hasReadStats()) tabs.push(SearchBookDetailPage.TAB_STATS);
+    if (this.name) tabs.push(SearchBookDetailPage.TAB_MARK);
+    return tabs;
+  }
+
+  private selectDetailTab(tab: number): void {
+    const tabs = this.detailTabs();
+    const from = tabs.indexOf(this.activeDetailTab());
+    const to = tabs.indexOf(tab);
+    if (to < 0 || to === from) return;
+    this.detailTabSlide = to > from ? 1 : -1;
+    this.detailTab = tab;
   }
 
   /**
-   * 我的标记：没有标记时一排空星，点一下就打分保存；有标记后显示星级、状态、标签和短评。
-   * 点“编辑”、短评或下面那行文字打开标记面板。
+   * 页签内容的进场：朝切换方向滑入一小段并淡入。旧内容直接撤掉，不做退场，
+   * 否则新旧两块在同一列里上下叠着，页面高度会先撑开再缩回。
+   */
+  private detailTabTransition(): TransitionEffect {
+    if (this.detailTabSlide === 0) return TransitionEffect.IDENTITY;
+    return TransitionEffect.asymmetric(
+      TransitionEffect.OPACITY.combine(TransitionEffect.translate({ x: this.detailTabSlide * 28 }))
+        .animation({ duration: SearchBookDetailPage.TAB_SWITCH_DURATION, curve: Curve.Friction }),
+      TransitionEffect.IDENTITY);
+  }
+
+  /** 下划线左边距：在选中那一段里居中。 */
+  private detailTabIndicatorX(): number {
+    const tabs = this.detailTabs();
+    const inner = Math.max(0, this.detailTabBarWidth - SearchBookDetailPage.TAB_BAR_PADDING * 2);
+    const segment = inner / Math.max(1, tabs.length);
+    const index = Math.max(0, tabs.indexOf(this.activeDetailTab()));
+    return SearchBookDetailPage.TAB_BAR_PADDING + segment * index +
+      (segment - SearchBookDetailPage.TAB_INDICATOR_WIDTH) / 2;
+  }
+
+  /**
+   * 整宽的页签条，和书源管理页的格式切换条同一种样式：一块沉浸光感底板，选中项用强调色文字加一小段下划线。
+   * 有几个页签就等分成几段；材质底板要具体宽度，量外层这一行得到。下划线是同一条，切换时滑到新位置。
+   */
+  @Builder
+  detailTabBar() {
+    Row() {
+      if (this.detailTabBarWidth > 0) {
+        ImmersiveMaterialSurface({
+          surfaceWidth: this.detailTabBarWidth,
+          surfaceHeight: 44,
+          darkMode: this.appDarkMode,
+          fallbackColor: this.cardColor(),
+          glowColor: `#40${this.accentColor().substring(1)}`
+        }) {
+          Stack({ alignContent: Alignment.BottomStart }) {
+            Row() {
+              ForEach(this.detailTabs(), (tab: number) => {
+                Text(SearchBookDetailPage.TAB_LABELS[tab])
+                  .fontSize(AppFontSize.BODY_LARGE)
+                  .fontWeight(this.activeDetailTab() === tab ? FontWeight.Medium : FontWeight.Regular)
+                  .fontColor(this.activeDetailTab() === tab ? this.accentColor() : this.secondaryTextColor())
+                  .animation({ duration: SearchBookDetailPage.TAB_SWITCH_DURATION, curve: Curve.Friction })
+                  .textAlign(TextAlign.Center)
+                  .maxLines(1)
+                  .height('100%')
+                  .layoutWeight(1)
+                  .accessibilityText(SearchBookDetailPage.TAB_LABELS[tab])
+                  .accessibilitySelected(this.activeDetailTab() === tab)
+                  .onClick(() => {
+                    this.selectDetailTab(tab);
+                  })
+              }, (tab: number): string => `${tab}`)
+            }
+            .width('100%')
+            .height('100%')
+            .padding({ left: SearchBookDetailPage.TAB_BAR_PADDING, right: SearchBookDetailPage.TAB_BAR_PADDING })
+
+            Row()
+              .width(SearchBookDetailPage.TAB_INDICATOR_WIDTH)
+              .height(3)
+              .borderRadius(1.5)
+              .backgroundColor(this.accentColor())
+              .margin({ bottom: 6 })
+              .translate({ x: this.detailTabIndicatorX() })
+              .animation({ duration: SearchBookDetailPage.TAB_SWITCH_DURATION, curve: Curve.Friction })
+              .hitTestBehavior(HitTestMode.None)
+              .accessibilityLevel('no')
+          }
+          .width('100%')
+          .height('100%')
+        }
+      }
+    }
+    .width('100%')
+    .height(44)
+    .margin({ top: AppSpacing.SM })
+    .onSizeChange((_old: SizeOptions, next: SizeOptions) => {
+      this.detailTabBarWidth = Math.floor(Number(next.width ?? 0));
+    })
+  }
+
+  /**
+   * 标签行末尾的标记摘要：有评分或状态时显示“★4.0 · 养肥”，标过但只有标签、短评时显示“已标记”，
+   * 没标过显示“☆ 标记”。点它切到标记页签，不用先进页签才看得到评分和状态。
+   */
+  @Builder
+  markSummaryChip() {
+    Row({ space: 3 }) {
+      if (this.bookMark && this.bookMark.rating > 0) {
+        Text('★')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(bookMarkStarColor(this.appDarkMode))
+      } else if (!this.bookMark) {
+        Text('☆')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.subTextColor())
+      }
+      Text(this.markSummaryText())
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.bookMark ? this.primaryTextColor() : this.secondaryTextColor())
+        .maxLines(1)
+    }
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
+    .attributeModifier(this.neutralTagModifier())
+    .margin({ right: AppSpacing.MD, bottom: AppSpacing.MD })
+    .accessibilityText(this.bookMark ? `我的标记，${this.markSummaryText()}` : '标记这本书')
+    .onClick(() => {
+      this.selectDetailTab(SearchBookDetailPage.TAB_MARK);
+    })
+  }
+
+  private markSummaryText(): string {
+    const mark = this.bookMark;
+    if (!mark) return '标记';
+    const parts: string[] = [];
+    if (mark.rating > 0) parts.push(BookMarkRules.ratingText(mark.rating));
+    if (mark.status !== BookMarkStatus.NONE) parts.push(BookMarkStatus.label(mark.status));
+    return parts.length > 0 ? parts.join(' · ') : '已标记';
+  }
+
+  /**
+   * “标记”页签：评分、阅读状态、常用标签、短评按标记面板的顺序直接摆出来，没标过的书也不留空白。
+   * 星星、状态、标签点一下就保存（再点同一项取消）；“＋ 新标签”打开面板，点短评打开面板并聚焦短评框。
    */
   @Builder
   detailMarkBlock() {
     Column({ space: AppSpacing.MD }) {
-      Row({ space: AppSpacing.MD }) {
-        Text('我的标记')
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(this.primaryTextColor())
-        if (this.bookMark && this.bookMark.status !== BookMarkStatus.NONE) {
-          Text(BookMarkStatus.label(this.bookMark.status))
-            .fontSize(AppFontSize.CAPTION)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.accentColor())
-            .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: 1, bottom: 1 })
-            .borderRadius(10)
-            .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
-        }
-        Blank()
-        if (this.bookMark) {
-          Text('编辑')
-            .fontSize(AppFontSize.BODY)
-            .fontColor(this.accentColor())
-            .padding({ left: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
-            .onClick(() => {
-              this.openMarkSheet();
-            })
-        } else {
-          Text('轻点星星打分')
-            .fontSize(AppFontSize.CAPTION)
-            .fontColor(this.subTextColor())
-        }
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
+      this.markFieldLabel('评分', this.bookMark ? this.markDateText() : '点一下就保存')
       Row({ space: AppSpacing.MD }) {
         BookMarkStars({
           rating: this.bookMark ? this.bookMark.rating : 0,
-          starSize: this.bookMark ? 22 : 30,
+          starSize: 28,
           darkMode: this.appDarkMode,
           emptyColor: ThemeRuntime.softFillColor(this.appDarkMode),
           interactive: true,
@@ -716,72 +929,149 @@ struct SearchBookDetailPage {
             this.rateFromDetail(rating);
           }
         })
-        if (this.bookMark) {
-          Text(this.bookMark.rating > 0 ?
-            `${BookMarkRules.ratingText(this.bookMark.rating)} · ${BookMarkRules.ratingLabel(this.bookMark.rating)}` :
-            '未打分')
+        if (this.bookMark && this.bookMark.rating > 0) {
+          Text(`${BookMarkRules.ratingText(this.bookMark.rating)} · ${BookMarkRules.ratingLabel(this.bookMark.rating)}`)
             .fontSize(AppFontSize.BODY)
             .fontColor(this.secondaryTextColor())
-          Blank()
-          Text(this.markDateText())
-            .fontSize(AppFontSize.CAPTION)
-            .fontColor(this.subTextColor())
-            .maxLines(1)
         }
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      if (this.bookMark && this.bookMark.categories.length > 0) {
-        Flex({ wrap: FlexWrap.Wrap }) {
-          ForEach(this.bookMark.categories, (name: string) => {
-            Text(name)
-              .fontSize(AppFontSize.CAPTION)
-              .fontColor(this.accentColor())
-              .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: 3, bottom: 3 })
-              .borderRadius(12)
-              .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
-              .margin({ right: AppSpacing.SM, bottom: AppSpacing.SM })
-          }, (name: string) => name)
-        }
-        .width('100%')
-        .margin({ bottom: -AppSpacing.SM })
+      this.markFieldLabel('阅读状态', '')
+      Row({ space: 3 }) {
+        ForEach(BookMarkStatus.ALL, (value: number) => {
+          Text(BookMarkStatus.label(value))
+            .fontSize(AppFontSize.BODY)
+            .fontWeight(this.detailMarkStatus() === value ? FontWeight.Medium : FontWeight.Normal)
+            .fontColor(this.detailMarkStatus() === value ? this.primaryTextColor() : this.secondaryTextColor())
+            .textAlign(TextAlign.Center)
+            .layoutWeight(1)
+            .height(34)
+            .borderRadius(ThemeRuntime.mediumRadius() - 2)
+            .backgroundColor(this.detailMarkStatus() === value ? ThemeRuntime.cardColor(this.appDarkMode) :
+              Color.Transparent)
+            .shadow(this.detailMarkStatus() === value ? { radius: 4, color: '#1A000000', offsetY: 1 } :
+              { radius: 0, color: Color.Transparent })
+            .accessibilityText(`${BookMarkStatus.label(value)}${this.detailMarkStatus() === value ? '，已选' : ''}`)
+            .onClick(() => {
+              this.statusFromDetail(value);
+            })
+        }, (value: number) => `${value}`)
       }
+      .width('100%')
+      .padding(3)
+      .borderRadius(ThemeRuntime.mediumRadius())
+      .backgroundColor(ThemeRuntime.softFillColor(this.appDarkMode))
 
+      this.markFieldLabel(this.markQuickTags.length > 0 ? '常用标签' : '标签', '')
+      Flex({ wrap: FlexWrap.Wrap }) {
+        ForEach(this.detailTagChoices(), (name: string) => {
+          Text(name)
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.detailHasTag(name) ? this.accentColor() : this.secondaryTextColor())
+            .height(30)
+            .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+            .borderRadius(15)
+            .border({ width: 1, color: this.detailHasTag(name) ? this.accentColor() : Color.Transparent })
+            .backgroundColor(this.detailHasTag(name) ? ThemeRuntime.accentSurfaceColor(this.appDarkMode) :
+              ThemeRuntime.softFillColor(this.appDarkMode))
+            .margin({ right: AppSpacing.SM, bottom: AppSpacing.SM })
+            .accessibilityText(`${name}${this.detailHasTag(name) ? '，已选' : ''}`)
+            .onClick(() => {
+              this.toggleTagFromDetail(name);
+            })
+        }, (name: string) => name)
+        Text('＋ 新标签')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.accentColor())
+          .height(30)
+          .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+          .borderRadius(15)
+          .backgroundColor(ThemeRuntime.softFillColor(this.appDarkMode))
+          .margin({ right: AppSpacing.SM, bottom: AppSpacing.SM })
+          .onClick(() => {
+            this.openMarkSheet();
+          })
+      }
+      .width('100%')
+      .margin({ bottom: -AppSpacing.SM })
+
+      this.markFieldLabel('短评', '')
       if (this.bookMark && this.bookMark.review.trim()) {
         Text(this.bookMark.review.trim())
           .fontSize(AppFontSize.BODY_LARGE)
           .lineHeight(24)
           .fontColor(this.primaryTextColor())
-          .maxLines(3)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
           .wordBreak(WordBreak.BREAK_WORD)
           .width('100%')
           .onClick(() => {
-            this.openMarkSheet();
+            this.openMarkSheet(true);
           })
       } else {
-        Row({ space: AppSpacing.XXS }) {
-          Text(this.bookMark ? '写一句短评' : '加标签、写短评')
-            .fontSize(AppFontSize.BODY)
-            .fontColor(this.accentColor())
-          SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(13)
-            .fontColor([this.accentColor()])
-        }
-        .alignItems(VerticalAlign.Center)
-        .onClick(() => {
-          this.openMarkSheet();
+        Text('读完的感受、推荐给谁、记住的一个细节……')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.subTextColor())
+          .width('100%')
+          .constraintSize({ minHeight: 72 })
+          .align(Alignment.TopStart)
+          .padding(AppSpacing.LG)
+          .borderRadius(ThemeRuntime.mediumRadius())
+          .backgroundColor(ThemeRuntime.softFillColor(this.appDarkMode))
+          .accessibilityText('写短评')
+          .onClick(() => {
+            this.openMarkSheet(true);
+          })
+      }
+
+      if (this.bookMark && ReadingTicketRules.hasTicket(this.bookMark as BookMark)) {
+        TicketStubRow({
+          mark: this.bookMark as BookMark,
+          markKey: `${(this.bookMark as BookMark).workKey}|${(this.bookMark as BookMark).status}|` +
+            `${(this.bookMark as BookMark).updateTime}`
         })
+          .margin({ top: AppSpacing.XS })
       }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
-    .padding(AppSpacing.LG)
-    .margin({ top: AppSpacing.LG, bottom: AppSpacing.SM })
-    .borderRadius(ThemeRuntime.largeRadius())
-    .backgroundColor(this.cardColor())
-    .border({ width: 0.5, color: ThemeRuntime.hairlineColor(this.appDarkMode) })
+    .padding({ top: AppSpacing.XL })
+  }
+
+  @Builder
+  markFieldLabel(title: string, hint: string) {
+    Row() {
+      Text(title)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+      Blank()
+      if (hint) {
+        Text(hint)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .maxLines(1)
+      }
+    }
+    .width('100%')
+    .margin({ top: AppSpacing.XS })
+  }
+
+  private detailMarkStatus(): number {
+    return this.bookMark ? this.bookMark.status : BookMarkStatus.NONE;
+  }
+
+  private detailHasTag(name: string): boolean {
+    return this.bookMark !== null && this.bookMark.categories.includes(name);
+  }
+
+  /** 已选的标签全部列出，再用常用标签补到 6 个。 */
+  private detailTagChoices(): string[] {
+    const result: string[] = this.bookMark ? this.bookMark.categories.slice() : [];
+    for (const name of this.markQuickTags) {
+      if (result.length >= SearchBookDetailPage.MARK_QUICK_TAG_COUNT) break;
+      if (!result.includes(name)) result.push(name);
+    }
+    return result;
   }
 
   private markDateText(): string {
@@ -802,6 +1092,7 @@ struct SearchBookDetailPage {
       existing: this.bookMark !== null,
       coverBookUrl: this.bookUrl,
       coverOrigin: this.origin,
+      focusReview: this.markSheetFocusReview,
       onSave: (mark: BookMark): void => {
         this.saveMarkFromSheet(mark);
       },
@@ -810,13 +1101,22 @@ struct SearchBookDetailPage {
       },
       onClose: (): void => {
         this.showMarkSheet = false;
+      },
+      onFocusModeChange: (focused: boolean): void => {
+        this.markSheetFocused = focused;
       }
     })
   }
 
+  /**
+   * 写短评时拉到最高档、键盘收起回到默认档；RESIZE_ONLY 让面板压缩高度让出键盘，
+   * 面板内容据此把短评框撑到键盘顶边。
+   */
   markSheetOptions(): SheetOptions {
     const options: SheetOptions = {
       detents: ['78%', SheetSize.LARGE],
+      detentSelection: this.markSheetFocused ? SheetSize.LARGE : '78%',
+      keyboardAvoidMode: SheetKeyboardAvoidMode.RESIZE_ONLY,
       dragBar: true,
       showClose: false,
       backgroundColor: Color.Transparent,
@@ -826,6 +1126,7 @@ struct SearchBookDetailPage {
       shadow: { radius: 0, color: Color.Transparent },
       onDisappear: () => {
         this.showMarkSheet = false;
+        this.markSheetFocused = false;
       }
     };
     return ImmersiveMaterialRuntime.applySheetMaterial(this.immersiveLightLevel, options,
@@ -964,6 +1265,8 @@ struct SearchBookDetailPage {
       book.bookUrl = this.bookUrl;
       book.origin = this.origin;
       await SearchBookShelfHelper.removeFromShelf(getContext(this), book);
+      this.hideGroupNudge();
+      this.showGroupSheet = false;
       this.isInShelf = false;
       this.hasReadProgress = false;
       this.promptAddToShelfAfterRead = false;
@@ -978,7 +1281,8 @@ struct SearchBookDetailPage {
     }
   }
 
-  async addToShelf(): Promise<boolean> {
+  /** fromHeader：点顶栏书架钮加入，加入后出“放进分组”提示条；其他入口（返回提示、开始阅读）只弹提示。 */
+  async addToShelf(fromHeader: boolean = false): Promise<boolean> {
     if (!this.bookUrl) {
       HdsFeedback.showToast('书籍地址为空');
       return false;
@@ -991,7 +1295,8 @@ struct SearchBookDetailPage {
       const requestKey = BookIdentity.keyOfUrl(this.bookUrl, this.origin);
       const existing = await db.getBook(this.bookUrl) || await this.findShelfBookByKey(requestKey);
       if (existing) {
-        if (SearchExplorePendingBook.isPendingAddToShelf(existing)) {
+        const existingWasPending = SearchExplorePendingBook.isPendingAddToShelf(existing);
+        if (existingWasPending) {
           const resolved = await this.resolveSameWorkBeforeShelf(existing);
           if (resolved !== null) return resolved;
         }
@@ -1005,6 +1310,8 @@ struct SearchBookDetailPage {
         existing.latestChapterTitle = BookFieldSanitizer.prefer(this.latestChapterTitle, existing.latestChapterTitle);
         existing.wordCount = BookFieldSanitizer.prefer(this.wordCount, existing.wordCount);
         existing.updateTime = BookFieldSanitizer.prefer(this.updateTime, existing.updateTime);
+        // 试读过的书这时才真正入架，按新书套默认分组；本来就在书架的书不动分组。
+        const existingGroupName = existingWasPending ? await NewBookGroupStore.apply(getContext(this), existing) : '';
         SearchExplorePendingBook.clearPendingAddToShelf(existing);
         await BookMarkService.carryTagsToShelfBook(existing);
         await db.updateBook(existing, true, 'explicit_add_existing');
@@ -1013,6 +1320,7 @@ struct SearchBookDetailPage {
         this.isInShelf = true;
         this.promptAddToShelfAfterRead = false;
         this.pendingAddToShelfBookUrl = '';
+        this.announceAddedToShelf(existingGroupName, fromHeader, false);
         return true;
       }
 
@@ -1030,7 +1338,7 @@ struct SearchBookDetailPage {
       book.latestChapterTitle = BookFieldSanitizer.clean(this.latestChapterTitle);
       book.wordCount = BookFieldSanitizer.clean(this.wordCount);
       book.updateTime = BookFieldSanitizer.clean(this.updateTime);
-      book.group = -2147483645;
+      book.group = NewBookGroup.UNGROUPED;
       book.type = this.bookType;
       book.variable = this.bookVariable;
       BookTypeSupport.applyBookType(book);
@@ -1057,7 +1365,8 @@ struct SearchBookDetailPage {
 
       const resolvedExisting = await this.findShelfBookByKey(BookIdentity.keyOfBook(book));
       if (resolvedExisting) {
-        if (SearchExplorePendingBook.isPendingAddToShelf(resolvedExisting)) {
+        const resolvedWasPending = SearchExplorePendingBook.isPendingAddToShelf(resolvedExisting);
+        if (resolvedWasPending) {
           const resolved = await this.resolveSameWorkBeforeShelf(resolvedExisting);
           if (resolved !== null) return resolved;
         }
@@ -1071,6 +1380,8 @@ struct SearchBookDetailPage {
         resolvedExisting.latestChapterTitle = BookFieldSanitizer.prefer(book.latestChapterTitle, resolvedExisting.latestChapterTitle);
         resolvedExisting.updateTime = BookFieldSanitizer.prefer(book.updateTime, resolvedExisting.updateTime);
         resolvedExisting.wordCount = BookFieldSanitizer.prefer(book.wordCount, resolvedExisting.wordCount);
+        const resolvedGroupName = resolvedWasPending ?
+          await NewBookGroupStore.apply(getContext(this), resolvedExisting) : '';
         SearchExplorePendingBook.clearPendingAddToShelf(resolvedExisting);
         await BookMarkService.carryTagsToShelfBook(resolvedExisting);
         await db.updateBook(resolvedExisting, true, 'explicit_add_resolved_existing');
@@ -1079,11 +1390,13 @@ struct SearchBookDetailPage {
         this.isInShelf = true;
         this.promptAddToShelfAfterRead = false;
         this.pendingAddToShelfBookUrl = '';
+        this.announceAddedToShelf(resolvedGroupName, fromHeader, false);
         return true;
       }
 
       const resolved = await this.resolveSameWorkBeforeShelf(book);
       if (resolved !== null) return resolved;
+      const groupName = await NewBookGroupStore.apply(getContext(this), book);
       SearchExplorePendingBook.clearPendingAddToShelf(book);
       await BookMarkService.carryTagsToShelfBook(book);
       await db.insertBook(book, 'explicit_add_from_detail');
@@ -1094,7 +1407,7 @@ struct SearchBookDetailPage {
       this.pendingAddToShelfBookUrl = '';
       this.isSaving = false;
       AppStorage.setOrCreate('shelfUpdateTime', Date.now());
-      HdsFeedback.showToast('已加入书架');
+      this.announceAddedToShelf(groupName, fromHeader, true);
       return true;
     } catch (e) {
       console.error('加入书架失败:', e);
@@ -1287,7 +1600,7 @@ struct SearchBookDetailPage {
   }
 
   shouldPromptAddToShelfOnBack(): boolean {
-    return this.promptAddToShelfOnBackFromResult && this.searchExplorePromptAddToShelfOnBack &&
+    return !this.isInShelf && this.promptAddToShelfOnBackFromResult && this.searchExplorePromptAddToShelfOnBack &&
       this.promptAddToShelfAfterRead && !this.isSaving && !this.showAddToShelfOnBackDialog &&
       !!this.bookUrl && this.bookUrl === this.pendingAddToShelfBookUrl;
   }
@@ -1350,10 +1663,12 @@ struct SearchBookDetailPage {
       await db.initWithContext(getContext(this));
       const pendingBook = await db.getBook(this.pendingAddToShelfBookUrl);
       if (pendingBook) {
-        if (SearchExplorePendingBook.isPendingAddToShelf(pendingBook)) {
+        const pendingWasPending = SearchExplorePendingBook.isPendingAddToShelf(pendingBook);
+        if (pendingWasPending) {
           const resolved = await this.resolveSameWorkBeforeShelf(pendingBook);
           if (resolved !== null) return resolved;
         }
+        const pendingGroupName = pendingWasPending ? await NewBookGroupStore.apply(getContext(this), pendingBook) : '';
         SearchExplorePendingBook.clearPendingAddToShelf(pendingBook);
         await BookMarkService.carryTagsToShelfBook(pendingBook);
         await db.updateBook(pendingBook, true, 'temporary_read_kept');
@@ -1362,7 +1677,7 @@ struct SearchBookDetailPage {
         this.promptAddToShelfAfterRead = false;
         this.pendingAddToShelfBookUrl = '';
         AppStorage.setOrCreate('shelfUpdateTime', Date.now());
-        HdsFeedback.showToast('已加入书架');
+        HdsFeedback.showToast(NewBookGroup.addedToast(pendingGroupName));
         return true;
       }
     } catch (e) {
@@ -1532,7 +1847,7 @@ struct SearchBookDetailPage {
     book.intro = BookFieldSanitizer.clean(this.intro);
     book.latestChapterTitle = BookFieldSanitizer.clean(this.latestChapterTitle);
     book.wordCount = BookFieldSanitizer.clean(this.wordCount);
-    book.group = -2147483645;
+    book.group = NewBookGroup.UNGROUPED;
     book.type = this.bookType;
     book.variable = this.bookVariable;
     BookTypeSupport.applyBookType(book);
@@ -1584,6 +1899,324 @@ struct SearchBookDetailPage {
     if (BookTypeSupport.typeFromVariable(target.variable) !== bit || category === BookTypeSupport.CATEGORY_VIDEO) {
       const merged = SearchBookDetailPage.mergeVariableTab(target.variable, tab);
       if (merged) target.variable = merged;
+    }
+  }
+
+  /** 书已在书架时书源行下面的分组胶囊，点开“放进分组”面板改分组。 */
+  @Builder
+  shelfGroupChip() {
+    Row({ space: AppSpacing.XXS }) {
+      SymbolGlyph($r('sys.symbol.folder'))
+        .fontSize(12)
+        .fontColor([this.accentColor()])
+      Text(this.shelfGroupName || '未分组')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.accentColor())
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .flexShrink(1)
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(11)
+        .fontColor([this.accentColor()])
+    }
+    .height(24)
+    .padding({ left: AppSpacing.SM, right: AppSpacing.SM })
+    .borderRadius(12)
+    .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+    .alignItems(VerticalAlign.Center)
+    .margin({ top: AppSpacing.SM })
+    .accessibilityText(`书架分组：${this.shelfGroupName || '未分组'}，点按更改`)
+    .onClick(() => {
+      this.openShelfGroupSheet();
+    })
+  }
+
+  /** 提示条宽度：材质底板要具体数值，借阅读按钮那一行量到的整页宽度，左右各让出页边距。 */
+  private groupNudgeWidth(): number {
+    return Math.max(0, this.readButtonBarWidth - AppSpacing.XL * 2);
+  }
+
+  /** 和返回、阅读按钮同一种沉浸光感胶囊底板，内容叠在上面。 */
+  @Builder
+  shelfGroupNudge() {
+    ImmersiveMaterialSurface({
+      surfaceWidth: this.groupNudgeWidth(),
+      surfaceHeight: 48,
+      darkMode: this.appDarkMode,
+      fallbackColor: this.cardColor(),
+      glowColor: `#40${this.accentColor().substring(1)}`
+    }) {
+      this.shelfGroupNudgeContent()
+    }
+  }
+
+  @Builder
+  shelfGroupNudgeContent() {
+    Row({ space: AppSpacing.MD }) {
+      Text(this.groupNudgeText)
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.primaryTextColor())
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      Text(this.shelfGroupName ? '换分组' : '放进分组')
+        .fontSize(AppFontSize.BODY)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeRuntime.onAccentColor())
+        .height(32)
+        .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+        .borderRadius(16)
+        .backgroundColor(this.buttonColor())
+        .onClick(() => {
+          this.hideGroupNudge();
+          this.openShelfGroupSheet();
+        })
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ left: AppSpacing.XL, right: AppSpacing.SM })
+    .alignItems(VerticalAlign.Center)
+  }
+
+  /** 和同页的标记、目录面板同一种悬浮沉浸光感面板：四角圆、去掉系统默认底色和投影，由材质自己画。 */
+  shelfGroupSheetOptions(): SheetOptions {
+    const options: SheetOptions = {
+      height: SheetSize.FIT_CONTENT,
+      keyboardAvoidMode: SheetKeyboardAvoidMode.TRANSLATE_AND_RESIZE,
+      dragBar: true,
+      showClose: false,
+      backgroundColor: Color.Transparent,
+      blurStyle: BlurStyle.NONE,
+      borderWidth: 0,
+      radius: { topLeft: 28, topRight: 28, bottomLeft: 28, bottomRight: 28 },
+      shadow: { radius: 0, color: Color.Transparent },
+      onDisappear: (): void => {
+        this.showGroupSheet = false;
+        this.newShelfGroupEditing = false;
+      }
+    };
+    return ImmersiveMaterialRuntime.applySheetMaterial(this.immersiveLightLevel, options,
+      this.appDarkMode, this.accentColor());
+  }
+
+  /** 和书架“移动到分组”同样的列表；新建分组就地输入，建好直接放进去。 */
+  @Builder
+  shelfGroupSheet() {
+    Column({ space: AppSpacing.SM }) {
+      Text('放进分组')
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.primaryTextColor())
+        .width('100%')
+        .height(32)
+        .textAlign(TextAlign.Center)
+      Scroll() {
+        Column({ space: AppSpacing.XS }) {
+          this.shelfGroupSheetItem('未分组', 0)
+          ForEach(this.shelfGroupOptions, (group: BookGroup) => {
+            this.shelfGroupSheetItem(group.groupName, group.groupId)
+          }, (group: BookGroup) => `detail_group_${group.groupId}`)
+          if (this.newShelfGroupEditing) {
+            Row({ space: AppSpacing.SM }) {
+              TextInput({ placeholder: '输入分组名称', text: this.newShelfGroupName })
+                .layoutWeight(1)
+                .height(38)
+                .backgroundColor(this.inputColor())
+                .fontColor(this.primaryTextColor())
+                .borderRadius(ThemeRuntime.mediumRadius())
+                .defaultFocus(true)
+                .onChange((value: string) => {
+                  this.newShelfGroupName = value;
+                })
+                .onSubmit(() => {
+                  this.createShelfGroupAndAssign();
+                })
+              Button('新建并放入', { type: ButtonType.Normal })
+                .height(38)
+                .fontSize(AppFontSize.BODY)
+                .borderRadius(ThemeRuntime.buttonRadius())
+                .backgroundColor(this.buttonColor())
+                .fontColor(ThemeRuntime.onAccentColor())
+                .enabled(!!this.newShelfGroupName.trim())
+                .onClick(() => {
+                  this.createShelfGroupAndAssign();
+                })
+            }
+            .width('100%')
+          } else {
+            Row({ space: AppSpacing.SM }) {
+              SymbolGlyph($r('sys.symbol.plus'))
+                .fontSize(16)
+                .fontColor([this.accentColor()])
+              Text('新建分组')
+                .fontSize(AppFontSize.BODY)
+                .fontColor(this.accentColor())
+            }
+            .width('100%')
+            .height(38)
+            .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+            .borderRadius(ThemeRuntime.mediumRadius())
+            .backgroundColor(this.inputColor())
+            .accessibilityText('新建分组并放入')
+            .onClick(() => {
+              this.newShelfGroupName = '';
+              this.newShelfGroupEditing = true;
+            })
+          }
+        }
+        .width('100%')
+      }
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      .width('100%')
+      .constraintSize({ maxHeight: 360 })
+      .scrollBar(BarState.Off)
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: Math.max(this.navBarHeight, 12) + 12 })
+  }
+
+  @Builder
+  shelfGroupSheetItem(label: string, groupId: number) {
+    Row({ space: AppSpacing.SM }) {
+      Text(label)
+        .fontSize(AppFontSize.BODY)
+        .fontColor(groupId === this.currentShelfGroupId() ? this.accentColor() : this.primaryTextColor())
+        .fontWeight(groupId === this.currentShelfGroupId() ? FontWeight.Medium : FontWeight.Regular)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      if (groupId === this.currentShelfGroupId()) {
+        SymbolGlyph($r('sys.symbol.checkmark'))
+          .fontSize(16)
+          .fontColor([this.accentColor()])
+      }
+    }
+    .width('100%')
+    .height(38)
+    .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.mediumRadius())
+    .backgroundColor(groupId === this.currentShelfGroupId() ? ThemeRuntime.accentSurfaceColor(this.appDarkMode) :
+      this.inputColor())
+    .accessibilitySelected(groupId === this.currentShelfGroupId())
+    .onClick(() => {
+      this.assignShelfGroup(groupId);
+    })
+  }
+
+  /** 面板里该打勾的分组：分组已被删掉（找不到名字）时按未分组算。 */
+  private currentShelfGroupId(): number {
+    return this.shelfGroupId > 0 && this.shelfGroupName ? this.shelfGroupId : 0;
+  }
+
+  private async loadShelfGroupOptions(): Promise<BookGroup[]> {
+    const db = AppDatabase.getInstance();
+    await db.initWithContext(getContext(this));
+    const groups = await db.getCustomBookGroups();
+    this.shelfGroupOptions = groups;
+    return groups;
+  }
+
+  private async refreshShelfGroupName(): Promise<void> {
+    const groupId = this.shelfGroupId;
+    if (groupId <= 0) {
+      this.shelfGroupName = '';
+      return;
+    }
+    try {
+      const groups = await this.loadShelfGroupOptions();
+      if (groupId !== this.shelfGroupId) return;
+      this.shelfGroupName = groups.find((group: BookGroup): boolean => group.groupId === groupId)?.groupName ?? '';
+    } catch (e) {
+      console.warn('读取书架分组失败:', e);
+    }
+  }
+
+  openShelfGroupSheet(): void {
+    if (!this.isInShelf || !this.bookUrl) return;
+    this.newShelfGroupEditing = false;
+    this.newShelfGroupName = '';
+    this.loadShelfGroupOptions().then((): void => {
+      this.showGroupSheet = true;
+    }).catch((e: Error): void => {
+      console.warn('读取书架分组失败:', e);
+      HdsFeedback.showToast('读取分组失败');
+    });
+  }
+
+  async assignShelfGroup(groupId: number): Promise<void> {
+    this.showGroupSheet = false;
+    if (!this.bookUrl || !this.isInShelf) return;
+    const target = groupId > 0 ? groupId : 0;
+    // 选了就记成“上次选的分组”，包括选回未分组。
+    NewBookGroupStore.saveLastGroupId(getContext(this), target).catch((e: Error): void => {
+      console.warn('保存上次选的分组失败:', e);
+    });
+    if (target === this.currentShelfGroupId()) return;
+    try {
+      const db = AppDatabase.getInstance();
+      await db.initWithContext(getContext(this));
+      await db.updateBooksGroup([this.bookUrl], target);
+      const groupName = target > 0 ?
+        (this.shelfGroupOptions.find((group: BookGroup): boolean => group.groupId === target)?.groupName ?? '') : '';
+      this.shelfGroupId = target;
+      this.shelfGroupName = groupName;
+      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+      HdsFeedback.showToast(`已放进“${groupName || '未分组'}”`);
+    } catch (e) {
+      console.error('设置书架分组失败:', e);
+      HdsFeedback.showToast('设置分组失败');
+    }
+  }
+
+  async createShelfGroupAndAssign(): Promise<void> {
+    const name = this.newShelfGroupName.trim();
+    if (!name) return;
+    try {
+      const db = AppDatabase.getInstance();
+      await db.initWithContext(getContext(this));
+      const group = await db.addBookGroup(name);
+      if (!group) {
+        HdsFeedback.showToast('已有同名分组');
+        return;
+      }
+      this.shelfGroupOptions = [...this.shelfGroupOptions, group];
+      this.newShelfGroupEditing = false;
+      this.newShelfGroupName = '';
+      await this.assignShelfGroup(group.groupId);
+    } catch (e) {
+      console.error('新建书架分组失败:', e);
+      HdsFeedback.showToast('新建分组失败');
+    }
+  }
+
+  /** 加入后的反馈：顶栏书架钮出提示条，其余入口按 toastOtherwise 决定是否弹提示。 */
+  private announceAddedToShelf(groupName: string, fromHeader: boolean, toastOtherwise: boolean): void {
+    if (fromHeader) {
+      this.showGroupNudge(groupName);
+    } else if (toastOtherwise) {
+      HdsFeedback.showToast(NewBookGroup.addedToast(groupName));
+    }
+  }
+
+  private showGroupNudge(groupName: string): void {
+    this.clearGroupNudgeTimer();
+    this.groupNudgeText = NewBookGroup.addedToast(groupName);
+    this.groupNudgeVisible = true;
+    this.groupNudgeTimer = setTimeout((): void => {
+      this.groupNudgeTimer = -1;
+      this.hideGroupNudge();
+    }, SearchBookDetailPage.GROUP_NUDGE_MS);
+  }
+
+  private hideGroupNudge(): void {
+    this.clearGroupNudgeTimer();
+    this.groupNudgeVisible = false;
+  }
+
+  private clearGroupNudgeTimer(): void {
+    if (this.groupNudgeTimer >= 0) {
+      clearTimeout(this.groupNudgeTimer);
+      this.groupNudgeTimer = -1;
     }
   }
 
@@ -1753,9 +2386,12 @@ struct SearchBookDetailPage {
     this.updateTime = book.updateTime || this.updateTime;
     this.bookType = book.type || this.bookType;
     this.bookVariable = book.variable || this.bookVariable;
+    this.shelfGroupId = book.group > 0 ? book.group : 0;
+    this.refreshShelfGroupName();
     this.bookInfoRenderVersion++;
     // 书籍信息补齐后作者可能才有，作品键随之变化。
     this.loadBookMark();
+    this.loadReadStats();
   }
 
   private onBookMarkRevisionChanged(): void {
@@ -1777,6 +2413,8 @@ struct SearchBookDetailPage {
       await AppDatabase.getInstance().initWithContext(getContext(this));
       const mark = await AppDatabase.getInstance().getBookMark(key);
       if (version === this.markLoadVersion) this.bookMark = mark;
+      const tags = await BookMarkService.knownTags();
+      if (version === this.markLoadVersion) this.markQuickTags = tags;
       // 书架上这本还没有标签时把标记的标签补过去（打通之前保存的、被旧快照写回空的）。
       if (mark && mark.categories.length > 0) await BookMarkService.fillMissingShelfTags(mark);
     } catch (error) {
@@ -1784,21 +2422,65 @@ struct SearchBookDetailPage {
     }
   }
 
-  private async rateFromDetail(rating: number): Promise<void> {
-    if (!this.markKey()) return;
-    try {
-      ++this.markLoadVersion;
-      const saved = await BookMarkService.rate(this.buildCurrentBook(), this.bookMark, rating);
-      this.bookMark = saved;
-      HdsFeedback.showToast(saved ? `已标记 · ${BookMarkRules.ratingText(saved.rating)} 星` : '已删除标记');
-    } catch (error) {
-      console.error('保存评分失败:', error);
-      HdsFeedback.showToast('保存失败，请重试');
-    }
+  private rateFromDetail(rating: number): void {
+    this.quickSaveMark((draft: BookMark): string => {
+      draft.rating = rating;
+      return rating > 0 ? `已标记 · ${BookMarkRules.ratingText(rating)} 星` : '已清除评分';
+    });
   }
 
-  private async openMarkSheet(): Promise<void> {
+  /** 再点已选的状态就取消。 */
+  private statusFromDetail(status: number): void {
+    this.quickSaveMark((draft: BookMark): string => {
+      draft.status = draft.status === status ? BookMarkStatus.NONE : status;
+      return draft.status === BookMarkStatus.NONE ? '已清除阅读状态' : `已标为${BookMarkStatus.label(draft.status)}`;
+    });
+  }
+
+  private toggleTagFromDetail(name: string): void {
+    this.quickSaveMark((draft: BookMark): string => {
+      if (draft.categories.includes(name)) {
+        draft.categories = draft.categories.filter((tag: string): boolean => tag !== name);
+        return `已移除标签 ${name}`;
+      }
+      if (draft.categories.length >= BookMarkRules.MAX_CATEGORIES) {
+        return `最多 ${BookMarkRules.MAX_CATEGORIES} 个标签`;
+      }
+      draft.categories = [...draft.categories, name];
+      return `已加标签 ${name}`;
+    });
+  }
+
+  /**
+   * 页签里的快捷保存：在最新的标记上改一项再存，全清空就删掉标记。
+   * 排队执行，连点几下也不会拿旧标记覆盖刚存的那次；刚标成读过时照常出票。
+   */
+  private quickSaveMark(edit: (draft: BookMark) => string): void {
+    if (!this.markKey()) return;
+    this.markSaveChain = this.markSaveChain.then(async (): Promise<void> => {
+      try {
+        ++this.markLoadVersion;
+        const before = this.bookMark;
+        const wasRead = before !== null && before.status === BookMarkStatus.READ;
+        const draft = await BookMarkService.prepareDraft(this.buildCurrentBook(), before);
+        const message = edit(draft);
+        const saved = await BookMarkService.save(draft);
+        this.bookMark = saved;
+        if (saved && !wasRead && saved.status === BookMarkStatus.READ) {
+          await this.issueReadTicket(saved);
+        } else {
+          HdsFeedback.showToast(saved || before === null ? message : '已删除标记');
+        }
+      } catch (error) {
+        console.error('保存书籍标记失败:', error);
+        HdsFeedback.showToast('保存失败，请重试');
+      }
+    });
+  }
+
+  private async openMarkSheet(focusReview: boolean = false): Promise<void> {
     if (!this.markKey() || this.showMarkSheet) return;
+    this.markSheetFocusReview = focusReview;
     try {
       this.markCategories = await BookMarkService.knownTags();
       this.markDraft = await BookMarkService.prepareDraft(this.buildCurrentBook(), this.bookMark);
@@ -1813,9 +2495,12 @@ struct SearchBookDetailPage {
     try {
       ++this.markLoadVersion;
       const existed = this.bookMark !== null;
+      const wasRead = this.bookMark !== null && this.bookMark.status === BookMarkStatus.READ;
       const saved = await BookMarkService.save(draft);
       this.bookMark = saved;
-      if (saved) {
+      if (saved && !wasRead && saved.status === BookMarkStatus.READ) {
+        await this.issueReadTicket(saved);
+      } else if (saved) {
         HdsFeedback.showToast('标记已保存');
       } else if (existed) {
         HdsFeedback.showToast('已删除标记');
@@ -1823,6 +2508,28 @@ struct SearchBookDetailPage {
     } catch (error) {
       console.error('保存书籍标记失败:', error);
       HdsFeedback.showToast('保存失败，请重试');
+    }
+  }
+
+  /** 刚标成读过：出票动画开着就出票，关着只提示收进了票夹。 */
+  private async issueReadTicket(mark: BookMark): Promise<void> {
+    try {
+      const context = getContext(this);
+      await TicketAlbumStore.load(context);
+      const ticket = await ReadingTicketLoader.loadOne(context, mark);
+      if (!ticket) {
+        HdsFeedback.showToast('标记已保存');
+        return;
+      }
+      if (TicketAlbumStore.issueAnimation()) {
+        this.issueTicketStyle = TicketAlbumStore.currentStyle();
+        this.issueTicket = ticket;
+      } else {
+        HdsFeedback.showToast(ticket.number > 0 ? `标记已保存 · 第 ${ticket.number} 张票已收进票夹` : '标记已保存');
+      }
+    } catch (error) {
+      console.warn('出票失败:', error);
+      HdsFeedback.showToast('标记已保存');
     }
   }
 

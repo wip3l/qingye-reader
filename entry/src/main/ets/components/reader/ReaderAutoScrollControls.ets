@@ -1,3 +1,4 @@
+import { ReaderAutoScrollClock } from '../../core/reader/ReaderAutoScrollClock';
 import { ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
@@ -10,6 +11,8 @@ import { ReaderTtsCapsule } from './ReaderTtsControls';
 export struct ReaderAutoScrollCapsule {
   @Prop speed: number = 20;
   @Prop comic: boolean = false;
+  /** 百叶窗方式：图标与标题换成百叶窗。 */
+  @Prop blinds: boolean = false;
   @Prop paused: boolean = false;
   @Prop status: string = '';
   @Prop textColor: string;
@@ -37,11 +40,11 @@ export struct ReaderAutoScrollCapsule {
             Row({ space: AppSpacing.SM }) {
               Stack({ alignContent: Alignment.Center }) {
                 Circle().width(30).height(30).fill(this.accentColor)
-                SymbolGlyph($r('sys.symbol.arrow_down'))
+                SymbolGlyph(this.blinds ? $r('sys.symbol.line_3_horizontal') : $r('sys.symbol.arrow_down'))
                   .fontSize(15).fontColor([ThemeRuntime.onAccentColor(this.accentColor)])
               }
               Column({ space: 1 }) {
-                Text(this.status || (this.paused ? '已暂停' : '自动滚动'))
+                Text(this.status || (this.paused ? '已暂停' : (this.blinds ? '百叶窗' : '自动滚动')))
                   .fontSize(AppFontSize.CAPTION).fontWeight(FontWeight.Medium).fontColor(this.textColor)
                   .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
                 Text(this.comic ? `${this.speed / 20} 屏/分钟` : `${this.speed} 行/分钟`)
@@ -51,7 +54,8 @@ export struct ReaderAutoScrollCapsule {
           }
           .layoutWeight(1).height(34).padding(0)
           .borderRadius(17).backgroundColor(Color.Transparent)
-          .accessibilityText(`自动滚动，${this.comic ? `${this.speed / 20} 屏` : `${this.speed} 行`}每分钟，点击调整速度`)
+          .accessibilityText(`${this.blinds ? '百叶窗自动翻页' : '自动滚动'}，${this.comic ? `${this.speed / 20} 屏` :
+            `${this.speed} 行`}每分钟，点击调整速度`)
           .onClick(() => this.onOpen())
           Button({ type: ButtonType.Normal }) {
             SymbolGlyph(this.paused ? $r('sys.symbol.play') : $r('sys.symbol.pause'))
@@ -90,7 +94,15 @@ export struct ReaderAutoScrollSpeedPanel {
   @Prop accentColor: string;
   @Prop accentSurfaceColor: string;
   @Prop controlColor: string;
+  /** READER_AUTO_SCROLL_MODE_*；漫画不显示方式切换。 */
+  @Prop mode: string = 'scroll';
+  /** 本书当前能否用百叶窗（只有分页排版的正文能用）；不能时选项置灰并说明原因。 */
+  @Prop blindsAvailable: boolean = true;
+  /** 百叶窗叶片效果：flip / fade / wipe。 */
+  @Prop blindsEffect: string = 'flip';
   onSpeed: (speed: number) => void = (_speed: number): void => {};
+  onMode: (mode: string) => void = (_mode: string): void => {};
+  onBlindsEffect: (effect: string) => void = (_effect: string): void => {};
   onToggle: () => void = (): void => {};
   onStop: () => void = (): void => {};
   onClose: () => void = (): void => {};
@@ -104,13 +116,56 @@ export struct ReaderAutoScrollSpeedPanel {
     .accessibilityText(label).onClick(() => this.onSpeed(this.speed + step))
   }
 
+  @Builder
+  modeOption(mode: string, icon: Resource, label: string) {
+    Button({ type: ButtonType.Normal }) {
+      Row({ space: 6 }) {
+        SymbolGlyph(icon).fontSize(15)
+          .fontColor([this.mode === mode ? this.accentColor : this.textColor])
+        Text(label).fontSize(14)
+          .fontWeight(this.mode === mode ? FontWeight.Medium : FontWeight.Normal)
+          .fontColor(this.mode === mode ? this.accentColor : this.textColor)
+      }.justifyContent(FlexAlign.Center)
+    }
+    .layoutWeight(1).height(40).borderRadius(13).padding(0)
+    .backgroundColor(this.mode === mode ? this.accentSurfaceColor : Color.Transparent)
+    // 可用状态在 builder 里读：按值传进来的参数不会随状态刷新。
+    .enabled(mode !== 'blinds' || this.blindsAvailable).opacity(mode !== 'blinds' || this.blindsAvailable ? 1 : 0.4)
+    .accessibilityText(`${label}${this.mode === mode ? '，已选中' : ''}`)
+    .onClick(() => this.onMode(mode))
+  }
+
+  @Builder
+  effectOption(effect: string, label: string) {
+    Button({ type: ButtonType.Normal }) {
+      Text(label).fontSize(13)
+        .fontWeight(this.blindsEffect === effect ? FontWeight.Medium : FontWeight.Normal)
+        .fontColor(this.blindsEffect === effect ? this.accentColor : this.textColor)
+    }
+    .layoutWeight(1).height(34).borderRadius(11).padding(0)
+    .backgroundColor(this.blindsEffect === effect ? this.accentSurfaceColor : Color.Transparent)
+    .accessibilityText(`${label}${this.blindsEffect === effect ? '，已选中' : ''}`)
+    .onClick(() => this.onBlindsEffect(effect))
+  }
+
+  modeHint(): string {
+    if (this.mode === 'blinds') {
+      if (!this.blindsAvailable) return '当前排版不支持百叶窗，正在使用平滑滚动';
+      if (this.blindsEffect === 'wipe') return '画面不动，一条线连续往下擦出下一页';
+      if (this.blindsEffect === 'fade') return '画面不动，读过的行逐行淡出、换成下一页';
+      return '画面不动，读过的行逐行翻成下一页';
+    }
+    return '整屏文字匀速向上滚动';
+  }
+
   build() {
     Scroll() {
       Column({ space: 12 }) {
         Row({ space: 8 }) {
           Column({ space: 4 }) {
             Text('自动滚动').fontSize(20).fontWeight(FontWeight.Medium).fontColor(this.textColor)
-            Text(this.status || (this.paused ? '已暂停 · 按自己的节奏阅读' : '正在滚动 · 调速即时生效'))
+            Text(this.status || (this.paused ? '已暂停 · 按自己的节奏阅读' :
+              (this.mode === 'blinds' && !this.comic ? '正在翻页 · 调速即时生效' : '正在滚动 · 调速即时生效')))
               .fontSize(12).fontColor(this.subTextColor).maxLines(2)
           }.alignItems(HorizontalAlign.Start).layoutWeight(1)
           Button({ type: ButtonType.Circle }) {
@@ -120,26 +175,45 @@ export struct ReaderAutoScrollSpeedPanel {
           .accessibilityText('收起调速面板').onClick(() => this.onClose())
         }.width('100%')
 
+        if (!this.comic) {
+          Column({ space: 6 }) {
+            Row({ space: 4 }) {
+              this.modeOption('scroll', $r('sys.symbol.arrow_down'), '平滑滚动')
+              this.modeOption('blinds', $r('sys.symbol.line_3_horizontal'), '百叶窗')
+            }
+            .width('100%').padding(3).borderRadius(16).backgroundColor(this.controlColor)
+            if (this.mode === 'blinds' && this.blindsAvailable) {
+              Row({ space: 4 }) {
+                this.effectOption('flip', '逐行翻转')
+                this.effectOption('fade', '逐行淡入')
+                this.effectOption('wipe', '平滑擦除')
+              }
+              .width('100%').padding(3).borderRadius(14).backgroundColor(this.controlColor)
+            }
+            Text(this.modeHint()).fontSize(12).fontColor(this.subTextColor).maxLines(2)
+          }.width('100%').alignItems(HorizontalAlign.Start)
+        }
+
         Row({ space: 16 }) {
           this.speedStep($r('sys.symbol.minus'), this.comic ? '每分钟减慢零点一屏' : '每分钟减慢两行', -2, this.speed > 6)
           Row({ space: 8 }) {
             Text(`${this.comic ? this.speed / 20 : this.speed}`).fontSize(38).fontColor(this.textColor)
             Text(this.comic ? '屏 / 分钟' : '行 / 分钟').fontSize(12).fontColor(this.subTextColor)
           }.layoutWeight(1).justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Bottom)
-          this.speedStep($r('sys.symbol.plus'), this.comic ? '每分钟加快零点一屏' : '每分钟加快两行', 2, this.speed < 100)
+          this.speedStep($r('sys.symbol.plus'), this.comic ? '每分钟加快零点一屏' : '每分钟加快两行', 2, this.speed < ReaderAutoScrollClock.MAX_SPEED)
         }.width('100%').margin({ top: 4 })
 
         Column() {
-          Slider({ value: this.speed, min: 6, max: 100, step: 2 })
+          Slider({ value: this.speed, min: ReaderAutoScrollClock.MIN_SPEED, max: ReaderAutoScrollClock.MAX_SPEED, step: 2 })
             .height(44).selectedColor(this.accentColor).blockColor(this.accentColor)
             .trackColor(this.controlColor)
             .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
-            .accessibilityText(this.comic ? '自动滚动速度，每分钟零点三至五屏' : '自动滚动速度，每分钟六至一百行')
+            .accessibilityText(this.comic ? '自动滚动速度，每分钟零点三至十屏' : '自动滚动速度，每分钟六至二百行')
             .onChange((speed: number) => this.onSpeed(speed))
           Row() {
             Text(this.comic ? '0.3 屏/分钟' : '6 行/分钟').fontSize(11).fontColor(this.subTextColor)
             Blank()
-            Text(this.comic ? '5 屏/分钟' : '100 行/分钟').fontSize(11).fontColor(this.subTextColor)
+            Text(this.comic ? '10 屏/分钟' : '200 行/分钟').fontSize(11).fontColor(this.subTextColor)
           }.width('100%')
         }.width('100%')
 
@@ -168,7 +242,8 @@ export struct ReaderAutoScrollSpeedPanel {
           }
           .layoutWeight(1).height(44).backgroundColor(this.accentColor).onClick(() => this.onToggle())
         }.width('100%')
-        Text('双击正文暂停 / 继续 · 速度自动记住').fontSize(12).fontColor(this.subTextColor)
+        Text(this.comic ? '双击正文暂停 / 继续 · 速度自动记住' : '双击正文暂停 / 继续 · 方式和速度自动记住')
+          .fontSize(12).fontColor(this.subTextColor)
       }.width('100%').padding({ left: 24, right: 24, top: 8, bottom: 24 })
     }.width('100%').height('100%').scrollBar(BarState.Off)
   }

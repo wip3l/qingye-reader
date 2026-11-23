@@ -1,4 +1,5 @@
 import worker, { MessageEvents, ErrorEvent } from '@ohos.worker';
+import { fileIo as fs } from '@kit.CoreFileKit';
 import { HttpTtsAudio } from '../HttpTtsReader';
 import { LocalTtsModel, LocalTtsModels } from './LocalTtsModels';
 
@@ -69,10 +70,16 @@ export class LocalTtsEngine {
   private static nextId: number = 0;
   private static idleTimer: number = -1;
   private static loadingDir: string = '';
+  /**
+   * sherpa-onnx 每个进程只初始化一次 espeak-ng，之后换哪个模型都从第一次传入的数据目录读词典，
+   * 结束线程也不会重置。这里记下那个目录，用来在它被删掉或缺词典时提前拦住，而不是让原生层崩溃。
+   */
+  private static espeakDir: string = '';
 
   static async synthesize(model: LocalTtsModel, text: string, speed: number): Promise<HttpTtsAudio> {
     if (!LocalTtsModels.memberAllowed()) throw new Error(LocalTtsModels.MEMBER_REQUIRED);
     LocalTtsEngine.cancelIdleRelease();
+    await LocalTtsModels.ensureSupplements(model);
     await LocalTtsEngine.ensureLoaded(model);
     const thread = LocalTtsEngine.thread;
     if (!thread) throw new Error('离线音色未加载');
@@ -132,6 +139,16 @@ export class LocalTtsEngine {
     if (!LocalTtsModels.verifyDir(dir, model)) {
       LocalTtsModels.refreshInstalledPaths();
       return Promise.reject(new Error('离线音色文件不完整，请在音色管理里重新下载'));
+    }
+    if (model.dataDir) {
+      // 普通话词典里查不到的字符（英文、“” 等标点）espeak-ng 会转去英文词典，缺了 en_dict 原生层直接 SIGSEGV。
+      const espeakDir = LocalTtsEngine.espeakDir || `${dir}/${model.dataDir}`;
+      if (!fs.accessSync(`${espeakDir}/en_dict`)) {
+        return Promise.reject(new Error(LocalTtsEngine.espeakDir
+          ? '离线音色的发音数据已被删除，请重启应用后再试'
+          : '这个音色的 espeak-ng-data 缺少 en_dict，请重新导入完整的模型包'));
+      }
+      LocalTtsEngine.espeakDir = espeakDir;
     }
     const thread = new worker.ThreadWorker('../../workers/LocalTtsWorker.ets', { name: 'LocalTts' });
     LocalTtsEngine.thread = thread;

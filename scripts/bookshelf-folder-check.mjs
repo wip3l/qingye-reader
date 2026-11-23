@@ -58,6 +58,9 @@ const rects = {
 };
 vm.runInContext(stripTypeScriptTypes(`class BookshelfPage {
   static TYPE_TAB_IDS = ['all', 'text', 'image', 'audio', 'video'];
+  // 沉浸书架默认关闭；顶栏收起量上报与本检查无关。
+  shelfImmersiveActive() { return false; }
+  reportShelfBarCollapse() {}
   ${methods}
 }
 globalThis.Shelf = BookshelfPage;`), context);

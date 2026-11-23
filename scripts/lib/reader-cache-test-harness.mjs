@@ -84,7 +84,7 @@ export function harness() {
   });
   const load = relative => vm.runInContext(stripTypeScriptTypes(readEtsModule(relative)
     .replace(/^import[\s\S]*?;\r?\n/gm, '').replace(/^export /gm, '')), context, { filename: relative });
-  for (const name of ['ReaderCacheCoordinator', 'ReaderImageMarker', 'ReaderImageReferences', 'ReaderCacheBudgetPolicy']) load(`core/book/${name}.ts`);
+  for (const name of ['ReaderCacheCoordinator', 'ReaderImageMarker', 'ReaderImageReferences', 'ReaderCacheBudgetPolicy', 'CachedChapterRealign']) load(`core/book/${name}.ts`);
   load('model/data/AppDatabase.ts');
   for (const name of ['BookTypeSupport', 'ReaderImageCache', 'ReaderCacheBudget', 'ReaderImageScheduler', 'ReaderImageResults', 'WebBookService', 'ReadBookEngine', 'ReaderImageRecovery']) load(`core/book/${name}.ts`);
   const api = vm.runInContext('({ db: appDb, Budget: ReaderCacheBudget, Cache: ReaderImageCache, Coordinator: ReaderCacheCoordinator, Marker: ReaderImageMarker, Engine: ReadBookEngine, Recovery: ReaderImageRecovery, Resource: ReaderImageResource })', context);

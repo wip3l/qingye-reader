@@ -16,16 +16,31 @@ import { CustomThemeScheme, CustomThemeSchemeStore } from '../utils/CustomThemeS
 import { SchemeAssetService } from '../utils/SchemeAssetService';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
+import { ThemeModeSwitch } from '../components/theme/ThemeModeSwitch';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
 import { ThemeRecentStore } from '../utils/ThemeRecentStore';
 import { ReaderThemeBackground } from '../components/ReaderThemeBackground';
-import { TtsPanelThemeBackground } from '../components/TtsPanelThemeBackground';
+import { ThemeDetailScene } from '../components/theme/ThemeDetailScene';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
-import { ThemeImageCrop } from '../theme/share/ThemePackageFormat';
+import {
+  BubbleFrameBreak,
+  BubbleFrameRepeat,
+  normalizeChapterHead,
+  ThemeImageCrop,
+  ThemePackageBubble,
+  ThemePackageChapterHead
+} from '../theme/share/ThemePackageFormat';
+import {
+  ThemeChapterHeadSampleMetrics,
+  ThemeChapterHeadTitle,
+  ThemeDropCapParagraph
+} from '../components/theme/ThemeChapterHeadSample';
+import { ThemeBubbleFramePreview } from '../components/theme/ThemeBubbleFramePreview';
+import { BubbleFramePreviewPart } from '../components/theme/BubbleFramePreviewPainter';
 import { ThemeCroppedImage } from '../components/theme/ThemeCroppedImage';
-import { SuperExclusiveThemes, ThemeIds, ThemePack, ThemeRegexEmphasisModes, ThemeVariant } from '../theme/ThemeModels';
+import { SuperExclusiveThemes, ThemeIds, ThemePack, ThemeColorTokens, ThemeRegexEmphasisModes, ThemeVariant } from '../theme/ThemeModels';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
-import { ThemeImageSlots, ThemePackRegistry } from '../theme/ThemePackRegistry';
+import { ResolvedBubbleFrame, ThemeImageSlots, ThemePackRegistry } from '../theme/ThemePackRegistry';
 import { AccountCommerceConfig } from '../account/AccountCommerceConfig';
 import { AccountApiError, ThemeCatalogItem, ThemeCatalogResponse,
   ThemeEntitlement } from '../account/AccountCommerceModels';
@@ -46,6 +61,7 @@ import {
 } from '../core/reader/ReaderCommentBubble';
 import { StartupCoverTextStore } from '../utils/StartupCoverTextStore';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { CloudThemeSync } from '../account/CloudThemeSync';
 import { ListDissolve } from '../utils/ListDissolve';
 import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
@@ -62,22 +78,45 @@ import {
 } from '../theme/share/ThemePackageService';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
-import { PopupMenuAction } from '../components/common/PopupMenuAction';
+import { PopupMenuAction, PopupMenuHeader } from '../components/common/PopupMenuAction';
 import { compareText } from '../platform/TextCompare';
 
-const STORE_BOOK_COVER_RATIO = 46 / 64;
-const SHELF_BOOK_TITLES: string[] = ['长夜', '山海', '雾中', '北窗', '星河', '归途'];
 // “我的”页已拥有区只露这么多套，其余进“全部”列表，免得把方案挤到很下面。
-const OWNED_PREVIEW_COUNT = 3;
-const ROW_THUMB_WIDTH = 36;
-const ROW_THUMB_HEIGHT = 56;
+const OWNED_PREVIEW_COUNT = 8;
+// “我的”页方案区露出的套数（置顶优先），其余进“我的方案”全部页。
+const SCHEME_PREVIEW_COUNT = 4;
+// 方案到这么多套才在全部页给搜索框。
+const SCHEME_SEARCH_MIN = 8;
+const SCHEME_SORTS: string[] = ['recent', 'modified', 'created', 'name', 'manual'];
+const SCHEME_FILTERS: string[] = ['all', 'self', 'import'];
+// 置顶的侧滑底色和名称旁的图钉：和应用（强调色）、删除（红）分开，各主题下都看得清。
+const SCHEME_PIN_COLOR = '#F2A11B';
+const OWNED_TILE_WIDTH = 88;
+const OWNED_TILE_HEIGHT = 124;
+const ROW_THUMB_WIDTH = 44;
+const ROW_THUMB_HEIGHT = 62;
 const CURRENT_HERO_HEIGHT = 188;
+const CURRENT_CARD_HERO_HEIGHT = 132;
 const STORE_TILE_WIDTH = 100;
 const STORE_TILE_HEIGHT = 168;
-const DETAIL_READER_LINES = 7;
-const DETAIL_READER_FONT_SIZE = 15;
-const DETAIL_READER_LINE_HEIGHT = 27;
+const DETAIL_READER_FONT_SIZE = 17;
+const DETAIL_READER_LINE_HEIGHT = 31;
+// 实景预览卡的宽高比：接近一屏，比真机屏幕略矮，一屏里还能露出上下的小标题。
+const DETAIL_SCENE_RATIO = 9 / 15.5;
+const DETAIL_READER_BAR_HEIGHT = 28;
+const DETAIL_READER_TITLE_SIZE = 24;
+const DETAIL_READER_TITLE_HEIGHT = 72;
+const DETAIL_FULL_SCENES: string[] = ['shelf', 'reader', 'listen'];
+const DETAIL_SHELF_LAYOUTS: string[] = ['compact', 'loose', 'tile', 'companion'];
+
+function detailShelfLayoutLabel(layout: string): string {
+  if (layout === 'compact') return '紧凑';
+  if (layout === 'loose') return '宽松';
+  if (layout === 'tile') return '平铺';
+  return '陪伴';
+}
 const DETAIL_SCRIM = '#59000000';
+const DETAIL_MODE_SWITCH_WIDTH: number = 128;
 
 /** 主题库的一个风格分组；没归进任何组的主题（如后加的内置主题包）落到“更多”。 */
 class ThemeStoreGroup {
@@ -98,8 +137,8 @@ const THEME_STORE_GROUPS: ThemeStoreGroup[] = [
     ThemeIds.AZURE_MECHA, ThemeIds.NEON_HARBOR]),
   new ThemeStoreGroup('纸本质感', [ThemeIds.LETTERPRESS_PAGE, ThemeIds.WARM_PAPER,
     ThemeIds.ROSE_LETTER, ThemeIds.CRIMSON_ARCHIVE]),
-  new ThemeStoreGroup('清爽日常', [ThemeIds.PLAIN_DEFAULT, ThemeIds.CLASSIC_BLUE, ThemeIds.FOREST_MIST,
-    ThemeIds.NEON_NIGHT])
+  new ThemeStoreGroup('清爽日常', [ThemeIds.PLAIN_DEFAULT, ThemeIds.MORNING_MIST,
+    ThemeIds.CLASSIC_BLUE, ThemeIds.FOREST_MIST, ThemeIds.NEON_NIGHT])
 ];
 
 /** 方案详情“方案组成”的一行：部件名和它取自哪套主题。 */
@@ -153,11 +192,18 @@ const READER_PREVIEW_SEGMENTS: ReaderPreviewSegment[] = [
     '\n\u3000\u3000而那行小小的批注，她后来也照着写了一遍，留给下一个翻开这本书的人。')
 ];
 
+// 主题设了首字装饰时，第一段（不带缩进、去掉段末的段评数）单独画成首字段落，样张从第二段接着画。
+const READER_PREVIEW_LEAD = '雨停的时候，檐下还挂着水珠。她把灯芯拨亮了些，翻开那本旧书。';
+const READER_PREVIEW_REST: ReaderPreviewSegment[] = READER_PREVIEW_SEGMENTS.slice(2).map(
+  (segment: ReaderPreviewSegment, index: number): ReaderPreviewSegment => index === 0 ?
+    new ReaderPreviewSegment(segment.text.substring(1), segment.emphasis, segment.comment) : segment);
+
 /** User choice from the "apply theme" prompt. */
 class ThemeApplyChoice {
   // 只对第一次使用的主题有意义：true 用主题预设排版，false 沿用当前排版。
   usePresetLayout: boolean = false;
   applyCover: boolean = false;
+  applyFrame: boolean = false;
   applyIcon: boolean = false;
 
   static preserve(): ThemeApplyChoice {
@@ -180,6 +226,41 @@ class ThemeListEntry {
   }
 }
 
+/**
+ * 详情 Swiper 的页：只建当前页和相邻页。每页一整套实景预览，用 ForEach 时“已拥有 20 套”会在点开的那一帧
+ * 把 20 页全部建出并测量，真机点完要 700ms 才出详情。
+ * 每项是“选择键 + 页键”：页键里带方案修订号、深浅和权益修订号，变了才重建那一页（按值传给 @Builder 的条目不会自己刷新）。
+ */
+class ThemeDetailPageSource implements IDataSource {
+  private pages: string[] = [];
+  private listeners: DataChangeListener[] = [];
+
+  static selectKey(page: string): string {
+    const separator = page.indexOf('|');
+    return separator < 0 ? page : page.substring(0, separator);
+  }
+
+  totalCount(): number { return this.pages.length; }
+  getData(index: number): string { return this.pages[index]; }
+
+  registerDataChangeListener(listener: DataChangeListener): void {
+    if (!this.listeners.includes(listener)) this.listeners.push(listener);
+  }
+
+  unregisterDataChangeListener(listener: DataChangeListener): void {
+    const index = this.listeners.indexOf(listener);
+    if (index >= 0) this.listeners.splice(index, 1);
+  }
+
+  replace(pages: string[]): void {
+    if (pages.length === this.pages.length && pages.every((page: string, index: number) => page === this.pages[index])) {
+      return;
+    }
+    this.pages = pages.slice();
+    for (const listener of this.listeners) listener.onDataReloaded();
+  }
+}
+
 @Entry
 @Component
 struct ThemeSettingsPage {
@@ -188,6 +269,7 @@ struct ThemeSettingsPage {
   @StorageLink('appThemeId') appThemeId: string = AppThemeSettingsStore.DEFAULT_THEME_ID;
   @StorageLink('appIconId') appIconId: string = AppIconSettingsStore.DEFAULT_ICON_ID;
   @StorageLink('appThemeBookCoverEnabled') themeBookCoverEnabled: boolean = false;
+  @StorageLink('appThemeBookFrameEnabled') themeBookFrameEnabled: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageLink('appCustomBaseThemeId') customBaseThemeId: string = AppThemeSettingsStore.DEFAULT_THEME_ID;
   @StorageLink('appCustomLightAccentColor') customLightAccentColor: string = '#007DFF';
@@ -210,7 +292,7 @@ struct ThemeSettingsPage {
   @StorageLink('readerDarkThemeIndex') readerDarkThemeIndex: number = 0;
   @StorageLink('accountLoggedIn') accountLoggedIn: boolean = false;
   @StorageLink('accountPoints') accountPoints: number = 0;
-  @StorageLink('accountEntitlementsRevision') @Watch('refreshCustomSchemeLimit')
+  @StorageLink('accountEntitlementsRevision') @Watch('onEntitlementsChanged')
   accountEntitlementsRevision: number = 0;
   @StorageLink('themeTrialThemeId') trialThemeId: string = '';
   @StorageLink('themeTrialEndsAt') trialEndsAt: number = 0;
@@ -218,6 +300,10 @@ struct ThemeSettingsPage {
   @StorageLink('activeCustomThemeSchemeRevision') activeCustomSchemeRevision: number = 0;
   @StorageLink('customThemeSchemesRevision') @Watch('onCustomThemeSchemesRevisionChanged')
   customThemeSchemesRevision: number = 0;
+  // 云同步装好主题包、或云端可下载的包变了：方案卡片和详情跟着换。
+  @StorageLink('cloudRemoteThemePacksRaw') @Watch('onCloudThemePacksChanged') cloudRemoteThemePacksRaw: string = '[]';
+  @StorageLink('installedThemePacksRevision') @Watch('onCloudThemePacksChanged')
+  installedThemePacksRevision: number = 0;
   @StorageLink('startupCoverTextsRevision') startupCoverTextsRevision: number = 0;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
@@ -226,14 +312,43 @@ struct ThemeSettingsPage {
   @State ownedListOpen: boolean = false;
   @State ownedSort: string = 'recent';
   @State recentThemeIds: string[] = [];
+  // 主题与方案最近一次应用的时间，键同 ThemeRecentStore；改了就加 recentUseRevision 让列表重排。
+  private recentUseTimes: Map<string, number> = new Map<string, number>();
+  @State recentUseRevision: number = 0;
+  // “我的方案”全部页：排序存本机；筛选、搜索和整理状态关页就清掉。
+  @State schemeListOpen: boolean = false;
+  @State schemeSort: string = 'recent';
+  @State schemeFilter: string = 'all';
+  @State schemeQuery: string = '';
+  @State schemeSortMenuOpen: boolean = false;
+  @State schemeOrganizing: boolean = false;
+  @State schemeSelected: string[] = [];
+  // 整理模式里两段（置顶 / 其他）的方案 ID：onMove 要求拖动时当场改数据，松手再写回存储。
+  @State schemeOrderPinned: string[] = [];
+  @State schemeOrderRest: string[] = [];
+  // 批量删除时要删的方案；单个删除仍用 actionCustomSchemeId。
+  @State deleteSchemeIds: string[] = [];
   // 竖向详情页：detailKeys 是同一列表里可左右滑动的项（theme:<主题 ID> 或 scheme:<方案 ID>）。
   @State detailOpen: boolean = false;
   @State detailKeys: string[] = [];
   @State detailIndex: number = 0;
   @State detailLabel: string = '';
   // 详情页可单独切浅色 / 深色预览，不改应用的深浅色。
-  @State detailDark: boolean = false;
-  @State customSchemes: CustomThemeScheme[] = [];
+  @State @Watch('syncDetailPages') detailDark: boolean = false;
+  private detailPageSource: ThemeDetailPageSource = new ThemeDetailPageSource();
+  // 相邻页每页建出加测量约 25ms，入场动画（260ms）结束后才预建，免得滑入时掉帧。
+  @State detailCachedCount: number = 0;
+  private detailCacheTimer: number = -1;
+  // 正在看的那一页已经滑过大图：顶栏换成实底，按钮不压在预览卡上。
+  @State detailTopSolid: boolean = false;
+  // 各页的滚动位置（键同 detailKeys），左右换页后顶栏按新一页的位置取实底或透明。
+  private detailOffsets: Map<string, number> = new Map<string, number>();
+  // 书架预览正在看的布局：打开详情时取用户当前的书架布局，可在预览上方切换，不改书架设置。
+  @State detailShelfLayout: string = 'companion';
+  // 放大到全屏看的画面（shelf / reader / listen），空串表示没有放大。
+  @State detailFullScene: string = '';
+  @State detailPartsOpen: boolean = false;
+  @State @Watch('syncDetailPages') customSchemes: CustomThemeScheme[] = [];
   /** 正在消散的自定义方案 id，见 ListDissolve。 */
   @State dissolvingSchemeIds: string[] = [];
   @State deleteParticleBursts: DeleteParticleBurst[] = [];
@@ -280,6 +395,8 @@ struct ThemeSettingsPage {
   @State applyDialogLayoutOffHint: string = '';
   @State applyDialogFirstUse: boolean = false;
   @State applyDialogHasCover: boolean = false;
+  @State applyDialogHasFrame: boolean = false;
+  @State applyDialogApplyFrame: boolean = false;
   @State applyDialogApplyLayout: boolean = false;
   @State applyDialogApplyCover: boolean = false;
   @State applyDialogApplyIcon: boolean = false;
@@ -307,6 +424,7 @@ struct ThemeSettingsPage {
   }
 
   aboutToDisappear(): void {
+    clearTimeout(this.detailCacheTimer);
     if (this.showThemeImportDialog) {
       ThemePackageService.discardImport(this.importPreview);
     }
@@ -326,8 +444,18 @@ struct ThemeSettingsPage {
     this.refreshCustomSchemes();
   }
 
+  onCloudThemePacksChanged(): void {
+    this.refreshCustomSchemes();
+    this.syncDetailPages();
+  }
+
   refreshCustomSchemeLimit(): void {
     this.customSchemeLimit = CustomThemeQuota.current();
+  }
+
+  onEntitlementsChanged(): void {
+    this.refreshCustomSchemeLimit();
+    this.syncDetailPages();
   }
 
   customSchemeAuthor(customSchemeId: string): string {
@@ -336,11 +464,27 @@ struct ThemeSettingsPage {
     return scheme ? scheme.author : '';
   }
 
-  /** 方案由主题包安装而来，但本机没有这个包的素材（换设备同步过来、或目录被清掉）。 */
+  /** 方案用到的主题包本机没有（换设备同步过来、或目录被清掉）。 */
   customSchemePackMissing(customSchemeId: string): boolean {
     if (!customSchemeId) return false;
     const scheme = CustomThemeSchemeStore.find(this.customSchemes, customSchemeId);
-    return !!scheme && !!scheme.packageId && !ThemePackRegistry.getByPackageId(scheme.packageId);
+    return !!scheme && CloudThemeSync.schemePackageIds(scheme).some((id: string): boolean =>
+      !ThemePackRegistry.getByPackageId(id));
+  }
+
+  /** 缺的主题包在云端，应用或打开时会下载。读 cloudRemoteThemePacksRaw 让界面随之刷新。 */
+  customSchemeInCloud(customSchemeId: string): boolean {
+    if (!customSchemeId || this.cloudRemoteThemePacksRaw === '[]') return false;
+    return CloudThemeSync.remotePacksOf(CustomThemeSchemeStore.find(this.customSchemes, customSchemeId)).length > 0;
+  }
+
+  /** 打开方案详情时在后台把云端的素材包取回来，装好后详情自动换成真实素材。 */
+  prefetchSchemePacks(customSchemeId: string): void {
+    const scheme = CustomThemeSchemeStore.find(this.customSchemes, customSchemeId);
+    if (!scheme || !this.customSchemePackMissing(customSchemeId)) return;
+    CloudThemeSync.ensureSchemePacks(getContext(this), scheme).catch((e: Error) => {
+      console.warn('下载云端主题素材失败:', e.message);
+    });
   }
 
   /** 主题分享 Beta 导出和导入都只对会员开放。 */
@@ -476,8 +620,24 @@ struct ThemeSettingsPage {
       this.closeThemeImport();
       return true;
     }
+    if (this.detailOpen && this.detailFullScene) {
+      this.detailFullScene = '';
+      return true;
+    }
     if (this.detailOpen) {
       this.closeDetail();
+      return true;
+    }
+    if (this.schemeListOpen && this.schemeSortMenuOpen) {
+      this.schemeSortMenuOpen = false;
+      return true;
+    }
+    if (this.schemeListOpen && this.schemeOrganizing) {
+      this.stopSchemeOrganize();
+      return true;
+    }
+    if (this.schemeListOpen) {
+      this.closeSchemeList();
       return true;
     }
     if (this.ownedListOpen) {
@@ -497,6 +657,10 @@ struct ThemeSettingsPage {
 
       if (this.ownedListOpen) {
         this.ownedListOverlay()
+      }
+
+      if (this.schemeListOpen) {
+        this.schemeListOverlay()
       }
 
       if (this.detailOpen) {
@@ -608,55 +772,94 @@ struct ThemeSettingsPage {
   }
 
   /** 书架上的一本书：主题带封面套装就轮着用套装和书籍边框，否则用主题色块。 */
-  @Builder
-  shelfBook(theme: ThemePack, index: number) {
-    Column({ space: AppSpacing.XS }) {
-      Stack({ alignContent: Alignment.BottomStart }) {
-        if (this.themeHasBookCover(theme)) {
-          if (this.themeCoverCrop(theme, index)) {
-            ThemeCroppedImage({ src: this.themeCoverSet(theme)[index % this.themeCoverSet(theme).length],
-              crop: this.themeCoverCrop(theme, index) as ThemeImageCrop })
-              .width('100%')
-              .height('100%')
-          } else {
-            Image(this.themeCoverSet(theme)[index % this.themeCoverSet(theme).length])
-              .width('100%')
-              .height('100%')
-              .objectFit(ImageFit.Fill)
-              .draggable(false)
-          }
-          Image(ThemeAssetRegistry.themeShelfFrame(theme.book.shelfFrameAssetId))
-            .width('100%')
-            .height('100%')
-            .objectFit(ImageFit.Fill)
-            .draggable(false)
-        } else {
-          Text(SHELF_BOOK_TITLES[index % SHELF_BOOK_TITLES.length])
-            .fontSize(AppFontSize.BODY)
-            .fontFamily(theme.typography.appFontFamily)
-            .fontColor('#FFFFFF')
-            .margin(AppSpacing.SM)
-        }
-      }
-      .width('100%')
-      .aspectRatio(STORE_BOOK_COVER_RATIO)
-      .borderRadius(theme.radius.small)
-      .clip(true)
-      .backgroundColor(this.themeHasBookCover(theme) ? Color.Transparent : this.stageBookTone(theme, index))
-      Text(SHELF_BOOK_TITLES[index % SHELF_BOOK_TITLES.length])
-        .fontSize(AppFontSize.CAPTION)
-        .fontColor(this.activeVariant(theme).colors.primaryTextColor)
-        .maxLines(1)
-    }
-    .layoutWeight(1)
-    .alignItems(HorizontalAlign.Start)
-  }
-
   /** 正文样张：对白套这套主题的强调样式，段评数画成主题的段评气泡。 */
   @Builder
-  readerSampleText(theme: ThemePack, fontSize: number, lineHeight: number, maxLines: number) {
+  readerSampleText(theme: ThemePack, fontSize: number, lineHeight: number, maxLines: number, rest: boolean) {
+    if (this.themeBubbleFrame(theme)) {
+      // 包内气泡有边框：文字行内的 Span 画不出逐行拉伸的边框，整张样张改用编辑器小样的画法。
+      // partsProvider 不是状态变量，换主题或深浅色时靠键重建组件。
+      ForEach([this.frameSampleKey(theme, rest)], (_key: string) => {
+        ThemeBubbleFramePreview({
+          uri: this.themeBubbleFrame(theme)?.asset ?? '',
+          capUri: this.themeBubbleCapUri(theme),
+          settings: this.themeBubbleFrameSettings(theme),
+          textColor: this.themeRegexPreview(theme).textColor,
+          bubbleColor: this.themeRegexPreview(theme).backgroundColor,
+          paperColor: '#00000000',
+          normalTextColor: this.activeVariant(theme).reader.textColor,
+          fontSize: fontSize,
+          lineHeight: lineHeight,
+          fontFamily: theme.typography.appFontFamily,
+          indentChars: 0,
+          paddingX: 0,
+          paddingY: 0,
+          maxLines: maxLines,
+          cornerRadius: 0,
+          partsProvider: (): BubbleFramePreviewPart[] => this.frameSampleParts(theme, fontSize, rest)
+        })
+      }, (key: string) => key)
+    } else {
+      this.readerSampleRichText(theme, fontSize, lineHeight, maxLines, rest)
+    }
+  }
+
+  /** 这套主题的强调用的是包内气泡且包里有边框时给出边框；只在气泡模式下画。 */
+  themeBubbleFrame(theme: ThemePack): ResolvedBubbleFrame | null {
+    const style = this.themeRegexPreview(theme);
+    if (style.mode === 'none' || !style.bubbleDecorationEnabled) return null;
+    return ThemePackRegistry.bubbleFrame(this.activeVariant(theme).regexEmphasis.bubbleStyle, this.variantDark());
+  }
+
+  themeBubbleCapUri(theme: ThemePack): string {
+    if (!this.themeHasRegexBubbleCap(theme)) return '';
+    const cap = ThemeAssetRegistry.regexBubbleCap(this.activeVariant(theme).regexEmphasis.bubbleStyle,
+      this.variantDark());
+    return typeof cap === 'string' ? cap : '';
+  }
+
+  themeBubbleFrameSettings(theme: ThemePack): ThemePackageBubble {
+    const settings = new ThemePackageBubble();
+    const frame = this.themeBubbleFrame(theme);
+    if (!frame) return settings;
+    settings.frameSlice = frame.slice;
+    settings.frameRepeat = frame.round ? BubbleFrameRepeat.ROUND : '';
+    settings.frameBreak = frame.cut ? BubbleFrameBreak.CUT : '';
+    settings.frameTint = frame.tint;
+    return settings;
+  }
+
+  frameSampleKey(theme: ThemePack, rest: boolean): string {
+    return `reader_frame_sample_${theme.id}_${this.activeVariant(theme).reader.contentTone}_` +
+      `${this.activeVariant(theme).regexEmphasis.bubbleStyle}_${rest ? 'rest' : 'all'}`;
+  }
+
+  /** 样张的分段：rest 为真时从第二段开始（第一段画成了首字段落）。 */
+  previewSegments(rest: boolean): ReaderPreviewSegment[] {
+    return rest ? READER_PREVIEW_REST : READER_PREVIEW_SEGMENTS;
+  }
+
+  /** 样张分段：对白套边框，段评数换成主题的段评气泡图（与文字版样张一样前面空一格）。 */
+  frameSampleParts(theme: ThemePack, fontSize: number, rest: boolean): BubbleFramePreviewPart[] {
+    const dark = this.activeVariant(theme).reader.contentTone === 'dark';
+    const parts: BubbleFramePreviewPart[] = [];
+    for (const segment of this.previewSegments(rest)) {
+      if (!segment.comment) {
+        parts.push(new BubbleFramePreviewPart(segment.text, segment.emphasis));
+        continue;
+      }
+      const image = this.commentBubbleImage(theme, segment.text, fontSize * 0.85, dark);
+      if (!image) continue;
+      parts.push(new BubbleFramePreviewPart(' ', false));
+      parts.push(BubbleFramePreviewPart.inlineImage(image.pixelMap, this.commentBubbleImageWidth(image),
+        this.commentBubbleImageHeight(image)));
+    }
+    return parts;
+  }
+
+  @Builder
+  readerSampleRichText(theme: ThemePack, fontSize: number, lineHeight: number, maxLines: number, rest: boolean) {
     Text() {
-      ForEach(READER_PREVIEW_SEGMENTS, (segment: ReaderPreviewSegment) => {
+      ForEach(this.previewSegments(rest), (segment: ReaderPreviewSegment) => {
         if (segment.comment) {
           Span(' ')
           this.commentBubbleSpan(theme, segment.text, fontSize * 0.85,
@@ -665,7 +868,8 @@ struct ThemeSettingsPage {
           Span(segment.text)
         } else if (this.themeHasRegexBubbleCap(theme)) {
           ContainerSpan() {
-            ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.activeVariant(theme).regexEmphasis.bubbleStyle))
+            ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.activeVariant(theme).regexEmphasis.bubbleStyle,
+              this.variantDark()))
               .width(fontSize)
               .height(fontSize)
               .objectFit(ImageFit.Contain)
@@ -673,7 +877,8 @@ struct ThemeSettingsPage {
             Span(segment.text)
               .fontColor(this.themeRegexPreview(theme).textColor)
               .textShadow(this.themeRegexPreviewShadow(theme))
-            ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.activeVariant(theme).regexEmphasis.bubbleStyle))
+            ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.activeVariant(theme).regexEmphasis.bubbleStyle,
+              this.variantDark()))
               .width(fontSize)
               .height(fontSize)
               .objectFit(ImageFit.Contain)
@@ -689,7 +894,8 @@ struct ThemeSettingsPage {
           }
           .textBackgroundStyle(this.themeRegexPreviewBackground(theme))
         }
-      }, (_segment: ReaderPreviewSegment, index: number) => `reader_preview_${theme.id}_${index}`)
+      }, (_segment: ReaderPreviewSegment, index: number) =>
+        `reader_preview_${theme.id}_${rest ? 'rest' : 'all'}_${index}`)
     }
     .fontSize(fontSize)
     .lineHeight(lineHeight)
@@ -779,14 +985,13 @@ struct ThemeSettingsPage {
     .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
   }
 
-  /** 我的：当前主题大图与它的设置，已拥有只露几套（其余进“全部”），方案紧跟在后面。 */
+  /** 我的：当前主题一张卡（大图、快捷操作、封面开关），已拥有是横向图块（其余进“全部”），方案列表紧跟在后面。 */
   @Builder
   mineContent() {
     Column({ space: AppSpacing.MD }) {
       ForEach(this.currentThemeEntries(), (entry: ThemeListEntry) => {
-        this.currentHero(entry)
+        this.currentCard(entry)
       }, (entry: ThemeListEntry) => `current_${this.themeEntryKey(entry)}`)
-      this.currentSettingsCard()
 
       Row({ space: AppSpacing.SM }) {
         Text('已拥有的主题')
@@ -815,14 +1020,20 @@ struct ThemeSettingsPage {
       }
       .width('100%')
       .padding({ left: AppSpacing.XXS, top: AppSpacing.SM })
-      if (this.ownedPreviewEntries().length > 0) {
-        List() {
-          ForEach(this.ownedPreviewEntries(), (entry: ThemeListEntry, index: number) => {
-            this.swipeThemeItem(entry, 'owned', '已拥有', index > 0)
+      Scroll() {
+        Row({ space: AppSpacing.MD }) {
+          ForEach(this.ownedPreviewEntries(), (entry: ThemeListEntry) => {
+            this.ownedTile(entry)
           }, (entry: ThemeListEntry) => `owned_preview_${this.themeEntryKey(entry)}_${this.themeRowState(entry)}`)
+          this.ownedAllTile()
         }
-        .themeCardList(this.cardColor())
+        .alignItems(VerticalAlign.Top)
       }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
+      .width('100%')
+      .align(Alignment.TopStart)
 
       Row({ space: AppSpacing.SM }) {
         Text('我的方案')
@@ -843,20 +1054,152 @@ struct ThemeSettingsPage {
       .width('100%')
       .padding({ left: AppSpacing.XXS, top: AppSpacing.SM })
       if (this.customSchemes.length > 0) {
-        List() {
-          ForEach(this.schemeEntries(), (entry: ThemeListEntry, index: number) => {
-            this.swipeThemeItem(entry, 'schemes', '我的方案', index > 0)
-          }, (entry: ThemeListEntry) => `scheme_row_${this.themeEntryKey(entry)}_${this.themeRowState(entry)}`)
+        Column() {
+          List() {
+            ForEach(this.schemePreviewEntries(), (entry: ThemeListEntry, index: number) => {
+              this.swipeThemeItem(entry, 'schemes', '我的方案', index > 0)
+            }, (entry: ThemeListEntry) => `scheme_row_${this.themeEntryKey(entry)}_${this.themeRowState(entry)}`)
+          }
+          .themeCardList(this.cardColor())
+          Divider()
+            .strokeWidth(0.5)
+            .color(ThemeRuntime.dividerColor(this.appDarkMode))
+          Row({ space: AppSpacing.XXS }) {
+            Text(`查看全部 ${this.customSchemes.length} 套`)
+              .fontSize(AppFontSize.BODY)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.primaryTextColor())
+              .layoutWeight(1)
+            Text(`按${this.schemeSortLabel(this.schemeSort)}`)
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.subTextColor())
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(16)
+              .fontColor([this.subTextColor()])
+          }
+          .width('100%')
+          .height(48)
+          .padding({ left: AppSpacing.LG, right: AppSpacing.MD })
+          .accessibilityGroup(true)
+          .accessibilityText(`查看全部 ${this.customSchemes.length} 套方案，可排序、置顶和整理`)
+          .accessibilityRole(AccessibilityRoleType.BUTTON)
+          .onClick(() => this.openSchemeList())
         }
-        .themeCardList(this.cardColor())
+        .width('100%')
+        .borderRadius(ThemeRuntime.cardRadius())
+        .backgroundColor(this.cardColor())
+        .clip(true)
+        Text(`置顶的排在最前，其余按“${this.schemeSortLabel(this.schemeSort)}”；左滑可置顶、应用或删除`)
+          .fontSize(AppFontSize.MICRO)
+          .fontColor(this.subTextColor())
+          .padding({ left: AppSpacing.XXS })
       }
-      Text('左滑可应用或删除，长按还可复制、设置排版、重命名或分享')
-        .fontSize(AppFontSize.MICRO)
-        .fontColor(this.subTextColor())
-        .padding({ left: AppSpacing.XXS })
+      this.desktopIconCard()
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
+  }
+
+  /** 当前主题：大图下面一排快捷操作，再跟主题封面开关；和当前主题无关的桌面图标在页面最下面。 */
+  @Builder
+  currentCard(entry: ThemeListEntry) {
+    Column() {
+      this.currentHero(entry)
+      Row() {
+        this.quickAction($r('sys.symbol.info_circle'), '详情', () => {
+          this.openDetailFor(entry, entry.customSchemeId ? 'schemes' : 'owned',
+            entry.customSchemeId ? '我的方案' : '已拥有');
+        })
+        if (entry.customSchemeId) {
+          this.quickAction($r('sys.symbol.paintpalette'), '编辑方案', () => {
+            router.pushUrl({ url: 'pages/ThemeColorSettings', params: { schemeId: entry.customSchemeId } });
+          })
+          this.quickAction($r('sys.symbol.textformat'), '排版', () => {
+            router.pushUrl({ url: 'pages/ThemeTypographySettings', params: { schemeId: entry.customSchemeId } });
+          })
+        } else {
+          if (this.currentCanEditStartupText()) {
+            this.quickAction($r('sys.symbol.square_and_pencil'), '启动文案', () => {
+              this.openStartupTextDialog(this.appThemeId);
+            })
+          }
+          if (this.canBaseSchemeOn(entry.theme)) {
+            this.quickAction($r('sys.symbol.plus_square_on_square'), '以此新建方案', () => {
+              this.createSchemeFromTheme(entry.theme);
+            })
+          }
+        }
+      }
+      .width('100%')
+      if (this.currentHasCoverSetting() || this.currentHasFrameSetting()) {
+        if (this.currentHasCoverSetting()) {
+          this.coverSwitchRow('cover')
+        }
+        if (this.currentHasFrameSetting()) {
+          this.coverSwitchRow('frame')
+        }
+        Divider()
+          .strokeWidth(0.5)
+          .color(ThemeRuntime.dividerColor(this.appDarkMode))
+          .margin({ left: AppSpacing.LG })
+        Row() {
+          Text('更多封面设置')
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.primaryTextColor())
+            .layoutWeight(1)
+          SymbolGlyph($r('sys.symbol.chevron_right'))
+            .fontSize(18)
+            .fontColor([this.subTextColor()])
+        }
+        .width('100%')
+        .height(48)
+        .padding({ left: AppSpacing.LG, right: AppSpacing.MD })
+        .onClick(() => {
+          router.pushUrl({ url: 'pages/CoverSettings' });
+        })
+      }
+    }
+    .width('100%')
+    .borderRadius(ThemeRuntime.cardRadius())
+    .backgroundColor(this.cardColor())
+    .clip(true)
+  }
+
+  @Builder
+  /** kind 为 cover / frame；开关状态在这里直接读，按值传进来不会随切换刷新。 */
+  coverSwitchRow(kind: string) {
+    Divider()
+      .strokeWidth(0.5)
+      .color(ThemeRuntime.dividerColor(this.appDarkMode))
+      .margin({ left: AppSpacing.LG })
+    Row({ space: AppSpacing.MD }) {
+      Column({ space: 2 }) {
+        Text(kind === 'frame' ? '主题边框' : '主题封面')
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontColor(this.primaryTextColor())
+        Text(kind === 'frame' ? (this.themeBookFrameEnabled ? '书架上的封面套上主题的边框，原有封面也套' :
+          '封面不加主题边框') : (this.themeBookCoverEnabled ? '书架换成主题的封面' :
+          '保留每本书原有封面；可在封面设置里只给没有封面的书使用'))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      AdaptiveSwitch({
+        isOn: kind === 'frame' ? this.themeBookFrameEnabled : this.themeBookCoverEnabled,
+        switchEnabled: !this.isTrialTheme(this.appThemeId),
+        onChange: (enabled: boolean) => {
+          if (kind === 'frame') {
+            this.setThemeBookFrameEnabled(enabled);
+          } else {
+            this.setThemeBookCoverEnabled(enabled);
+          }
+        }
+      })
+    }
+    .width('100%')
+    .constraintSize({ minHeight: 62 })
+    .padding({ left: AppSpacing.LG, right: AppSpacing.MD, top: AppSpacing.SM, bottom: AppSpacing.SM })
   }
 
   @Builder
@@ -880,7 +1223,7 @@ struct ThemeSettingsPage {
             MembershipBadge({ sku: 'SUPER_LIFETIME' })
           }
           Text(entry.theme.name)
-            .fontSize(26)
+            .fontSize(24)
             .fontWeight(FontWeight.Bold)
             .fontFamily(entry.theme.typography.appFontFamily)
             .fontColor('#FFFFFF')
@@ -888,7 +1231,7 @@ struct ThemeSettingsPage {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .flexShrink(1)
         }
-        Text(`${this.themeRowSubtitle(entry)} · 查看详情`)
+        Text(this.themeRowSubtitle(entry))
           .fontSize(AppFontSize.CAPTION)
           .fontColor('#E6FFFFFF')
           .maxLines(1)
@@ -899,112 +1242,112 @@ struct ThemeSettingsPage {
       .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
-    .height(CURRENT_HERO_HEIGHT)
-    .borderRadius(ThemeRuntime.cardRadius())
-    .clip(true)
+    .height(CURRENT_CARD_HERO_HEIGHT)
     .accessibilityText(`正在使用「${entry.theme.name}」，查看详情`)
     .onClick(() => this.openDetailFor(entry, entry.customSchemeId ? 'schemes' : 'owned',
       entry.customSchemeId ? '我的方案' : '已拥有'))
   }
 
-  /** 当前主题的设置：桌面图标、主题封面开关、启动文案；方案另有编辑和排版入口。 */
   @Builder
-  currentSettingsCard() {
-    Column() {
-      Row({ space: AppSpacing.MD }) {
-        Image(AppIconManager.optionById(this.appIconId).preview)
-          .width(28)
-          .height(28)
-          .borderRadius(7)
-          .objectFit(ImageFit.Cover)
-          .draggable(false)
-          .accessibilityText('当前桌面图标')
-        Text('桌面图标')
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontColor(this.primaryTextColor())
-          .layoutWeight(1)
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(16)
-          .fontColor([this.subTextColor()])
-      }
-      .width('100%')
-      .height(54)
-      .padding({ left: AppSpacing.LG, right: AppSpacing.MD })
-      .onClick(() => {
-        router.pushUrl({ url: 'pages/AppIconSettings' });
-      })
-      if (this.currentHasCoverSetting()) {
-        Divider()
-          .strokeWidth(0.5)
-          .color(ThemeRuntime.dividerColor(this.appDarkMode))
-          .margin({ left: AppSpacing.LG })
-        Row({ space: AppSpacing.MD }) {
-          Column({ space: 2 }) {
-            Text('主题封面与书籍边框')
-              .fontSize(AppFontSize.BODY_LARGE)
-              .fontColor(this.primaryTextColor())
-            Text(this.themeBookCoverEnabled ? '书架使用主题封面和配套边框' : '保留每本书原有封面')
-              .fontSize(AppFontSize.CAPTION)
-              .fontColor(this.subTextColor())
-          }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.Start)
-          AdaptiveSwitch({
-            isOn: this.themeBookCoverEnabled,
-            switchEnabled: !this.isTrialTheme(this.appThemeId),
-            onChange: (enabled: boolean) => {
-              this.setThemeBookCoverEnabled(enabled);
-            }
-          })
-        }
-        .width('100%')
-        .height(62)
-        .padding({ left: AppSpacing.LG, right: AppSpacing.MD })
-      }
-      if (this.currentCanEditStartupText()) {
-        Divider()
-          .strokeWidth(0.5)
-          .color(ThemeRuntime.dividerColor(this.appDarkMode))
-          .margin({ left: AppSpacing.LG })
-        this.settingsRow('启动封面文案', '编辑', () => {
-          this.openStartupTextDialog(this.appThemeId);
-        })
-      }
-      if (this.appThemeId === ThemeIds.CUSTOM && this.activeCustomSchemeId) {
-        Divider()
-          .strokeWidth(0.5)
-          .color(ThemeRuntime.dividerColor(this.appDarkMode))
-          .margin({ left: AppSpacing.LG })
-        this.settingsRow('编辑方案', '', () => {
-          router.pushUrl({ url: 'pages/ThemeColorSettings', params: { schemeId: this.activeCustomSchemeId } });
-        })
-        Divider()
-          .strokeWidth(0.5)
-          .color(ThemeRuntime.dividerColor(this.appDarkMode))
-          .margin({ left: AppSpacing.LG })
-        this.settingsRow('设置方案排版', '', () => {
-          router.pushUrl({ url: 'pages/ThemeTypographySettings', params: { schemeId: this.activeCustomSchemeId } });
-        })
-      }
+  quickAction(icon: Resource, label: string, action: () => void) {
+    Column({ space: AppSpacing.XXS }) {
+      SymbolGlyph(icon)
+        .fontSize(20)
+        .fontColor([this.primaryTextColor()])
+      Text(label)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .maxLines(1)
     }
-    .width('100%')
-    .borderRadius(ThemeRuntime.cardRadius())
-    .backgroundColor(this.cardColor())
-    .clip(true)
+    .layoutWeight(1)
+    .height(60)
+    .justifyContent(FlexAlign.Center)
+    .accessibilityGroup(true)
+    .accessibilityText(label)
+    .accessibilityRole(AccessibilityRoleType.BUTTON)
+    .onClick(action)
+  }
+
+  /** 已拥有主题的图块：点进详情，长按出快捷菜单（应用 / 查看详情）。 */
+  @Builder
+  ownedTile(entry: ThemeListEntry) {
+    Column({ space: AppSpacing.XXS }) {
+      Stack() {
+        this.swatchArt(entry)
+      }
+      .width(OWNED_TILE_WIDTH)
+      .height(OWNED_TILE_HEIGHT)
+      .borderRadius(12)
+      .clip(true)
+      Row({ space: AppSpacing.XXS }) {
+        if (SuperExclusiveThemes.has(entry.theme.id)) {
+          MembershipBadge({ sku: 'SUPER_LIFETIME' })
+        }
+        Text(entry.theme.name)
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .flexShrink(1)
+      }
+      .margin({ top: AppSpacing.XS })
+      Text(this.storeTileTag(entry))
+        .fontSize(AppFontSize.MICRO)
+        .fontColor(this.subTextColor())
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width(OWNED_TILE_WIDTH)
+    .alignItems(HorizontalAlign.Start)
+    .accessibilityText(`查看「${entry.theme.name}」详情`)
+    .gesture(
+      LongPressGesture({ repeat: false })
+        .onAction((event: GestureEvent) => {
+          this.openThemeRowActions(entry, 'owned', '已拥有', event);
+        })
+    )
+    .onClick(() => this.openDetailFor(entry, 'owned', '已拥有'))
   }
 
   @Builder
-  settingsRow(label: string, value: string, action: () => void) {
-    Row({ space: AppSpacing.SM }) {
-      Text(label)
+  ownedAllTile() {
+    Column({ space: AppSpacing.XXS }) {
+      Text(`${this.ownedThemeEntries().length}`)
+        .fontSize(22)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.primaryTextColor())
+      Text('全部')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+    }
+    .width(OWNED_TILE_WIDTH)
+    .height(OWNED_TILE_HEIGHT)
+    .justifyContent(FlexAlign.Center)
+    .borderRadius(12)
+    .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+    .accessibilityGroup(true)
+    .accessibilityText(`查看全部 ${this.ownedThemeEntries().length} 套已拥有主题`)
+    .accessibilityRole(AccessibilityRoleType.BUTTON)
+    .onClick(() => {
+      this.ownedListOpen = true;
+    })
+  }
+
+  @Builder
+  desktopIconCard() {
+    Row({ space: AppSpacing.MD }) {
+      Image(AppIconManager.optionById(this.appIconId).preview)
+        .width(28)
+        .height(28)
+        .borderRadius(7)
+        .objectFit(ImageFit.Cover)
+        .draggable(false)
+        .accessibilityText('当前桌面图标')
+      Text('桌面图标')
         .fontSize(AppFontSize.BODY_LARGE)
         .fontColor(this.primaryTextColor())
         .layoutWeight(1)
-      if (value) {
-        Text(value)
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.subTextColor())
-      }
       SymbolGlyph($r('sys.symbol.chevron_right'))
         .fontSize(16)
         .fontColor([this.subTextColor()])
@@ -1012,8 +1355,13 @@ struct ThemeSettingsPage {
     .width('100%')
     .height(54)
     .padding({ left: AppSpacing.LG, right: AppSpacing.MD })
+    .margin({ top: AppSpacing.SM })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .backgroundColor(this.cardColor())
     .accessibilityRole(AccessibilityRoleType.BUTTON)
-    .onClick(action)
+    .onClick(() => {
+      router.pushUrl({ url: 'pages/AppIconSettings' });
+    })
   }
 
   /** 一行主题或方案：点进竖向详情，右边只显示使用状态；左滑或长按快速应用。 */
@@ -1040,6 +1388,12 @@ struct ThemeSettingsPage {
               if (SuperExclusiveThemes.has(entry.theme.id)) {
                 MembershipBadge({ sku: 'SUPER_LIFETIME' })
               }
+              if (context === 'schemes' && this.schemePinned(entry.customSchemeId)) {
+                SymbolGlyph($r('sys.symbol.pin'))
+                  .fontSize(13)
+                  .fontColor([SCHEME_PIN_COLOR])
+                  .accessibilityText('已置顶')
+              }
               Text(entry.theme.name)
                 .fontSize(AppFontSize.BODY_LARGE)
                 .fontWeight(FontWeight.Medium)
@@ -1048,10 +1402,20 @@ struct ThemeSettingsPage {
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .flexShrink(1)
+              if (this.customSchemeInCloud(entry.customSchemeId)) {
+                Text('云端')
+                  .fontSize(AppFontSize.MICRO)
+                  .fontColor(ThemeRuntime.accentColor(this.appDarkMode))
+                  .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: 1, bottom: 1 })
+                  .borderRadius(ThemeRuntime.smallRadius())
+                  .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+                  .flexShrink(0)
+              }
             }
             Text(this.themeRowSubtitle(entry))
               .fontSize(AppFontSize.CAPTION)
-              .fontColor(this.customSchemePackMissing(entry.customSchemeId) ?
+              .fontColor(this.customSchemePackMissing(entry.customSchemeId) &&
+                !this.customSchemeInCloud(entry.customSchemeId) ?
                 ThemeRuntime.dangerColor(this.appDarkMode) : this.subTextColor())
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1077,16 +1441,29 @@ struct ThemeSettingsPage {
     .opacity(ListDissolve.opacity(this.isSchemeRowDissolving(entry, context)))
     .scale(ListDissolve.scale(this.isSchemeRowDissolving(entry, context)))
     .blur(ListDissolve.blur(this.isSchemeRowDissolving(entry, context)))
-    .id(context === 'schemes' && entry.customSchemeId ? this.schemeRowElementId(entry.customSchemeId) : '')
+    .id(this.schemeRowIdFor(entry.customSchemeId, context))
   }
 
   schemeRowElementId(schemeId: string): string {
     return `theme_scheme_row_${encodeURIComponent(schemeId)}`;
   }
 
-  /** 只有“我的方案”列表里的那一行消散，其他列表里同一方案的预览不动。 */
+  /**
+   * 方案行的组件 ID（删除时按它找位置放粒子）。全部页盖在“我的”页上面时两处都有同一套方案，
+   * ID 只给看得见的那一处：全部页开着给全部页的行，否则给“我的”页的行。
+   */
+  schemeRowIdFor(schemeId: string, context: string): string {
+    if (!schemeId || !this.isSchemeRowContext(context)) return '';
+    return (context === 'schemes') === !this.schemeListOpen ? this.schemeRowElementId(schemeId) : '';
+  }
+
+  isSchemeRowContext(context: string): boolean {
+    return context === 'schemes' || context === 'scheme-list' || context === 'scheme-organize';
+  }
+
+  /** 只有“我的方案”里的那一行消散（“我的”页或全部页），其他列表里同一方案的预览不动。 */
   isSchemeRowDissolving(entry: ThemeListEntry, context: string): boolean {
-    return context === 'schemes' && !!entry.customSchemeId && this.dissolvingSchemeIds.length > 0 &&
+    return this.isSchemeRowContext(context) && !!entry.customSchemeId && this.dissolvingSchemeIds.length > 0 &&
       this.dissolvingSchemeIds.indexOf(entry.customSchemeId) >= 0;
   }
 
@@ -1134,6 +1511,15 @@ struct ThemeSettingsPage {
 
   themeRowSwipeActions(entry: ThemeListEntry): HdsSwipeActionOptions {
     const options: HdsSwipeActionOptions = { icons: [] };
+    if (entry.customSchemeId) {
+      const pinned = this.schemePinned(entry.customSchemeId);
+      options.icons?.push({ icon: new SymbolGlyphModifier($r('sys.symbol.pin')),
+        backgroundColor: SCHEME_PIN_COLOR,
+        iconOptions: { accessibilityText: `${pinned ? '取消置顶' : '置顶'}「${entry.theme.name}」` },
+        onAction: () => {
+          this.setSchemesPinned([entry.customSchemeId], !pinned);
+        } });
+    }
     if (this.themeRowCanApply(entry)) {
       options.icons?.push({ icon: new SymbolGlyphModifier($r('sys.symbol.checkmark')),
         backgroundColor: this.accentColor(), iconOptions: { accessibilityText: `应用「${entry.theme.name}」` },
@@ -1155,6 +1541,12 @@ struct ThemeSettingsPage {
   @Builder
   themeRowFallbackSwipeActions(entry: ThemeListEntry) {
     Row() {
+      if (entry.customSchemeId) {
+        this.swipeButton($r('sys.symbol.pin'), this.schemePinned(entry.customSchemeId) ? '取消置顶' : '置顶',
+          SCHEME_PIN_COLOR, () => {
+            this.setSchemesPinned([entry.customSchemeId], !this.schemePinned(entry.customSchemeId));
+          })
+      }
       if (this.themeRowCanApply(entry)) {
         this.swipeButton($r('sys.symbol.checkmark'), '应用', this.accentColor(), () => {
           this.selectTheme(entry.theme.id, entry.customSchemeId);
@@ -1365,24 +1757,497 @@ struct ThemeSettingsPage {
       .animation({ duration: 240, curve: Curve.Friction }))
   }
 
+  /**
+   * “我的方案”全部页：顶栏、搜索（方案多时）、排序与筛选，下面分“置顶 / 其他”两段。
+   * 平时行可左滑、长按（同“我的”页）；整理模式换成可多选、可长按拖动的列表，底部是批量操作。
+   */
+  @Builder
+  schemeListOverlay() {
+    Stack({ alignContent: Alignment.Bottom }) {
+      Column() {
+        this.schemeListTopBar()
+        if (this.customSchemes.length >= SCHEME_SEARCH_MIN) {
+          this.schemeSearchField()
+        }
+        this.schemeListControls()
+        if (this.schemeOrganizing) {
+          this.schemeOrganizeList()
+        } else {
+          this.schemeBrowseList()
+        }
+      }
+      .width('100%')
+      .height('100%')
+      .padding({ top: this.statusBarHeight })
+      if (this.schemeOrganizing) {
+        this.schemeOrganizeBar()
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(this.pageColor())
+    .transition(TransitionEffect.translate({ x: 48 })
+      .combine(TransitionEffect.opacity(0))
+      .animation({ duration: 240, curve: Curve.Friction }))
+  }
+
+  @Builder
+  schemeListTopBar() {
+    Row({ space: AppSpacing.SM }) {
+      // 顶栏两侧的按钮都用沉浸光感材质，和返回按钮、详情页“更多”一致。
+      if (this.schemeOrganizing) {
+        ImmersiveHeaderAction({ label: '完成', onTap: () => this.stopSchemeOrganize() })
+        Text(this.schemeSelected.length > 0 ? `已选 ${this.schemeSelected.length} 项` : '选择方案')
+          .fontSize(AppFontSize.SUBTITLE)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.primaryTextColor())
+          .textAlign(TextAlign.Center)
+          .layoutWeight(1)
+        ImmersiveHeaderAction({
+          label: this.schemeSelected.length > 0 &&
+            this.schemeSelected.length === this.schemeOrderPinned.length + this.schemeOrderRest.length ? '全不选' : '全选',
+          tint: this.accentColor(),
+          onTap: () => this.toggleSelectAllSchemes()
+        })
+      } else {
+        this.immersiveBack(() => this.closeSchemeList())
+        Text('我的方案')
+          .fontSize(AppFontSize.TITLE)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.primaryTextColor())
+          .layoutWeight(1)
+        Text(`${this.customSchemes.length}/${this.customSchemeLimit}`)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+        ImmersiveHeaderAction({ label: '整理', onTap: () => this.startSchemeOrganize() })
+      }
+    }
+    .width('100%')
+    .height(56)
+    .padding({ left: this.schemeOrganizing ? AppSpacing.LG : 0, right: AppSpacing.LG })
+  }
+
+  @Builder
+  schemeSearchField() {
+    Row({ space: AppSpacing.SM }) {
+      SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        .fontSize(16)
+        .fontColor([this.subTextColor()])
+      TextInput({ placeholder: '搜索方案名称或作者', text: this.schemeQuery })
+        .layoutWeight(1)
+        .height(40)
+        .padding(0)
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.primaryTextColor())
+        .placeholderColor(this.subTextColor())
+        .backgroundColor(Color.Transparent)
+        .enterKeyType(EnterKeyType.Search)
+        .onChange((value: string) => {
+          this.schemeQuery = value;
+          this.syncSchemeOrganizeOrder();
+        })
+      if (this.schemeQuery) {
+        SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
+          .fontSize(16)
+          .fontColor([this.subTextColor()])
+          .accessibilityText('清空搜索')
+          .onClick(() => {
+            this.schemeQuery = '';
+            this.syncSchemeOrganizeOrder();
+          })
+      }
+    }
+    .height(40)
+    .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG, bottom: AppSpacing.SM })
+    .borderRadius(20)
+    .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+  }
+
+  @Builder
+  schemeListControls() {
+    Row({ space: AppSpacing.SM }) {
+      Row({ space: AppSpacing.XXS }) {
+        SymbolGlyph($r('sys.symbol.sort'))
+          .fontSize(16)
+          .fontColor([this.primaryTextColor()])
+        Text(this.schemeSortLabel(this.schemeSort))
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryTextColor())
+        SymbolGlyph($r('sys.symbol.chevron_down'))
+          .fontSize(12)
+          .fontColor([this.subTextColor()])
+      }
+      .height(32)
+      .padding({ right: AppSpacing.XS })
+      .accessibilityGroup(true)
+      .accessibilityText(`排序：${this.schemeSortLabel(this.schemeSort)}`)
+      .accessibilityRole(AccessibilityRoleType.BUTTON)
+      .onClick(() => {
+        this.schemeSortMenuOpen = !this.schemeSortMenuOpen;
+      })
+      .bindPopup(this.schemeSortMenuOpen, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel,
+        (): void => {
+          this.schemeSortMenu()
+        }, Placement.BottomLeft, this.appDarkMode, this.accentColor(), () => {
+          this.schemeSortMenuOpen = false;
+        }))
+      Blank()
+      ForEach(SCHEME_FILTERS, (filter: string) => {
+        Text(`${this.schemeFilterLabel(filter)} ${this.schemeFilterCount(filter)}`)
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.schemeFilter === filter ? ThemeRuntime.onAccentColor(this.accentColor()) :
+            this.primaryTextColor())
+          .backgroundColor(this.schemeFilter === filter ? this.accentColor() :
+            ThemeRuntime.inputColor(this.appDarkMode))
+          .height(30)
+          .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
+          .borderRadius(15)
+          .accessibilityRole(AccessibilityRoleType.BUTTON)
+          .accessibilitySelected(this.schemeFilter === filter)
+          .onClick(() => this.setSchemeFilter(filter))
+      }, (filter: string) => `scheme_filter_${filter}_${this.schemeFilter === filter}_${this.schemeFilterCount(filter)}`)
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.LG, right: AppSpacing.LG, bottom: AppSpacing.SM })
+  }
+
+  schemeFilterCount(filter: string): number {
+    return this.customSchemes.filter((scheme: CustomThemeScheme): boolean =>
+      this.schemeMatchesFilter(scheme, filter)).length;
+  }
+
+  /** 全部页当前筛选、搜索下置顶段或其他段的套数（只数不建条目，便宜）。 */
+  schemeListCount(pinned: boolean): number {
+    const query = this.schemeQuery.trim().toLowerCase();
+    return this.customSchemes.filter((scheme: CustomThemeScheme): boolean => scheme.pinned === pinned &&
+      this.schemeMatchesFilter(scheme, this.schemeFilter) &&
+      (!query || scheme.name.toLowerCase().includes(query) || scheme.author.toLowerCase().includes(query))).length;
+  }
+
+  @Builder
+  schemeSortMenu() {
+    Column() {
+      PopupMenuHeader('排序方式', this.subTextColor())
+      ForEach(SCHEME_SORTS, (sort: string) => {
+        Row({ space: 10 }) {
+          SymbolGlyph($r('sys.symbol.checkmark'))
+            .fontSize(18)
+            .width(22)
+            .fontColor([this.accentColor()])
+            .opacity(this.schemeSort === sort ? 1 : 0)
+          Text(this.schemeSortLabel(sort))
+            .fontSize(AppFontSize.BODY_LARGE)
+            .fontColor(this.schemeSort === sort ? this.accentColor() : this.primaryTextColor())
+            .layoutWeight(1)
+          if (sort === 'manual') {
+            Text('可拖动')
+              .fontSize(AppFontSize.MICRO)
+              .fontColor(this.subTextColor())
+          }
+        }
+        .width('100%')
+        .height(44)
+        .padding({ left: 12, right: 12 })
+        .borderRadius(ImmersiveMaterialRuntime.POPUP_MENU_RADIUS - ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+        .stateStyles({
+          normal: {
+            .backgroundColor(Color.Transparent)
+          },
+          pressed: {
+            .backgroundColor('#1A808080')
+          }
+        })
+        .accessibilityRole(AccessibilityRoleType.BUTTON)
+        .accessibilitySelected(this.schemeSort === sort)
+        .onClick(() => this.setSchemeSort(sort))
+      }, (sort: string) => `scheme_sort_${sort}_${this.schemeSort === sort}`)
+    }
+    .width(176)
+    .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+  }
+
+  @Builder
+  schemeSectionLabel(label: string, count: number, pinned: boolean) {
+    Row({ space: AppSpacing.XS }) {
+      if (pinned) {
+        SymbolGlyph($r('sys.symbol.pin'))
+          .fontSize(12)
+          .fontColor([SCHEME_PIN_COLOR])
+      }
+      Text(`${label} · ${count}`)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XXS, top: AppSpacing.MD, bottom: AppSpacing.SM })
+  }
+
+  @Builder
+  schemeEmptyHint() {
+    Text(this.schemeQuery.trim() ? `没有找到与“${this.schemeQuery.trim()}”相关的方案` : '这一类下还没有方案')
+      .fontSize(AppFontSize.BODY)
+      .fontColor(this.subTextColor())
+      .width('100%')
+      .textAlign(TextAlign.Center)
+      .padding({ top: 64, bottom: 64 })
+  }
+
+  @Builder
+  schemeBrowseList() {
+    Scroll() {
+      Column() {
+        if (this.schemeListCount(true) + this.schemeListCount(false) === 0) {
+          this.schemeEmptyHint()
+        }
+        if (this.schemeListCount(true) > 0) {
+          this.schemeSectionLabel('置顶', this.schemeListCount(true), true)
+          List() {
+            ForEach(this.schemeListEntries(true), (entry: ThemeListEntry, index: number) => {
+              this.swipeThemeItem(entry, 'scheme-list', '我的方案', index > 0)
+            }, (entry: ThemeListEntry) => `scheme_list_pin_${this.themeEntryKey(entry)}_${this.themeRowState(entry)}`)
+          }
+          .themeCardList(this.cardColor())
+        }
+        if (this.schemeListCount(false) > 0) {
+          this.schemeSectionLabel(this.schemeListCount(true) > 0 ? '其他方案' : '全部方案',
+            this.schemeListCount(false), false)
+          List() {
+            ForEach(this.schemeListEntries(false), (entry: ThemeListEntry, index: number) => {
+              this.swipeThemeItem(entry, 'scheme-list', '我的方案', index > 0)
+            }, (entry: ThemeListEntry) => `scheme_list_rest_${this.themeEntryKey(entry)}_${this.themeRowState(entry)}`)
+          }
+          .themeCardList(this.cardColor())
+        }
+        Text('向左滑可置顶、应用或删除；长按还可编辑、复制、重命名或分享')
+          .fontSize(AppFontSize.MICRO)
+          .fontColor(this.subTextColor())
+          .width('100%')
+          .padding({ left: AppSpacing.XXS, top: AppSpacing.SM })
+      }
+      .width('100%')
+      .padding({ left: AppSpacing.LG, right: AppSpacing.LG,
+        bottom: Math.max(AppSpacing.XXL, this.navBarHeight + AppSpacing.LG) })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .align(Alignment.TopStart)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+  }
+
+  schemeEntryById(schemeId: string): ThemeListEntry {
+    const scheme = CustomThemeSchemeStore.find(this.customSchemes, schemeId);
+    return scheme ? new ThemeListEntry(this.customTheme(scheme), scheme.id) :
+      new ThemeListEntry(BuiltinThemeRegistry.findById(ThemeIds.PLAIN_DEFAULT), schemeId);
+  }
+
+  schemeOrganizeKey(prefix: string, schemeId: string): string {
+    const entry = this.schemeEntryById(schemeId);
+    return `${prefix}_${schemeId}_${this.schemeSelected.indexOf(schemeId) >= 0}_${this.schemeDragEnabled()}_` +
+      `${this.themeRowState(entry)}_${entry.theme.name}`;
+  }
+
+  /**
+   * 整理模式：每套方案一张独立小卡片，点按选中；能拖动时长按卡片抬起，上下拖动换位置（List 挤压让位、
+   * 边缘自动滚动），松手写回。置顶与其他两段各自排，不能互相拖过去。
+   */
+  @Builder
+  schemeOrganizeList() {
+    List({ space: AppSpacing.SM }) {
+      if (this.schemeOrderPinned.length + this.schemeOrderRest.length === 0) {
+        ListItem() {
+          this.schemeEmptyHint()
+        }
+      }
+      if (this.schemeOrderPinned.length > 0) {
+        ListItem() {
+          this.schemeSectionLabel('置顶', this.schemeOrderPinned.length, true)
+        }
+        ForEach(this.schemeOrderPinned, (schemeId: string) => {
+          ListItem() {
+            this.schemeOrganizeRow(this.schemeEntryById(schemeId))
+          }
+        }, (schemeId: string) => this.schemeOrganizeKey('scheme_org_pin', schemeId))
+          .onMove(this.schemeDragEnabled() ?
+            (from: number, to: number) => this.moveSchemeDuringDrag(true, from, to) : undefined, {
+            onDrop: (_index: number) => {
+              this.commitSchemeOrder();
+            }
+          })
+      }
+      if (this.schemeOrderRest.length > 0) {
+        ListItem() {
+          this.schemeSectionLabel(this.schemeOrderPinned.length > 0 ? '其他方案' : '全部方案',
+            this.schemeOrderRest.length, false)
+        }
+        ForEach(this.schemeOrderRest, (schemeId: string) => {
+          ListItem() {
+            this.schemeOrganizeRow(this.schemeEntryById(schemeId))
+          }
+        }, (schemeId: string) => this.schemeOrganizeKey('scheme_org_rest', schemeId))
+          .onMove(this.schemeDragEnabled() ?
+            (from: number, to: number) => this.moveSchemeDuringDrag(false, from, to) : undefined, {
+            onDrop: (_index: number) => {
+              this.commitSchemeOrder();
+            }
+          })
+      }
+      ListItem() {
+        Column() {
+          Text(!this.schemeDragEnabled() ? '筛选或搜索时不能拖动排序' : this.schemeSort === 'manual' ?
+            '长按方案上下拖动可调整顺序' : '长按方案上下拖动可调整顺序，松手后改为“手动排序”')
+            .fontSize(AppFontSize.MICRO)
+            .fontColor(this.subTextColor())
+            .width('100%')
+            .padding({ left: AppSpacing.XXS })
+          Row()
+            .height(this.navBarHeight + 96)
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+  }
+
+  @Builder
+  schemeOrganizeRow(entry: ThemeListEntry) {
+    Row({ space: AppSpacing.MD }) {
+      Stack() {
+        if (this.schemeSelected.indexOf(entry.customSchemeId) >= 0) {
+          SymbolGlyph($r('sys.symbol.checkmark'))
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor([ThemeRuntime.onAccentColor(this.accentColor())])
+        }
+      }
+      .width(22)
+      .height(22)
+      .borderRadius(11)
+      .border({ width: this.schemeSelected.indexOf(entry.customSchemeId) >= 0 ? 0 : 1.5, color: this.subTextColor() })
+      .backgroundColor(this.schemeSelected.indexOf(entry.customSchemeId) >= 0 ? this.accentColor() : Color.Transparent)
+      Stack() {
+        this.swatchArt(entry)
+      }
+      .width(ROW_THUMB_WIDTH)
+      .height(ROW_THUMB_HEIGHT)
+      .borderRadius(6)
+      .clip(true)
+      Column({ space: 2 }) {
+        Text(entry.theme.name)
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(entry.theme.typography.appFontFamily)
+          .fontColor(this.primaryTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(this.themeRowSubtitle(entry))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      if (this.schemeIsActive(entry.customSchemeId)) {
+        Text('使用中')
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.accentColor())
+      }
+      if (this.schemeDragEnabled()) {
+        SymbolGlyph($r('sys.symbol.line_3_horizontal'))
+          .fontSize(20)
+          .fontColor([this.subTextColor()])
+      }
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.MD, right: AppSpacing.LG, top: AppSpacing.SM, bottom: AppSpacing.SM })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .backgroundColor(this.cardColor())
+    .opacity(ListDissolve.opacity(this.isSchemeRowDissolving(entry, 'scheme-organize')))
+    .scale(ListDissolve.scale(this.isSchemeRowDissolving(entry, 'scheme-organize')))
+    .blur(ListDissolve.blur(this.isSchemeRowDissolving(entry, 'scheme-organize')))
+    .id(this.schemeRowIdFor(entry.customSchemeId, 'scheme-organize'))
+    .accessibilityGroup(true)
+    .accessibilityText(`${entry.theme.name}，${this.schemeSelected.indexOf(entry.customSchemeId) >= 0 ? '已选中' : '未选中'}`)
+    .onClick(() => this.toggleSchemeSelected(entry.customSchemeId))
+  }
+
+  @Builder
+  schemeOrganizeBar() {
+    Column() {
+      Divider()
+        .strokeWidth(0.5)
+        .color(ThemeRuntime.dividerColor(this.appDarkMode))
+      Row() {
+        this.schemeBarAction($r('sys.symbol.pin'), this.selectedSchemesAllPinned() ? '取消置顶' : '置顶',
+          this.schemeSelected.length > 0, this.primaryTextColor(), () => {
+            this.batchPinSelectedSchemes();
+          })
+        this.schemeBarAction($r('sys.symbol.share'), '分享', this.schemeSelected.length === 1,
+          this.primaryTextColor(), () => {
+            this.requestThemeExport(this.schemeSelected[0]);
+          })
+        this.schemeBarAction($r('sys.symbol.trash'), '删除', this.schemeSelected.length > 0,
+          ThemeRuntime.dangerColor(this.appDarkMode), () => {
+            this.requestDeleteSelectedSchemes();
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceAround)
+      .padding({ top: AppSpacing.SM, bottom: Math.max(AppSpacing.SM, this.navBarHeight) + AppSpacing.XS })
+    }
+    .width('100%')
+    .backgroundColor(this.cardColor())
+    .transition(TransitionEffect.translate({ y: 96 }).animation({ duration: 220, curve: Curve.Friction }))
+  }
+
+  @Builder
+  schemeBarAction(icon: Resource, label: string, enabled: boolean, color: string, action: () => void) {
+    Column({ space: AppSpacing.XXS }) {
+      SymbolGlyph(icon)
+        .fontSize(22)
+        .fontColor([color])
+      Text(label)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(color)
+    }
+    .width(80)
+    .padding({ top: AppSpacing.XS, bottom: AppSpacing.XS })
+    .opacity(enabled ? 1 : 0.35)
+    .enabled(enabled)
+    .accessibilityGroup(true)
+    .accessibilityText(label)
+    .accessibilityRole(AccessibilityRoleType.BUTTON)
+    .onClick(action)
+  }
+
   /** 竖向详情：同一列表里左右滑动切换，每页整页用这套主题（深浅色可单独切换预览）的配色。 */
   @Builder
   detailOverlay() {
     Stack({ alignContent: Alignment.TopStart }) {
       Column() {
         Swiper() {
-          ForEach(this.detailKeys, (key: string) => {
-            this.detailPage(this.resolveEntry(key))
-          }, (key: string) => `detail_${this.themeEntryKey(this.resolveEntry(key))}`)
+          LazyForEach(this.detailPageSource, (page: string) => {
+            this.detailPage(this.resolveEntry(ThemeDetailPageSource.selectKey(page)))
+          }, (page: string) => `detail_${page}`)
         }
         .index(this.detailIndex)
         .indicator(false)
         .loop(false)
         .duration(280)
-        .cachedCount(1)
+        .cachedCount(this.detailCachedCount)
         .disableSwipe(this.detailKeys.length <= 1)
         .onChange((index: number) => {
           this.detailIndex = index;
+          this.syncDetailTopSolid();
         })
         .width('100%')
         .layoutWeight(1)
@@ -1393,6 +2258,9 @@ struct ThemeSettingsPage {
       .width('100%')
       .height('100%')
       this.detailTopBar()
+      if (this.detailFullScene) {
+        this.detailFullOverlay()
+      }
     }
     .width('100%')
     .height('100%')
@@ -1402,22 +2270,25 @@ struct ThemeSettingsPage {
       .animation({ duration: 260, curve: Curve.Friction }))
   }
 
-  @Builder
-  /** 详情顶栏：返回和“更多”用二级页顶栏同款的沉浸光感按钮，位置也和 PageScaffold 对齐。 */
+  /** 详情顶栏：返回、位置、浅深色开关和方案的“更多”；开关固定在这里，滑到哪一段都能直接切。 */
   @Builder
   detailTopBar() {
     Row({ space: AppSpacing.SM }) {
-      this.immersiveBack(() => {
-        this.closeDetail();
-      })
-      Blank()
+      ImmersiveBackButton({ iconColor: this.detailTextColor(), darkMode: this.variantDark(),
+        buttonSize: 40, containerWidth: 56, materialScale: 0.83, compactLayout: true,
+        accessibilityLabel: '返回主题', onBack: () => this.closeDetail() })
       Text(this.detailPositionLabel())
         .fontSize(AppFontSize.CAPTION)
         .fontColor('#FFFFFF')
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
         .height(28)
         .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
         .borderRadius(14)
         .backgroundColor(DETAIL_SCRIM)
+        .flexShrink(1)
+      Blank()
+      this.detailModeToggle()
       if (this.currentDetailSchemeId()) {
         ImmersiveHeaderAction({
           icon: $r('sys.symbol.more'),
@@ -1432,6 +2303,35 @@ struct ThemeSettingsPage {
     .height(PageScaffold.BAR_HEIGHT + this.statusBarHeight)
     .padding({ right: AppSpacing.XL, top: this.statusBarHeight })
     .alignItems(VerticalAlign.Center)
+    .backgroundColor(this.detailTopSolid ? this.detailPageColor() : Color.Transparent)
+    .animation({ duration: 160, curve: Curve.Friction })
+  }
+
+  /** 浅色/深色预览开关：颜色取正在预览的那套主题，叠在预览画面上也协调。 */
+  @Builder
+  detailModeToggle() {
+    ThemeModeSwitch({
+      selectedDark: this.detailDark,
+      darkMode: this.detailDark,
+      accentColor: this.detailColors().accentColor,
+      subTextColor: this.detailColors().subTextColor,
+      fallbackColor: this.detailColors().cardColor,
+      switchWidth: DETAIL_MODE_SWITCH_WIDTH,
+      switchHeight: ImmersiveHeaderAction.SIZE,
+      onChange: (dark: boolean) => {
+        this.detailDark = dark;
+      }
+    })
+  }
+
+  detailColors(): ThemeColorTokens {
+    const entries = this.currentDetailEntries();
+    if (entries.length > 0) return this.activeVariant(entries[0].theme).colors;
+    const colors = new ThemeColorTokens();
+    colors.accentColor = ThemeRuntime.accentColor(this.detailDark);
+    colors.subTextColor = ThemeRuntime.subTextColor(this.detailDark);
+    colors.cardColor = ThemeRuntime.cardColor(this.detailDark);
+    return colors;
   }
 
   @Builder
@@ -1441,6 +2341,7 @@ struct ThemeSettingsPage {
       accessibilityLabel: '返回主题', onBack: action })
   }
 
+  /** 竖长详情：大图开头，往下依次是状态、方案组成、书架与导航、阅读页、听书面板，整页一条滚动。 */
   @Builder
   detailPage(entry: ThemeListEntry) {
     Scroll() {
@@ -1449,15 +2350,14 @@ struct ThemeSettingsPage {
         Column({ space: AppSpacing.MD }) {
           this.detailInfoCard(entry)
           if (entry.customSchemeId) {
-            this.detailSectionTitle(entry.theme, `方案组成 · ${this.detailDark ? '深色' : '浅色'}`)
             this.schemePartsCard(entry)
           }
+          this.detailShelfTitle(entry.theme)
+          this.detailSceneCard(entry, 'shelf')
           this.detailSectionTitle(entry.theme, '阅读页')
-          this.detailReaderCard(entry.theme)
+          this.detailSceneCard(entry, 'reader')
           this.detailSectionTitle(entry.theme, '听书面板')
-          this.detailListenCard(entry)
-          this.detailSectionTitle(entry.theme, '书架与导航')
-          this.detailShelfCard(entry)
+          this.detailSceneCard(entry, 'listen')
         }
         .width('100%')
         .padding({ left: AppSpacing.LG, right: AppSpacing.LG, bottom: AppSpacing.XXL })
@@ -1471,8 +2371,10 @@ struct ThemeSettingsPage {
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring)
     .backgroundColor(this.activeVariant(entry.theme).colors.pageColor)
+    .onDidScroll(this.detailScrollTracker(this.entrySelectKey(entry)))
   }
 
+  /** 大图：竖图完整铺开，名称和简介压在图的下沿。 */
   @Builder
   detailHero(entry: ThemeListEntry) {
     Stack({ alignContent: Alignment.BottomStart }) {
@@ -1505,27 +2407,6 @@ struct ThemeSettingsPage {
           .fontColor('#E6FFFFFF')
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Row() {
-          ForEach([false, true], (dark: boolean) => {
-            Text(dark ? '深色' : '浅色')
-              .fontSize(AppFontSize.CAPTION)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(this.detailDark === dark ? '#242320' : '#FFFFFF')
-              .backgroundColor(this.detailDark === dark ? '#FFFFFF' : Color.Transparent)
-              .height(30)
-              .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
-              .borderRadius(15)
-              .accessibilityText(`预览${dark ? '深色' : '浅色'}`)
-              .accessibilityRole(AccessibilityRoleType.BUTTON)
-              .onClick(() => {
-                this.detailDark = dark;
-              })
-          }, (dark: boolean) => `detail_mode_${dark}`)
-        }
-        .padding(3)
-        .borderRadius(18)
-        .backgroundColor(DETAIL_SCRIM)
-        .margin({ top: AppSpacing.XS })
       }
       .width('100%')
       .padding({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: AppSpacing.XL })
@@ -1555,7 +2436,11 @@ struct ThemeSettingsPage {
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.activeVariant(entry.theme).colors.subTextColor)
           .maxLines(2)
-        if (this.customSchemePackMissing(entry.customSchemeId)) {
+        if (this.customSchemeInCloud(entry.customSchemeId)) {
+          Text('这套方案的素材在云端，正在下载；下载完成前按默认样式显示。')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.activeVariant(entry.theme).colors.subTextColor)
+        } else if (this.customSchemePackMissing(entry.customSchemeId)) {
           Text('这套方案的主题包素材不在这台设备上，正按默认样式显示；重新导入同一个主题包即可恢复。')
             .fontSize(AppFontSize.CAPTION)
             .fontColor(this.activeVariant(entry.theme).colors.dangerColor)
@@ -1578,31 +2463,60 @@ struct ThemeSettingsPage {
       .padding({ left: AppSpacing.XXS, top: AppSpacing.SM })
   }
 
+  /** 方案组成：收起时一行摘要，点开是两列小格。 */
   @Builder
   schemePartsCard(entry: ThemeListEntry) {
     Column() {
-      ForEach(this.schemeParts(entry.customSchemeId), (part: SchemePartRow, index: number) => {
-        Column() {
-          if (index > 0) {
-            Divider()
-              .strokeWidth(0.5)
-              .color(this.activeVariant(entry.theme).colors.dividerColor)
-              .margin({ left: AppSpacing.LG })
-          }
-          Row() {
-            Text(part.label)
-              .fontSize(AppFontSize.BODY)
-              .fontColor(this.activeVariant(entry.theme).colors.primaryTextColor)
-              .layoutWeight(1)
-            Text(part.source)
-              .fontSize(AppFontSize.CAPTION)
-              .fontColor(this.activeVariant(entry.theme).colors.subTextColor)
-          }
-          .width('100%')
-          .height(46)
-          .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+      Row({ space: AppSpacing.SM }) {
+        Text(`方案组成 · ${this.detailDark ? '深色' : '浅色'}`)
+          .fontSize(AppFontSize.BODY)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.activeVariant(entry.theme).colors.primaryTextColor)
+        Text(this.schemePartsSummary(entry.customSchemeId))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.activeVariant(entry.theme).colors.subTextColor)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .textAlign(TextAlign.End)
+          .layoutWeight(1)
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(14)
+          .fontColor([this.activeVariant(entry.theme).colors.subTextColor])
+          .rotate({ angle: this.detailPartsOpen ? 90 : 0 })
+      }
+      .width('100%')
+      .height(48)
+      .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+      .accessibilityGroup(true)
+      .accessibilityText(`方案组成，${this.detailPartsOpen ? '点按收起' : '点按展开'}`)
+      .accessibilityRole(AccessibilityRoleType.BUTTON)
+      .onClick(() => {
+        this.detailPartsOpen = !this.detailPartsOpen;
+      })
+      if (this.detailPartsOpen) {
+        Divider()
+          .strokeWidth(0.5)
+          .color(this.activeVariant(entry.theme).colors.dividerColor)
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(this.schemeParts(entry.customSchemeId), (part: SchemePartRow) => {
+            Column({ space: 2 }) {
+              Text(part.label)
+                .fontSize(AppFontSize.CAPTION)
+                .fontColor(this.activeVariant(entry.theme).colors.primaryTextColor)
+              Text(part.source)
+                .fontSize(AppFontSize.MICRO)
+                .fontColor(this.activeVariant(entry.theme).colors.subTextColor)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+            .width('50%')
+            .alignItems(HorizontalAlign.Start)
+            .padding({ left: AppSpacing.LG, right: AppSpacing.SM, top: AppSpacing.SM, bottom: AppSpacing.SM })
+          }, (part: SchemePartRow, index: number) => `scheme_part_${index}_${part.source}`)
         }
-      }, (part: SchemePartRow, index: number) => `scheme_part_${index}_${part.source}`)
+        .width('100%')
+        .padding({ top: AppSpacing.XS, bottom: AppSpacing.XS })
+      }
     }
     .width('100%')
     .borderRadius(ThemeRuntime.cardRadius())
@@ -1610,147 +2524,192 @@ struct ThemeSettingsPage {
     .clip(true)
   }
 
+  /** 书架预览的小标题：右边一排布局切换，默认是用户当前的书架布局。 */
   @Builder
-  detailReaderCard(theme: ThemePack) {
+  detailShelfTitle(theme: ThemePack) {
+    Row() {
+      Text('书架与导航')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.activeVariant(theme).colors.subTextColor)
+      Blank()
+      Row({ space: AppSpacing.XXS }) {
+        ForEach(DETAIL_SHELF_LAYOUTS, (layout: string) => {
+          Text(detailShelfLayoutLabel(layout))
+            .fontSize(AppFontSize.CAPTION)
+            .fontWeight(this.detailShelfLayout === layout ? FontWeight.Bold : FontWeight.Normal)
+            .fontColor(this.detailShelfLayout === layout ? this.activeVariant(theme).colors.accentColor :
+              this.activeVariant(theme).colors.subTextColor)
+            .height(28)
+            .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+            .borderRadius(14)
+            .backgroundColor(this.detailShelfLayout === layout ? this.activeVariant(theme).colors.inputColor :
+              Color.Transparent)
+            .accessibilityText(`预览${detailShelfLayoutLabel(layout)}布局`)
+            .accessibilityRole(AccessibilityRoleType.BUTTON)
+            .accessibilitySelected(this.detailShelfLayout === layout)
+            .onClick(() => {
+              this.detailShelfLayout = layout;
+            })
+        }, (layout: string) => `detail_shelf_layout_${layout}`)
+      }
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XXS, top: AppSpacing.SM })
+    .alignItems(VerticalAlign.Center)
+  }
+
+  /** 一张实景预览卡：接近一屏大小，点按放大到全屏。 */
+  @Builder
+  detailSceneCard(entry: ThemeListEntry, scene: string) {
+    Stack() {
+      this.detailSceneContent(entry, scene, false)
+    }
+    .width('100%')
+    .aspectRatio(DETAIL_SCENE_RATIO)
+    .borderRadius(ThemeRuntime.cardRadius())
+    .border({ width: 1, color: this.activeVariant(entry.theme).colors.dividerColor })
+    .clip(true)
+    .accessibilityText(`${scene === 'shelf' ? '书架' : (scene === 'reader' ? '阅读页' : '听书面板')}预览，点按放大`)
+    .accessibilityRole(AccessibilityRoleType.BUTTON)
+    .onClick(() => {
+      this.openDetailFull(scene);
+    })
+  }
+
+  /** 实景画面本体；full 为全屏预览，让出状态栏和底部小白条。 */
+  @Builder
+  detailSceneContent(entry: ThemeListEntry, scene: string, full: boolean) {
+    if (scene === 'reader') {
+      this.detailReaderScene(entry.theme, full)
+    } else {
+      ThemeDetailScene({
+        themePack: entry.theme,
+        previewDark: this.variantDark(),
+        scene: scene,
+        shelfLayout: this.detailShelfLayout,
+        ttsThemeId: this.previewTtsPanelThemeId(entry.theme, entry.customSchemeId),
+        homeBackdropThemeId: this.detailBackdropThemeId(entry.theme, entry.customSchemeId),
+        topInset: full ? this.statusBarHeight : 0,
+        bottomInset: full ? this.navBarHeight : 0
+      })
+    }
+  }
+
+  /** 阅读页实景：阅读背景与角饰、页眉、章节标题、正文（强调与段评气泡）、页脚。 */
+  @Builder
+  detailReaderScene(theme: ThemePack, full: boolean) {
     Stack({ alignContent: Alignment.TopStart }) {
       ReaderThemeBackground({
         surfaceColor: this.activeVariant(theme).reader.backgroundColor,
         backgroundAssetId: this.activeVariant(theme).reader.backgroundAssetId,
         compact: false
       })
-      Column({ space: AppSpacing.SM }) {
-        Text('第十二章 · 灯下')
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.activeVariant(theme).reader.subTextColor)
-        this.readerSampleText(theme, DETAIL_READER_FONT_SIZE, DETAIL_READER_LINE_HEIGHT, DETAIL_READER_LINES)
+      Column() {
+        Row() {
+          Text('山野来信')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.activeVariant(theme).reader.subTextColor)
+          Blank()
+          Text('第十二章 灯下')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.activeVariant(theme).reader.subTextColor)
+        }
+        .width('100%')
+        .height(DETAIL_READER_BAR_HEIGHT)
+        // 章首装饰按主题自己的画（相当于读者开着“标题装饰”和“首字装饰”）。
+        Column() {
+          ThemeChapterHeadTitle({
+            head: this.detailChapterHead(theme),
+            numberText: '第十二章',
+            titleSize: DETAIL_READER_TITLE_SIZE,
+            fontFamily: theme.typography.appFontFamily,
+            titleWeight: FontWeight.Bold
+          }) {
+            Text(ThemeChapterHeadSampleMetrics.showsNumber(this.detailChapterHead(theme), '第十二章') ?
+              '灯下' : '第十二章 灯下')
+              .fontSize(DETAIL_READER_TITLE_SIZE)
+              .fontWeight(FontWeight.Bold)
+              .fontFamily(theme.typography.appFontFamily)
+              .fontColor(this.activeVariant(theme).reader.textColor)
+              .width('100%')
+          }
+        }
+        .width('100%')
+        .height(this.detailReaderTitleHeight(theme))
+        .justifyContent(FlexAlign.Center)
+        Column() {
+          if (this.detailDropCap(theme)) {
+            ThemeDropCapParagraph({
+              text: READER_PREVIEW_LEAD,
+              head: this.detailChapterHead(theme),
+              fontSize: DETAIL_READER_FONT_SIZE,
+              lineHeight: DETAIL_READER_LINE_HEIGHT,
+              fontFamily: theme.typography.appFontFamily,
+              textColor: this.activeVariant(theme).reader.textColor,
+              capFontFamily: theme.typography.appFontFamily,
+              capFontWeight: FontWeight.Bold
+            })
+          }
+          this.readerSampleText(theme, DETAIL_READER_FONT_SIZE, DETAIL_READER_LINE_HEIGHT,
+            this.detailReaderLines(theme, full), this.detailDropCap(theme))
+        }
+        .width('100%')
+        .height(this.detailReaderLines(theme, full) * DETAIL_READER_LINE_HEIGHT)
+        .alignItems(HorizontalAlign.Start)
+        .clip(true)
+        Blank()
+        Row() {
+          Text('21:07 · 电量 82%')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.activeVariant(theme).reader.subTextColor)
+          Blank()
+          Text('12 / 38 · 31.5%')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.activeVariant(theme).reader.subTextColor)
+        }
+        .width('100%')
+        .height(DETAIL_READER_BAR_HEIGHT)
       }
       .width('100%')
-      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG })
+      .height('100%')
+      .padding({ left: AppSpacing.XXXL, right: AppSpacing.XXXL,
+        top: (full ? this.statusBarHeight : 0) + AppSpacing.MD,
+        bottom: (full ? this.navBarHeight : 0) + AppSpacing.MD })
       .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
-    .height(AppSpacing.LG * 2 + 18 + AppSpacing.SM + DETAIL_READER_LINES * DETAIL_READER_LINE_HEIGHT)
-    .borderRadius(ThemeRuntime.cardRadius())
-    .clip(true)
+    .height('100%')
   }
 
+  /** 全屏预览：书架、阅读页、听书面板左右滑动切换，点按画面退出。 */
   @Builder
-  detailListenCard(entry: ThemeListEntry) {
-    Stack({ alignContent: Alignment.Start }) {
-      TtsPanelThemeBackground({
-        themeId: this.previewTtsPanelThemeId(entry.theme, entry.customSchemeId),
-        darkMode: this.variantDark()
-      })
-      Row({ space: AppSpacing.LG }) {
-        if (this.themeHasBookCover(entry.theme) && this.themeCoverCrop(entry.theme, 0)) {
-          ThemeCroppedImage({ src: this.themeCoverSet(entry.theme)[0],
-            crop: this.themeCoverCrop(entry.theme, 0) as ThemeImageCrop })
-            .width(72)
-            .aspectRatio(STORE_BOOK_COVER_RATIO)
-            .borderRadius(entry.theme.radius.small)
-            .clip(true)
-        } else if (this.themeHasBookCover(entry.theme)) {
-          Image(this.themeCoverSet(entry.theme)[0])
-            .width(72)
-            .aspectRatio(STORE_BOOK_COVER_RATIO)
-            .borderRadius(entry.theme.radius.small)
-            .objectFit(ImageFit.Cover)
-            .draggable(false)
-        } else {
-          Column()
-            .width(72)
-            .aspectRatio(STORE_BOOK_COVER_RATIO)
-            .borderRadius(entry.theme.radius.small)
-            .backgroundColor(this.activeVariant(entry.theme).colors.accentColor)
-        }
-        Column({ space: AppSpacing.MD }) {
-          Text('第十二章 · 灯下')
-            .fontSize(AppFontSize.BODY_LARGE)
-            .fontWeight(FontWeight.Bold)
-            .fontFamily(entry.theme.typography.appFontFamily)
-            .fontColor(this.activeVariant(entry.theme).colors.primaryTextColor)
-          Stack({ alignContent: Alignment.Start }) {
-            Row()
-              .width('100%')
-              .height(4)
-              .borderRadius(2)
-              .backgroundColor(this.withAlpha(this.activeVariant(entry.theme).colors.primaryTextColor, '26'))
-            Row()
-              .width('42%')
-              .height(4)
-              .borderRadius(2)
-              .backgroundColor(this.activeVariant(entry.theme).colors.accentColor)
+  detailFullOverlay() {
+    ForEach(this.currentDetailEntries(), (entry: ThemeListEntry) => {
+      Swiper() {
+        ForEach(DETAIL_FULL_SCENES, (scene: string) => {
+          Stack() {
+            this.detailSceneContent(entry, scene, true)
           }
           .width('100%')
-          Row({ space: AppSpacing.XL }) {
-            SymbolGlyph($r('sys.symbol.backward_end_fill'))
-              .fontSize(20)
-              .fontColor([this.activeVariant(entry.theme).colors.primaryTextColor])
-            Stack() {
-              SymbolGlyph($r('sys.symbol.play_fill'))
-                .fontSize(18)
-                .fontColor([ThemeRuntime.onAccentColor(this.activeVariant(entry.theme).colors.buttonColor)])
-            }
-            .width(44)
-            .height(44)
-            .borderRadius(22)
-            .backgroundColor(this.activeVariant(entry.theme).colors.buttonColor)
-            SymbolGlyph($r('sys.symbol.forward_end_fill'))
-              .fontSize(20)
-              .fontColor([this.activeVariant(entry.theme).colors.primaryTextColor])
-          }
-          .alignItems(VerticalAlign.Center)
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
+          .height('100%')
+        }, (scene: string) => `detail_full_scene_${scene}`)
       }
+      .index(Math.max(0, DETAIL_FULL_SCENES.indexOf(this.detailFullScene)))
+      .indicator(false)
+      .loop(false)
+      .duration(280)
+      .onChange((index: number) => {
+        this.detailFullScene = DETAIL_FULL_SCENES[index];
+      })
       .width('100%')
-      .padding(AppSpacing.LG)
-    }
-    .width('100%')
-    .height(136)
-    .borderRadius(ThemeRuntime.cardRadius())
-    .clip(true)
-  }
-
-  @Builder
-  detailShelfCard(entry: ThemeListEntry) {
-    Column({ space: AppSpacing.LG }) {
-      Row({ space: AppSpacing.MD }) {
-        ForEach([0, 1, 2], (index: number) => {
-          this.shelfBook(entry.theme, index)
-        }, (index: number) => `detail_book_${index}`)
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
-      Row() {
-        // 整套底栏图标都列出来，包括可选第四个页签“听”“足迹”。
-        ForEach(['bookshelf', 'explore', 'listen', 'footprint', 'mine'], (tabId: string, index: number) => {
-          Image(ThemeAssetRegistry.navigationIcon(entry.theme.navigation.iconPackId, tabId, index === 0))
-            .width(ThemeAssetRegistry.navigationHidesLabels(entry.theme.navigation.iconPackId) ? 30 : 22)
-            .height(ThemeAssetRegistry.navigationHidesLabels(entry.theme.navigation.iconPackId) ? 30 : 22)
-            .fillColor(index === 0 ? this.activeVariant(entry.theme).colors.accentColor :
-              this.activeVariant(entry.theme).colors.subTextColor)
-            .draggable(false)
-        }, (tabId: string) => `detail_nav_${tabId}`)
-      }
-      .width('100%')
-      .height(48)
-      .justifyContent(FlexAlign.SpaceAround)
-      .alignItems(VerticalAlign.Center)
-      .borderRadius(24)
-      .backgroundColor(this.activeVariant(entry.theme).colors.inputColor)
-      .border({ width: 1, color: this.activeVariant(entry.theme).colors.dividerColor })
-    }
-    .width('100%')
-    .padding(AppSpacing.LG)
-    .borderRadius(ThemeRuntime.cardRadius())
-    .backgroundColor(this.activeVariant(entry.theme).colors.pageColor)
-    .backgroundImage(this.stageHomeBackdrop(entry.theme, entry.customSchemeId) || '')
-    .backgroundImageSize(ImageSize.Cover)
-    .backgroundImagePosition(Alignment.Top)
-    .border({ width: 1, color: this.activeVariant(entry.theme).colors.dividerColor })
-    .clip(true)
+      .height('100%')
+      .backgroundColor(this.activeVariant(entry.theme).colors.pageColor)
+      .accessibilityText('全屏预览，点按退出')
+      .onClick(() => {
+        this.detailFullScene = '';
+      })
+      .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.Friction }))
+    }, (entry: ThemeListEntry) => `detail_full_${this.themeEntryKey(entry)}`)
   }
 
   /** 详情底栏：试用中给结束试用与获取，其余按拥有状态给应用、试用与获取或编辑方案。 */
@@ -1816,6 +2775,7 @@ struct ThemeSettingsPage {
       AppThemeSettingsStore.applyToStorage(settings);
       this.appThemeId = settings.themeId;
       this.themeBookCoverEnabled = settings.themeBookCoverEnabled;
+      this.themeBookFrameEnabled = settings.themeBookFrameEnabled;
       const readerSettings = await ReaderSettingsStore.load(getContext(this));
       ReaderSettingsStore.applyToStorage(readerSettings);
     } catch (e) {
@@ -1830,6 +2790,7 @@ struct ThemeSettingsPage {
       const schemes = await CustomThemeSchemeStore.load(getContext(this), settings);
       if (serial === this.customSchemeRefreshSerial) {
         this.customSchemes = schemes;
+        this.syncSchemeOrganizeOrder();
       }
       const follows = await ReaderSettingsStore.typographyFollowsTheme(getContext(this));
       const summaries = new Map<string, string>();
@@ -1878,11 +2839,20 @@ struct ThemeSettingsPage {
         HdsFeedback.showToast(`方案使用的主题「${unavailableStartupTheme}」尚未获取或已过期`);
         return;
       }
+      if (this.customSchemePackMissing(customScheme.id)) {
+        if (this.customSchemeInCloud(customScheme.id)) HdsFeedback.showToast('正在下载云端的主题素材…');
+        try {
+          await CloudThemeSync.ensureSchemePacks(getContext(this), customScheme);
+        } catch (e) {
+          HdsFeedback.showToast(`主题素材下载失败：${(e as Error).message}`);
+        }
+      }
     }
     if (ThemeTrialManager.isActive()) {
       ThemeTrialManager.stop(getContext(this) as common.UIAbilityContext);
       this.appThemeId = AppStorage.get<string>('appThemeId') || AppThemeSettingsStore.DEFAULT_THEME_ID;
       this.themeBookCoverEnabled = AppStorage.get<boolean>('appThemeBookCoverEnabled') || false;
+      this.themeBookFrameEnabled = AppStorage.get<boolean>('appThemeBookFrameEnabled') || false;
     }
     if (themeId === this.appThemeId && themeId !== ThemeIds.CUSTOM) {
       return;
@@ -1913,6 +2883,7 @@ struct ThemeSettingsPage {
         settings = AppThemeSettingsStore.applyCustomSnapshot(settings, customScheme.settings);
       }
       settings.themeBookCoverEnabled = choice.applyCover;
+      settings.themeBookFrameEnabled = choice.applyFrame;
       AppThemeSettingsStore.applyToStorage(settings);
       await AppThemeSettingsStore.save(getContext(this), settings);
       if (customScheme) {
@@ -1922,8 +2893,11 @@ struct ThemeSettingsPage {
       }
       this.appThemeId = settings.themeId;
       this.themeBookCoverEnabled = settings.themeBookCoverEnabled;
+      this.themeBookFrameEnabled = settings.themeBookFrameEnabled;
       if (themeId !== ThemeIds.CUSTOM) {
-        this.recentThemeIds = await ThemeRecentStore.record(getContext(this), themeId);
+        await this.recordRecentUse(themeId);
+      } else if (customScheme) {
+        await this.recordRecentUse(ThemeRecentStore.schemeKey(customScheme.id));
       }
       const readerSettings = await ReaderSettingsStore.switchThemeProfile(getContext(this), previousProfileId,
         ReaderSettingsStore.profileIdFor(settings.themeId, customScheme ? customScheme.id : ''));
@@ -1972,6 +2946,7 @@ struct ThemeSettingsPage {
     currentReader: ReaderSettings): Promise<ThemeApplyChoice | null> {
     this.applyDialogThemeName = theme.name;
     this.applyDialogHasCover = this.themeHasBookCover(theme);
+    this.applyDialogHasFrame = this.themeHasShelfFrame(theme);
     this.applyDialogFirstUse = firstUse;
     if (firstUse) {
       const preset = theme.readerLayout;
@@ -1983,8 +2958,10 @@ struct ThemeSettingsPage {
       // 默认沿用当前排版，不让调好的字号和页眉页脚在换主题时意外丢失。
       this.applyDialogApplyLayout = false;
     }
-    // 主题带封面时默认勾选“应用主题封面”，不再沿用上次的选择。
-    this.applyDialogApplyCover = this.applyDialogHasCover;
+    // 主题带封面时默认勾选“应用主题封面”，不再沿用上次的选择；默认主题例外，默认保留书的原封面。
+    this.applyDialogApplyCover = this.applyDialogHasCover && theme.id !== ThemeIds.PLAIN_DEFAULT;
+    // 主题边框同样默认勾选，默认主题例外；两项可分开关，比如保留原封面只套边框。
+    this.applyDialogApplyFrame = this.applyDialogHasFrame && theme.id !== ThemeIds.PLAIN_DEFAULT;
     // 桌面图标默认不随主题更换，由用户主动打开。
     this.applyDialogApplyIcon = false;
     this.showThemeApplyDialog = true;
@@ -1998,6 +2975,7 @@ struct ThemeSettingsPage {
     const choice = new ThemeApplyChoice();
     choice.usePresetLayout = this.applyDialogFirstUse && this.applyDialogApplyLayout;
     choice.applyCover = this.applyDialogHasCover && this.applyDialogApplyCover;
+    choice.applyFrame = this.applyDialogHasFrame && this.applyDialogApplyFrame;
     choice.applyIcon = this.applyDialogApplyIcon;
     const resolve = this.pendingApplyChoice;
     this.closeThemeApplyDialog();
@@ -2027,6 +3005,7 @@ struct ThemeSettingsPage {
     this.applyDialogLayoutOffHint = '';
     this.applyDialogFirstUse = false;
     this.applyDialogHasCover = false;
+    this.applyDialogHasFrame = false;
   }
 
   async ensureThemeAccess(themeId: string): Promise<boolean> {
@@ -2155,10 +3134,24 @@ struct ThemeSettingsPage {
       AppThemeSettingsStore.applyToStorage(settings);
       await AppThemeSettingsStore.save(getContext(this), settings);
       this.themeBookCoverEnabled = enabled;
-      HdsFeedback.showToast(enabled ? '已启用主题封面与书籍边框' : '已恢复图书原封面');
+      HdsFeedback.showToast(enabled ? '已启用主题封面' : '已恢复图书原封面');
     } catch (e) {
       console.error('保存主题封面设置失败:', e);
       HdsFeedback.showToast('保存主题封面设置失败');
+    }
+  }
+
+  async setThemeBookFrameEnabled(enabled: boolean): Promise<void> {
+    try {
+      const settings = await AppThemeSettingsStore.load(getContext(this));
+      settings.themeBookFrameEnabled = enabled;
+      AppThemeSettingsStore.applyToStorage(settings);
+      await AppThemeSettingsStore.save(getContext(this), settings);
+      this.themeBookFrameEnabled = enabled;
+      HdsFeedback.showToast(enabled ? '已启用主题边框' : '已去掉主题边框');
+    } catch (e) {
+      console.error('保存主题边框设置失败:', e);
+      HdsFeedback.showToast('保存主题边框设置失败');
     }
   }
 
@@ -2420,12 +3413,13 @@ struct ThemeSettingsPage {
     return entries;
   }
 
+  /** 全部方案按当前排序（置顶在前），“我的”页、详情左右切换都用这个顺序。 */
   schemeEntries(): ThemeListEntry[] {
-    const entries: ThemeListEntry[] = [];
-    for (const scheme of this.customSchemes) {
-      entries.push(new ThemeListEntry(this.customTheme(scheme), scheme.id));
-    }
-    return entries;
+    return this.schemeEntriesOf(this.sortedSchemes(false));
+  }
+
+  schemePreviewEntries(): ThemeListEntry[] {
+    return this.schemeEntries().slice(0, SCHEME_PREVIEW_COUNT);
   }
 
   entrySelectKey(entry: ThemeListEntry): string {
@@ -2434,6 +3428,269 @@ struct ThemeSettingsPage {
 
   async loadRecentThemes(): Promise<void> {
     this.recentThemeIds = await ThemeRecentStore.load(getContext(this));
+    this.recentUseTimes = await ThemeRecentStore.loadTimes(getContext(this));
+    this.recentUseRevision++;
+    const sort = await ThemeRecentStore.loadSchemeSort(getContext(this));
+    if (SCHEME_SORTS.indexOf(sort) >= 0) this.schemeSort = sort;
+  }
+
+  async recordRecentUse(key: string): Promise<void> {
+    this.recentThemeIds = await ThemeRecentStore.record(getContext(this), key);
+    this.recentUseTimes = await ThemeRecentStore.loadTimes(getContext(this));
+    this.recentUseRevision++;
+  }
+
+  schemeSortLabel(sort: string): string {
+    if (sort === 'modified') return '最近修改';
+    if (sort === 'created') return '创建时间';
+    if (sort === 'name') return '名称';
+    if (sort === 'manual') return '手动排序';
+    return '最近使用';
+  }
+
+  schemeFilterLabel(filter: string): string {
+    if (filter === 'self') return '自建';
+    if (filter === 'import') return '导入';
+    return '全部';
+  }
+
+  schemeMatchesFilter(scheme: CustomThemeScheme, filter: string): boolean {
+    if (filter === 'self') return !scheme.imported;
+    if (filter === 'import') return scheme.imported;
+    return true;
+  }
+
+  schemeIsActive(schemeId: string): boolean {
+    return this.appThemeId === ThemeIds.CUSTOM && this.activeCustomSchemeId === schemeId;
+  }
+
+  schemeUsedAt(schemeId: string): number {
+    return this.recentUseRevision >= 0 ? (this.recentUseTimes.get(ThemeRecentStore.schemeKey(schemeId)) || 0) : 0;
+  }
+
+  /**
+   * 按当前排序排好的方案，置顶的在前。filtered 为 true 时再套上全部页的筛选和搜索。
+   * 最近使用：正在用的最前，其余按应用时间，没用过的按创建时间新的在前；手动就是存储里的顺序。
+   */
+  sortedSchemes(filtered: boolean): CustomThemeScheme[] {
+    const query = filtered ? this.schemeQuery.trim().toLowerCase() : '';
+    const list = this.customSchemes.filter((scheme: CustomThemeScheme): boolean =>
+      (!filtered || this.schemeMatchesFilter(scheme, this.schemeFilter)) &&
+        (!query || scheme.name.toLowerCase().includes(query) || scheme.author.toLowerCase().includes(query)));
+    const position = new Map<string, number>();
+    this.customSchemes.forEach((scheme: CustomThemeScheme, index: number) => position.set(scheme.id, index));
+    const sort = this.schemeSort;
+    list.sort((a: CustomThemeScheme, b: CustomThemeScheme): number => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      if (sort === 'recent') {
+        const activeA = this.schemeIsActive(a.id) ? 1 : 0;
+        const activeB = this.schemeIsActive(b.id) ? 1 : 0;
+        if (activeA !== activeB) return activeB - activeA;
+        const used = this.schemeUsedAt(b.id) - this.schemeUsedAt(a.id);
+        if (used !== 0) return used;
+        return b.createdAt - a.createdAt;
+      }
+      if (sort === 'modified') return b.updatedAt - a.updatedAt;
+      if (sort === 'created') return b.createdAt - a.createdAt;
+      if (sort === 'name') return compareText(a.name, b.name, 'zh');
+      return (position.get(a.id) || 0) - (position.get(b.id) || 0);
+    });
+    return list;
+  }
+
+  schemeEntriesOf(schemes: CustomThemeScheme[]): ThemeListEntry[] {
+    return schemes.map((scheme: CustomThemeScheme): ThemeListEntry =>
+      new ThemeListEntry(this.customTheme(scheme), scheme.id));
+  }
+
+  /** 全部页筛选后的方案，分成置顶和其他两段。 */
+  schemeListEntries(pinned: boolean): ThemeListEntry[] {
+    return this.schemeEntriesOf(this.sortedSchemes(true)
+      .filter((scheme: CustomThemeScheme): boolean => scheme.pinned === pinned));
+  }
+
+  schemePinned(schemeId: string): boolean {
+    const scheme = CustomThemeSchemeStore.find(this.customSchemes, schemeId);
+    return !!scheme && scheme.pinned;
+  }
+
+  /** 行第二行跟着排序带一句时间，看得出为什么排在这；名称和手动排序不带。 */
+  schemeSortMeta(schemeId: string): string {
+    const scheme = CustomThemeSchemeStore.find(this.customSchemes, schemeId);
+    if (!scheme) return '';
+    if (this.schemeSort === 'recent') {
+      if (this.schemeIsActive(schemeId)) return '';
+      const usedAt = this.schemeUsedAt(schemeId);
+      return usedAt > 0 ? `${this.relativeTime(usedAt)}用过` : '还没用过';
+    }
+    if (this.schemeSort === 'modified') {
+      return scheme.updatedAt > 0 ? `${this.relativeTime(scheme.updatedAt)}修改` : '';
+    }
+    if (this.schemeSort === 'created') {
+      return scheme.createdAt > 0 ? `${this.calendarDate(scheme.createdAt)}创建` : '';
+    }
+    return '';
+  }
+
+  relativeTime(at: number): string {
+    const minutes = Math.floor((Date.now() - at) / 60000);
+    if (minutes < 1) return '刚刚';
+    if (minutes < 60) return `${minutes} 分钟前`;
+    if (minutes < 24 * 60) return `${Math.floor(minutes / 60)} 小时前`;
+    const days = Math.floor(minutes / (24 * 60));
+    if (days === 1) return '昨天';
+    if (days < 7) return `${days} 天前`;
+    return this.calendarDate(at);
+  }
+
+  calendarDate(at: number): string {
+    const date = new Date(at);
+    const sameYear = date.getFullYear() === new Date().getFullYear();
+    return `${sameYear ? '' : `${date.getFullYear()}年`}${date.getMonth() + 1}月${date.getDate()}日`;
+  }
+
+  setSchemeSort(sort: string): void {
+    this.schemeSortMenuOpen = false;
+    if (this.schemeSort === sort) return;
+    this.schemeSort = sort;
+    this.syncSchemeOrganizeOrder();
+    ThemeRecentStore.saveSchemeSort(getContext(this), sort);
+  }
+
+  setSchemeFilter(filter: string): void {
+    this.schemeFilter = filter;
+    this.syncSchemeOrganizeOrder();
+  }
+
+  openSchemeList(): void {
+    this.schemeFilter = 'all';
+    this.schemeQuery = '';
+    this.schemeOrganizing = false;
+    this.schemeSelected = [];
+    this.schemeListOpen = true;
+  }
+
+  closeSchemeList(): void {
+    this.schemeListOpen = false;
+    this.schemeOrganizing = false;
+    this.schemeSortMenuOpen = false;
+    this.schemeSelected = [];
+  }
+
+  startSchemeOrganize(): void {
+    this.schemeSelected = [];
+    this.schemeOrganizing = true;
+    this.syncSchemeOrganizeOrder();
+  }
+
+  stopSchemeOrganize(): void {
+    this.schemeOrganizing = false;
+    this.schemeSelected = [];
+  }
+
+  /** 整理模式里两段的顺序跟着当前排序、筛选和方案列表重建；选中的项里删掉已经不在的。 */
+  syncSchemeOrganizeOrder(): void {
+    const sorted = this.sortedSchemes(true);
+    this.schemeOrderPinned = sorted.filter((item: CustomThemeScheme): boolean => item.pinned)
+      .map((item: CustomThemeScheme): string => item.id);
+    this.schemeOrderRest = sorted.filter((item: CustomThemeScheme): boolean => !item.pinned)
+      .map((item: CustomThemeScheme): string => item.id);
+    const visible = [...this.schemeOrderPinned, ...this.schemeOrderRest];
+    if (this.schemeSelected.some((id: string): boolean => visible.indexOf(id) < 0)) {
+      this.schemeSelected = this.schemeSelected.filter((id: string): boolean => visible.indexOf(id) >= 0);
+    }
+  }
+
+  /** 筛选或搜索时只看到一部分方案，拖动会把看不到的挤乱，所以只在看全部时允许。 */
+  schemeDragEnabled(): boolean {
+    return this.schemeOrganizing && this.schemeFilter === 'all' && !this.schemeQuery.trim();
+  }
+
+  toggleSchemeSelected(schemeId: string): void {
+    if (this.schemeSelected.indexOf(schemeId) >= 0) {
+      this.schemeSelected = this.schemeSelected.filter((id: string): boolean => id !== schemeId);
+    } else {
+      this.schemeSelected = [...this.schemeSelected, schemeId];
+    }
+  }
+
+  toggleSelectAllSchemes(): void {
+    const visible = [...this.schemeOrderPinned, ...this.schemeOrderRest];
+    this.schemeSelected = this.schemeSelected.length === visible.length ? [] : visible;
+  }
+
+  selectedSchemesAllPinned(): boolean {
+    return this.schemeSelected.length > 0 &&
+      this.schemeSelected.every((id: string): boolean => this.schemePinned(id));
+  }
+
+  moveSchemeDuringDrag(pinned: boolean, from: number, to: number): void {
+    const ids = pinned ? [...this.schemeOrderPinned] : [...this.schemeOrderRest];
+    if (from < 0 || from >= ids.length || to < 0 || to >= ids.length) return;
+    const moved = ids.splice(from, 1);
+    ids.splice(to, 0, moved[0]);
+    if (pinned) {
+      this.schemeOrderPinned = ids;
+    } else {
+      this.schemeOrderRest = ids;
+    }
+  }
+
+  /** 松手后写回：拖动时看到的就是全部方案，顺序整个存下，排序换成“手动排序”。 */
+  async commitSchemeOrder(): Promise<void> {
+    const ordered = [...this.schemeOrderPinned, ...this.schemeOrderRest];
+    const before = this.sortedSchemes(true).map((item: CustomThemeScheme): string => item.id);
+    if (ordered.join('\n') === before.join('\n')) return;
+    const switched = this.schemeSort !== 'manual';
+    this.schemeSort = 'manual';
+    ThemeRecentStore.saveSchemeSort(getContext(this), 'manual');
+    try {
+      const settings = await AppThemeSettingsStore.load(getContext(this));
+      await CustomThemeSchemeStore.reorder(getContext(this), settings, ordered);
+      await this.refreshCustomSchemes();
+      if (switched) HdsFeedback.showToast('已改为手动排序');
+    } catch (e) {
+      console.error('保存方案顺序失败:', e);
+      HdsFeedback.showToast('保存顺序失败，请稍后重试');
+      this.syncSchemeOrganizeOrder();
+    }
+  }
+
+  async setSchemesPinned(schemeIds: string[], pinned: boolean): Promise<void> {
+    if (schemeIds.length === 0) return;
+    try {
+      const settings = await AppThemeSettingsStore.load(getContext(this));
+      await CustomThemeSchemeStore.setPinned(getContext(this), settings, schemeIds, pinned);
+      await this.refreshCustomSchemes();
+      const one = schemeIds.length === 1 ? CustomThemeSchemeStore.find(this.customSchemes, schemeIds[0]) : null;
+      if (pinned) {
+        HdsFeedback.showToast(one ? `已置顶「${one.name}」` : `已置顶 ${schemeIds.length} 套方案`);
+      } else {
+        HdsFeedback.showToast(one ? `已取消置顶「${one.name}」` : `已取消置顶 ${schemeIds.length} 套方案`);
+      }
+    } catch (e) {
+      console.error('置顶方案失败:', e);
+      HdsFeedback.showToast('操作失败，请稍后重试');
+    }
+  }
+
+  async batchPinSelectedSchemes(): Promise<void> {
+    const ids = [...this.schemeSelected];
+    const pin = !this.selectedSchemesAllPinned();
+    this.schemeSelected = [];
+    await this.setSchemesPinned(ids, pin);
+  }
+
+  requestDeleteSelectedSchemes(): void {
+    const ids = [...this.schemeSelected];
+    if (ids.length === 0) return;
+    if (ids.length >= this.customSchemes.length) {
+      HdsFeedback.showToast('至少需要保留一套自定义主题');
+      return;
+    }
+    this.deleteSchemeIds = ids;
+    this.actionCustomSchemeId = '';
+    this.showDeleteCustomThemeDialog = true;
   }
 
   /** 已拥有主题：recent 按最近应用排（当前主题最前，没用过的保持原顺序），name 按名称。 */
@@ -2461,9 +3718,12 @@ struct ThemeSettingsPage {
 
   themeRowSubtitle(entry: ThemeListEntry): string {
     if (entry.customSchemeId) {
+      if (this.customSchemeInCloud(entry.customSchemeId)) return '素材在云端 · 应用或打开时下载';
       if (this.customSchemePackMissing(entry.customSchemeId)) return '主题包素材不在这台设备上';
       if (this.isCustomSchemePending(entry.theme, entry.customSchemeId)) return '有改动 · 待应用';
-      return this.schemeSourcesSummary(entry.customSchemeId);
+      const meta = this.schemeSortMeta(entry.customSchemeId);
+      const sources = this.schemeSourcesSummary(entry.customSchemeId);
+      return meta ? `${meta} · ${sources}` : sources;
     }
     return this.themeAccessLabel(entry.theme.id);
   }
@@ -2497,6 +3757,17 @@ struct ThemeSettingsPage {
 
   currentHasCoverSetting(): boolean {
     return this.appThemeId !== ThemeIds.CUSTOM && this.themeHasBookCover(BuiltinThemeRegistry.findById(this.appThemeId));
+  }
+
+  /** 当前主题自带书架边框（浅深任一套）时才显示“主题边框”开关。 */
+  currentHasFrameSetting(): boolean {
+    return this.appThemeId !== ThemeIds.CUSTOM && this.themeHasShelfFrame(BuiltinThemeRegistry.findById(this.appThemeId));
+  }
+
+  themeHasShelfFrame(theme: ThemePack): boolean {
+    const frameId = theme.book.shelfFrameAssetId;
+    return !!frameId && (!!ThemeAssetRegistry.themeShelfFrame(frameId, false) ||
+      !!ThemeAssetRegistry.themeShelfFrame(frameId, true));
   }
 
   currentCanEditStartupText(): boolean {
@@ -2549,6 +3820,7 @@ struct ThemeSettingsPage {
     if (context === 'owned') return this.sortedOwnedEntries('recent');
     if (context === 'owned-list') return this.sortedOwnedEntries(this.ownedSort);
     if (context === 'schemes') return this.schemeEntries();
+    if (context === 'scheme-list') return this.schemeEntriesOf(this.sortedSchemes(true));
     const groups = this.storeGroups();
     if (context.startsWith('group:')) {
       const title = context.substring('group:'.length);
@@ -2566,6 +3838,7 @@ struct ThemeSettingsPage {
 
   /** 打开竖向详情，左右滑动在 context 指的那组主题里切换；不在组里时只看这一项。 */
   openDetailFor(entry: ThemeListEntry, context: string, label: string): void {
+    if (entry.customSchemeId) this.prefetchSchemePacks(entry.customSchemeId);
     const keys = this.detailContextEntries(context).map((item: ThemeListEntry): string => this.entrySelectKey(item));
     const key = this.entrySelectKey(entry);
     const index = keys.indexOf(key);
@@ -2577,6 +3850,7 @@ struct ThemeSettingsPage {
   }
 
   openSchemeDetail(schemeId: string): void {
+    this.prefetchSchemePacks(schemeId);
     const keys = this.schemeEntries().map((item: ThemeListEntry): string => this.entrySelectKey(item));
     const index = keys.indexOf(`scheme:${schemeId}`);
     this.openDetail(index < 0 ? [`scheme:${schemeId}`] : keys, Math.max(0, index), '我的方案');
@@ -2587,11 +3861,74 @@ struct ThemeSettingsPage {
     this.detailKeys = keys;
     this.detailIndex = index;
     this.detailLabel = label;
+    this.detailOffsets.clear();
+    this.detailTopSolid = false;
+    this.detailFullScene = '';
+    this.detailShelfLayout = this.currentShelfLayout();
+    this.detailPartsOpen = false;
+    this.detailCachedCount = 0;
     this.detailOpen = true;
+    this.syncDetailPages();
+    clearTimeout(this.detailCacheTimer);
+    this.detailCacheTimer = setTimeout(() => {
+      this.detailCacheTimer = -1;
+      if (this.detailOpen) this.detailCachedCount = 1;
+    }, 320);
+  }
+
+  /** 把 detailKeys 换成带页键的详情页列表；页键语义同 themeEntryKey，但不必为每一项现算整套方案主题。 */
+  syncDetailPages(): void {
+    if (!this.detailOpen) return;
+    const dark = this.variantDark() ? 'dark' : 'light';
+    this.detailPageSource.replace(this.detailKeys.map((key: string): string => {
+      let revision = 0;
+      if (key.startsWith('scheme:')) {
+        const scheme = CustomThemeSchemeStore.find(this.customSchemes, key.substring('scheme:'.length));
+        revision = scheme ? scheme.revision : -1;
+      }
+      return `${key}|${revision}_${dark}_${this.accountEntitlementsRevision}_${this.installedThemePacksRevision}`;
+    }));
   }
 
   closeDetail(): void {
+    this.detailFullScene = '';
     this.detailOpen = false;
+  }
+
+  openDetailFull(scene: string): void {
+    this.detailFullScene = scene;
+    HdsFeedback.showToast('左右滑动换画面，点按退出');
+  }
+
+  /** 用户当前的书架布局；取不到或不认识时按默认的陪伴布局。 */
+  currentShelfLayout(): string {
+    const layout = AppStorage.get<string>('bookshelfLayoutMode') ?? '';
+    return DETAIL_SHELF_LAYOUTS.indexOf(layout) >= 0 ? layout : 'companion';
+  }
+
+  /** 阅读页实景里正文能放下的整行数：卡片或屏幕的高度减去页眉、标题、页脚和上下留白。 */
+  detailReaderLines(theme: ThemePack, full: boolean): number {
+    const height = full ? this.contextViewportHeight - this.statusBarHeight - this.navBarHeight :
+      (this.contextViewportWidth - AppSpacing.LG * 2) / DETAIL_SCENE_RATIO;
+    const fixed = AppSpacing.MD * 2 + DETAIL_READER_BAR_HEIGHT * 2 + this.detailReaderTitleHeight(theme) +
+      AppSpacing.MD;
+    return Math.max(4, Math.floor((height - fixed) / DETAIL_READER_LINE_HEIGHT));
+  }
+
+  /** 这套主题当前深浅模式的章首装饰；没设时各字段为空。 */
+  detailChapterHead(theme: ThemePack): ThemePackageChapterHead {
+    return normalizeChapterHead(this.activeVariant(theme).regexEmphasis.chapterHead);
+  }
+
+  detailDropCap(theme: ThemePack): boolean {
+    return ThemeChapterHeadSampleMetrics.dropCapApplies(this.detailChapterHead(theme), READER_PREVIEW_LEAD);
+  }
+
+  /** 标题区高度：平时 72，饰图放大或画成分段标题放不下时按估出的高度加上下留白。 */
+  detailReaderTitleHeight(theme: ThemePack): number {
+    const estimate = ThemeChapterHeadSampleMetrics.estimateHeight(this.detailChapterHead(theme),
+      DETAIL_READER_TITLE_SIZE, '第十二章');
+    return Math.max(DETAIL_READER_TITLE_HEIGHT, Math.ceil(estimate + AppSpacing.LG));
   }
 
   resolveEntry(key: string): ThemeListEntry {
@@ -2621,11 +3958,50 @@ struct ThemeSettingsPage {
 
   detailPositionLabel(): string {
     if (this.detailKeys.length <= 1) return this.detailLabel;
-    return `${this.detailLabel} ${this.detailIndex + 1} / ${this.detailKeys.length} · 左右滑动切换`;
+    return `${this.detailLabel} ${this.detailIndex + 1} / ${this.detailKeys.length}`;
   }
 
+  /** 大图高度：首屏在大图下面还能露出状态卡。 */
   detailHeroHeight(): number {
-    return Math.min(this.contextViewportWidth * 1.3, this.contextViewportHeight * 0.62);
+    return Math.min(this.contextViewportWidth * 1.3, this.contextViewportHeight * 0.56);
+  }
+
+  /** 记下某一页滚了多少（onDidScroll 给的是每帧增量）；是正在看的那页就顺带更新顶栏。 */
+  detailScrollTracker(key: string): (xOffset: number, yOffset: number) => void {
+    return (_xOffset: number, yOffset: number): void => {
+      this.detailOffsets.set(key, (this.detailOffsets.get(key) || 0) + yOffset);
+      if (key === this.detailKeys[this.detailIndex]) this.syncDetailTopSolid();
+    };
+  }
+
+  syncDetailTopSolid(): void {
+    const offset = this.detailOffsets.get(this.detailKeys[this.detailIndex] || '') || 0;
+    const solid = offset > this.detailHeroHeight() - PageScaffold.BAR_HEIGHT - this.statusBarHeight;
+    if (solid !== this.detailTopSolid) this.detailTopSolid = solid;
+  }
+
+  detailTextColor(): string {
+    const entries = this.currentDetailEntries();
+    return entries.length > 0 ? this.activeVariant(entries[0].theme).colors.primaryTextColor : this.primaryTextColor();
+  }
+
+  /** 方案组成的一句摘要：全部来自同一套，或大部分来自哪套、几项不同。 */
+  schemePartsSummary(schemeId: string): string {
+    const parts = this.schemeParts(schemeId);
+    if (parts.length === 0) return '';
+    const counts = new Map<string, number>();
+    for (const part of parts) {
+      counts.set(part.source, (counts.get(part.source) || 0) + 1);
+    }
+    let main = '';
+    let best = 0;
+    counts.forEach((count: number, source: string) => {
+      if (count > best) {
+        best = count;
+        main = source;
+      }
+    });
+    return best === parts.length ? `全部${main}` : `大部分${main} · ${parts.length - best} 项不同`;
   }
 
   detailHeroDescription(entry: ThemeListEntry): string {
@@ -2653,14 +4029,15 @@ struct ThemeSettingsPage {
   }
 
   /** 首页背景图：方案按它的“首页背景”来源取；用户在外观里关掉时样机也不画。 */
-  stageHomeBackdrop(theme: ThemePack, customSchemeId: string): ResourceStr | null {
-    if (AppStorage.get<boolean>(ThemeRuntime.KEY_HOME_BACKDROP_ENABLED) === false) return null;
+  /** 书架预览顶部背景取自哪套主题；用户关了首页背景时返回空串。 */
+  detailBackdropThemeId(theme: ThemePack, customSchemeId: string): string {
+    if (AppStorage.get<boolean>(ThemeRuntime.KEY_HOME_BACKDROP_ENABLED) === false) return '';
     const scheme = CustomThemeSchemeStore.find(this.customSchemes, customSchemeId);
     if (scheme) {
       const sources = this.variantDark() ? scheme.settings.customDarkSources : scheme.settings.customLightSources;
-      return ThemeAssetRegistry.homeBackdrop(sources.homeBackdropThemeId, this.variantDark());
+      return sources.homeBackdropThemeId;
     }
-    return ThemeAssetRegistry.homeBackdrop(theme.id, this.variantDark());
+    return theme.id;
   }
 
   /** 没有封面套装的主题，书架上的书用主题色轮着上色。 */
@@ -2755,6 +4132,13 @@ struct ThemeSettingsPage {
   @Builder
   customSchemeActionItems() {
     Column() {
+      this.contextActionItem($r('sys.symbol.pin'), this.schemePinned(this.actionCustomSchemeId) ? '取消置顶' : '置顶',
+        this.primaryTextColor(), () => {
+          const schemeId = this.actionCustomSchemeId;
+          const pin = !this.schemePinned(schemeId);
+          this.closeCustomThemeActions();
+          this.setSchemesPinned([schemeId], pin);
+        })
       this.contextActionItem($r('sys.symbol.paintpalette'), '编辑', this.primaryTextColor(), () => {
         const schemeId = this.actionCustomSchemeId;
         this.closeCustomThemeActions();
@@ -2861,7 +4245,10 @@ struct ThemeSettingsPage {
         .fontSize(AppFontSize.SUBTITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
-      Text(`确定删除「${this.actionCustomScheme()?.name || '该方案'}」吗？此操作无法撤销。`)
+      Text(this.deleteSchemeIds.length > 1 ? `确定删除选中的 ${this.deleteSchemeIds.length} 套方案吗？此操作无法撤销。` :
+        `确定删除「${(this.deleteSchemeIds.length === 1 ?
+          CustomThemeSchemeStore.find(this.customSchemes, this.deleteSchemeIds[0]) :
+          this.actionCustomScheme())?.name || '该方案'}」吗？此操作无法撤销。`)
         .fontSize(AppFontSize.BODY)
         .fontColor(this.subTextColor())
         .width('100%')
@@ -3007,6 +4394,9 @@ struct ThemeSettingsPage {
       if (this.applyDialogHasCover) {
         this.themeApplyToggleRow('cover')
       }
+      if (this.applyDialogHasFrame) {
+        this.themeApplyToggleRow('frame')
+      }
       this.themeApplyToggleRow('icon')
       Row({ space: AppSpacing.LG }) {
         Button('取消', { type: ButtonType.Normal })
@@ -3047,12 +4437,13 @@ struct ThemeSettingsPage {
   themeApplyToggleRow(category: string) {
     Row({ space: AppSpacing.LG }) {
       Column({ space: AppSpacing.XXS }) {
-        Text(category === 'layout' ? '使用主题预设排版' : category === 'cover' ? '应用主题封面' : '应用主题图标')
+        Text(category === 'layout' ? '使用主题预设排版' : category === 'cover' ? '应用主题封面' :
+          category === 'frame' ? '应用主题边框' : '应用主题图标')
           .fontSize(AppFontSize.BODY_LARGE)
           .fontColor(this.primaryTextColor())
         Text(category === 'layout' ? (this.applyDialogApplyLayout ? this.applyDialogLayoutOnHint :
-          this.applyDialogLayoutOffHint) : category === 'cover' ?
-          '书架使用主题封面与配套书籍边框' : AppIconManager.isSupported() ?
+          this.applyDialogLayoutOffHint) : category === 'cover' ? '书架换成主题的封面' :
+          category === 'frame' ? '书架上的封面套上主题边框，原有封面也套' : AppIconManager.isSupported() ?
           '桌面图标同步更换为主题图标' : AppIconManager.UNSUPPORTED_MESSAGE)
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
@@ -3062,12 +4453,15 @@ struct ThemeSettingsPage {
 
       AdaptiveSwitch({
         isOn: category === 'layout' ? this.applyDialogApplyLayout :
-          category === 'cover' ? this.applyDialogApplyCover : this.applyDialogApplyIcon,
+          category === 'cover' ? this.applyDialogApplyCover :
+          category === 'frame' ? this.applyDialogApplyFrame : this.applyDialogApplyIcon,
         onChange: (enabled: boolean) => {
           if (category === 'layout') {
             this.applyDialogApplyLayout = enabled;
           } else if (category === 'cover') {
             this.applyDialogApplyCover = enabled;
+          } else if (category === 'frame') {
+            this.applyDialogApplyFrame = enabled;
           } else {
             this.applyDialogApplyIcon = enabled;
           }
@@ -3176,6 +4570,7 @@ struct ThemeSettingsPage {
       HdsFeedback.showToast('至少需要保留一套自定义主题');
       return;
     }
+    this.deleteSchemeIds = [];
     this.actionCustomSchemeId = schemeId;
     this.showDeleteCustomThemeDialog = true;
   }
@@ -3183,59 +4578,72 @@ struct ThemeSettingsPage {
   closeDeleteCustomThemeDialog(): void {
     this.showDeleteCustomThemeDialog = false;
     this.actionCustomSchemeId = '';
+    this.deleteSchemeIds = [];
   }
 
   async confirmDeleteCustomTheme(): Promise<void> {
-    const schemeId = this.actionCustomSchemeId;
+    const schemeIds = this.deleteSchemeIds.length > 0 ? [...this.deleteSchemeIds] : [this.actionCustomSchemeId];
     this.showDeleteCustomThemeDialog = false;
-    await this.deleteCustomThemeScheme(schemeId);
+    this.deleteSchemeIds = [];
+    await this.deleteCustomThemeSchemes(schemeIds);
   }
 
-  async deleteCustomThemeScheme(schemeId: string): Promise<void> {
-    const scheme = CustomThemeSchemeStore.find(this.customSchemes, schemeId);
-    if (!scheme) return;
-    if (this.customSchemes.length <= 1) {
+  /** 删除一套或几套方案（全部页整理模式可多选）；至少留一套，正在用的先换回默认主题。 */
+  async deleteCustomThemeSchemes(requested: string[]): Promise<void> {
+    const schemeIds = requested.filter((id: string): boolean => !!CustomThemeSchemeStore.find(this.customSchemes, id));
+    if (schemeIds.length === 0) return;
+    if (this.customSchemes.length - schemeIds.length < 1) {
       HdsFeedback.showToast('至少需要保留一套自定义主题');
       return;
     }
+    const firstName = CustomThemeSchemeStore.find(this.customSchemes, schemeIds[0])?.name || '';
     try {
-      if (this.appThemeId === ThemeIds.CUSTOM && this.activeCustomSchemeId === schemeId) {
+      if (this.appThemeId === ThemeIds.CUSTOM && schemeIds.indexOf(this.activeCustomSchemeId) >= 0) {
         await this.selectTheme(ThemeIds.PLAIN_DEFAULT, '', false);
         if (this.appThemeId === ThemeIds.CUSTOM) {
           return;
         }
       }
-      // 从确认框里删除：等它退场后这一行消散，与删方案同时进行；播完在补位动画里拿掉，再重读方案。
-      const keys = [schemeId];
+      // 从确认框里删除：等它退场后这些行消散，与删方案同时进行；播完在补位动画里拿掉，再重读方案。
+      const keys = [...schemeIds];
       const fade = ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
         this.dissolvingSchemeIds = [...this.dissolvingSchemeIds, key];
       }, ListDissolve.particles('theme_settings_root', [this.accentColor(), this.primaryTextColor(), this.subTextColor()],
         (key: string): string => this.schemeRowElementId(key), (): DeleteParticleBurst[] => this.deleteParticleBursts,
         (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), ListDissolve.AFTER_DIALOG_MS);
       const settings = await AppThemeSettingsStore.load(getContext(this));
-      const deleted = await CustomThemeSchemeStore.delete(getContext(this), settings, schemeId);
+      const deletedIds: string[] = [];
+      for (const schemeId of schemeIds) {
+        if (await CustomThemeSchemeStore.delete(getContext(this), settings, schemeId)) deletedIds.push(schemeId);
+      }
       await fade;
-      if (!deleted) {
-        this.dissolvingSchemeIds = ListDissolve.without(this.dissolvingSchemeIds, keys);
+      if (deletedIds.length < keys.length) {
+        this.dissolvingSchemeIds = ListDissolve.without(this.dissolvingSchemeIds,
+          keys.filter((id: string): boolean => deletedIds.indexOf(id) < 0));
+      }
+      if (deletedIds.length === 0) {
         HdsFeedback.showToast('删除失败，至少需要保留一套方案');
         return;
       }
       ListDissolve.commit(this.getUIContext(), () => {
-        this.customSchemes = this.customSchemes.filter((item: CustomThemeScheme) => item.id !== schemeId);
+        this.customSchemes = this.customSchemes.filter((item: CustomThemeScheme) => deletedIds.indexOf(item.id) < 0);
+        this.schemeSelected = this.schemeSelected.filter((id: string): boolean => deletedIds.indexOf(id) < 0);
+        this.syncSchemeOrganizeOrder();
       }, () => {
-        this.dissolvingSchemeIds = ListDissolve.without(this.dissolvingSchemeIds, keys);
+        this.dissolvingSchemeIds = ListDissolve.without(this.dissolvingSchemeIds, deletedIds);
       });
       this.actionCustomSchemeId = '';
-      if (this.detailOpen && this.detailKeys.indexOf(`scheme:${schemeId}`) >= 0) {
+      if (this.detailOpen && deletedIds.some((id: string): boolean => this.detailKeys.indexOf(`scheme:${id}`) >= 0)) {
         this.closeDetail();
       }
       await new Promise<void>((resolve: () => void) => { setTimeout(resolve, ListDissolve.CLOSE_MS); });
       await this.refreshCustomSchemes();
       await ThemePackageService.cleanupImportedFiles(getContext(this));
-      HdsFeedback.showToast(`已删除「${scheme.name}」`);
+      HdsFeedback.showToast(deletedIds.length === 1 && schemeIds.length === 1 ? `已删除「${firstName}」` :
+        `已删除 ${deletedIds.length} 套方案`);
     } catch (e) {
       console.error('删除自定义主题失败:', e);
-      this.dissolvingSchemeIds = ListDissolve.without(this.dissolvingSchemeIds, [schemeId]);
+      this.dissolvingSchemeIds = ListDissolve.without(this.dissolvingSchemeIds, schemeIds);
       HdsFeedback.showToast('删除失败，请稍后重试');
     }
   }
@@ -3276,12 +4684,15 @@ struct ThemeSettingsPage {
   }
 
   /** 行尾状态；也拼进列表键里，状态一变就重建这一行，侧滑跟着收起、按钮跟着变。 */
+  /** 行的状态键：拼进列表键里，状态一变（含方案置顶、排序带的时间）就重建这一行，侧滑跟着收起。 */
   themeRowState(entry: ThemeListEntry): string {
+    const scheme = entry.customSchemeId ?
+      `_${this.schemePinned(entry.customSchemeId) ? 'pin' : ''}_${this.schemeSortMeta(entry.customSchemeId)}` : '';
     if (this.applyingThemeId === (entry.customSchemeId || entry.theme.id) &&
-      !this.isSelected(entry.theme, entry.customSchemeId)) return 'applying';
+      !this.isSelected(entry.theme, entry.customSchemeId)) return `applying${scheme}`;
     if (!entry.customSchemeId && this.isTrialTheme(entry.theme.id)) return 'trial';
-    if (this.isSelected(entry.theme, entry.customSchemeId)) return 'selected';
-    return this.isCustomSchemePending(entry.theme, entry.customSchemeId) ? 'pending' : 'idle';
+    if (this.isSelected(entry.theme, entry.customSchemeId)) return `selected${scheme}`;
+    return `${this.isCustomSchemePending(entry.theme, entry.customSchemeId) ? 'pending' : 'idle'}${scheme}`;
   }
 
   isTrialTheme(themeId: string): boolean {
@@ -3303,6 +4714,7 @@ struct ThemeSettingsPage {
       await ThemeTrialManager.start(getContext(this) as common.UIAbilityContext, theme.id);
       this.appThemeId = theme.id;
       this.themeBookCoverEnabled = !!theme.book.coverAssetId;
+      this.themeBookFrameEnabled = !!theme.book.coverAssetId;
       this.syncBars();
       HdsFeedback.showToast(`「${theme.name}」已开始试用，5分钟后自动恢复`);
     } catch (e) {
@@ -3317,6 +4729,7 @@ struct ThemeSettingsPage {
     ThemeTrialManager.stop(getContext(this) as common.UIAbilityContext);
     this.appThemeId = AppStorage.get<string>('appThemeId') || AppThemeSettingsStore.DEFAULT_THEME_ID;
     this.themeBookCoverEnabled = AppStorage.get<boolean>('appThemeBookCoverEnabled') || false;
+    this.themeBookFrameEnabled = AppStorage.get<boolean>('appThemeBookFrameEnabled') || false;
     this.syncBars();
   }
 
@@ -3350,7 +4763,8 @@ struct ThemeSettingsPage {
   }
 
   themeHasRegexBubbleCap(theme: ThemePack): boolean {
-    return ThemeAssetRegistry.hasRegexBubbleCap(this.activeVariant(theme).regexEmphasis.bubbleStyle);
+    return ThemeAssetRegistry.hasRegexBubbleCap(this.activeVariant(theme).regexEmphasis.bubbleStyle,
+      this.variantDark());
   }
 
   /** A custom scheme shows the panel background of the theme picked as its panel source. */
@@ -3485,8 +4899,10 @@ struct ThemeSettingsPage {
 
   /** The reader's comment bubble with its label baked in, cached per look, label and size. */
   commentBubbleImage(theme: ThemePack, label: string, fontSizeVp: number, dark: boolean): ReaderCommentBubbleImage | null {
-    const style = ReaderCommentBubbleStyles.resolve(this.themeCommentPreview(theme).bubbleStyleId, dark,
-      (dark ? theme.dark : theme.light).reader.textColor);
+    const preview = this.themeCommentPreview(theme);
+    const variant = dark ? theme.dark : theme.light;
+    const style = ReaderCommentBubbleStyles.resolveThemed(preview.bubbleStyleId, dark, variant.reader.textColor,
+      variant.regexEmphasis.commentBubble, preview.backgroundColor, preview.textColor, preview.emphasisColor);
     const pxPerVp = this.getUIContext().vp2px(1);
     const key = `${style.identity()}_${label}_${fontSizeVp}_${pxPerVp}`;
     const cached = this.commentBubbleImages.get(key);

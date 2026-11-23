@@ -565,7 +565,7 @@ struct CustomFontManagerPage {
 
   fileNameFromUri(uri: string): string {
     const withoutQuery = String(uri || '').split('?')[0].split('#')[0];
-    const decoded = decodeURIComponent(withoutQuery);
+    const decoded = ReaderFontHelper.safeDecodeURIComponent(withoutQuery);
     const index = Math.max(decoded.lastIndexOf('/'), decoded.lastIndexOf('\\'));
     return index >= 0 ? decoded.substring(index + 1) : decoded || '自定义字体';
   }
@@ -602,10 +602,8 @@ struct CustomFontManagerPage {
       if (separator < 0) continue;
       const key = part.substring(0, separator).toLowerCase();
       if (key !== 'displayname' && key !== 'filename' && key !== 'name') continue;
-      try {
-        const value = decodeURIComponent(part.substring(separator + 1)).trim();
-        if (value && this.isFontFile(value)) return value;
-      } catch (_) {}
+      const value = ReaderFontHelper.safeDecodeURIComponent(part.substring(separator + 1)).trim();
+      if (value && this.isFontFile(value)) return value;
     }
     return '';
   }

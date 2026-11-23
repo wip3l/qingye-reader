@@ -5,6 +5,7 @@ import { fileUri } from '../platform/FileUri';
 import { Book, SearchBook } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { WebBookService } from '../core/book/WebBookService';
+import { BookDisplayHelper } from './BookDisplayHelper';
 import { BookIdentity } from './BookIdentity';
 import { BookCoverResolver } from './BookCoverResolver';
 import { CoverGallerySnapshot, CoverGalleryStore } from './CoverGalleryStore';
@@ -28,6 +29,7 @@ export class ResultCoverOptions {
   useBookshelf: boolean = false;
   darkMode: boolean = false;
   themeEnabled: boolean = false;
+  frameEnabled: boolean = false;
   themeRevision: number = 0;
   shelfRevision: number = 0;
   gallery: CoverGallerySnapshot = new CoverGallerySnapshot();
@@ -43,6 +45,7 @@ export class ResultCoverPreparation {
     options.useBookshelf = useBookshelf;
     options.darkMode = darkMode;
     options.themeEnabled = AppStorage.get<boolean>('appThemeBookCoverEnabled') || false;
+    options.frameEnabled = ThemeBookCoverSettings.frameEnabledFromStorage();
     options.themeRevision = AppStorage.get<number>('themeRevision') || 0;
     options.shelfRevision = AppStorage.get<number>('shelfUpdateTime') || 0;
     options.gallery = CoverGalleryStore.snapshotFromStorage();
@@ -67,37 +70,37 @@ export class ResultCoverPreparation {
     return book;
   }
 
-  /** Custom albums take the direct path when applicable, even when source covers are also enabled. */
-  static albumCovers(book: Book, options: ResultCoverOptions): string[] {
-    const settings = options.gallery;
-    return CoverGallerySettings.getDisplayCoverList(book, options.darkMode, settings.albumsRaw,
-      settings.lightAlbumId, settings.darkAlbumId, settings.applyScope, settings.targetBooksRaw,
-      true, settings.coverMode);
-  }
-
   static async prepare(context: Context, result: SearchBook, options: ResultCoverOptions): Promise<PreparedResultCover> {
     const prepared = new PreparedResultCover();
     if (!options.showCover) return prepared;
     let book = ResultCoverPreparation.bookOf(result);
     let candidates: ResourceStr[] = [];
-    let frame: ResourceStr = '';
-    if (options.useBookshelf && ThemeBookCoverSettings.enabled(options.darkMode, options.themeEnabled)) {
+    // 主题边框和封面来源无关，用书架封面时都套。
+    const frame: ResourceStr = options.useBookshelf ? ThemeBookCoverSettings.frameIf(options.darkMode, options.frameEnabled) : '';
+    // 书架上的同一本书单独设置过封面时，搜索/发现结果也只显示那张，不走主题封面和图集。
+    const customShelfBook = options.useBookshelf ?
+      await ResultCoverPreparation.shelfBookWithCustomCover(context, book) : null;
+    if (customShelfBook) {
+      book = customShelfBook;
+      candidates = BookCoverResolver.sourceCovers(book, options.darkMode, options.gallery);
+    } else if (options.useBookshelf && ThemeBookCoverSettings.enabled(options.darkMode, options.themeEnabled)) {
       candidates = ThemeBookCoverSettings.covers(book, options.darkMode, options.gallery.coverMode);
-      frame = ThemeBookCoverSettings.frame(options.darkMode);
       prepared.themeCover = true;
       prepared.interval = ThemeBookCoverSettings.interval(book);
     } else if (options.useBookshelf) {
-      const emptyOnly = options.gallery.ignoreSourceCover && options.gallery.ignoreEmptyCoverOnly;
-      // 仅忽略空封面时要先看书有没有自带封面，不能直接走图集。
-      candidates = emptyOnly ? [] : ResultCoverPreparation.albumCovers(book, options);
+      // 统一封面只用图集的书不必知道它有没有封面；其余情况（和自带封面轮播、只给没有封面的书兜底）要先把书源封面补上。
+      candidates = CoverGallerySettings.replaceOnlyAlbumCovers(book, options.darkMode, options.gallery);
       if (candidates.length === 0) {
         await AppDatabase.getInstance().initWithContext(context);
         const shelfBook = await SearchBookShelfHelper.findShelfBookByKey(BookIdentity.keyOfBook(book));
         if (shelfBook) book = shelfBook;
-        if (!book.coverUrl && !book.customCoverUrl && (!options.gallery.ignoreSourceCover || emptyOnly)) {
-          book = await ResultCoverPreparation.completeSourceCover(book);
-        }
+        if (!book.coverUrl && !book.customCoverUrl) book = await ResultCoverPreparation.completeSourceCover(book);
         candidates = BookCoverResolver.sourceCovers(book, options.darkMode, options.gallery);
+        if (candidates.length === 0 && ThemeBookCoverSettings.enabledFor(book, options.darkMode, false, options.gallery)) {
+          candidates = ThemeBookCoverSettings.covers(book, options.darkMode, options.gallery.coverMode);
+          prepared.themeCover = true;
+          prepared.interval = ThemeBookCoverSettings.interval(book);
+        }
       }
     } else {
       if (!book.coverUrl) book = await ResultCoverPreparation.completeSourceCover(book);
@@ -113,13 +116,25 @@ export class ResultCoverPreparation {
       if (frame) prepared.frame = await ResultCoverPreparation.prepareImage(context, frame);
       return prepared;
     }
-    if (options.useBookshelf && candidates.length > 0 && !options.gallery.ignoreSourceCover) {
+    if (options.useBookshelf && candidates.length > 0 && (!options.gallery.replaceAlbum || options.gallery.albumMix)) {
       // A broken/missing custom image is not proof that the source book has no cover.
       const fallback = new ResultCoverOptions();
       fallback.darkMode = options.darkMode;
       return ResultCoverPreparation.prepare(context, result, fallback);
     }
+    // 没有图时显示首字占位，边框照样套，和书架一致。
+    if (frame) prepared.frame = await ResultCoverPreparation.prepareImage(context, frame);
     return prepared;
+  }
+
+  private static async shelfBookWithCustomCover(context: Context, book: Book): Promise<Book | null> {
+    try {
+      await AppDatabase.getInstance().initWithContext(context);
+      const shelfBook = await SearchBookShelfHelper.findShelfBookByKey(BookIdentity.keyOfBook(book));
+      return shelfBook && BookDisplayHelper.hasCustomCover(shelfBook) ? shelfBook : null;
+    } catch (e) {
+      return null;
+    }
   }
 
   private static async completeSourceCover(book: Book): Promise<Book> {
@@ -127,7 +142,8 @@ export class ResultCoverPreparation {
     try {
       const source = await AppDatabase.getInstance().getBookSource(book.origin);
       if (!source || !(source.bookInfoRule.coverUrl || '').trim()) return book;
-      return await new WebBookService().getBookInfo(source, book);
+      // 给搜索、发现结果补封面是后台工作，不弹验证网页。
+      return await new WebBookService().setSourceInteraction((): boolean => false).getBookInfo(source, book);
     } catch (_) {
       // A failed details request has no usable cover; it must not leave the result hidden forever.
       return book;

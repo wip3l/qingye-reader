@@ -21,6 +21,7 @@ import { TtsSettings, TtsSettingsStore } from '../utils/TtsSettingsStore';
 import { MimoStore } from '../utils/mimo/MimoStore';
 import { MimoVoiceChoice } from '../core/mimo/MimoVoicePolicy';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
+import { PlaybackSpeed } from '../utils/PlaybackSpeed';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
@@ -154,28 +155,25 @@ struct TtsSettingsPage {
         Row() {
           Text('朗读倍速').fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium)
             .fontColor(this.primaryTextColor()).layoutWeight(1)
-          Text(`${this.ttsSpeed.toFixed(1)}×`).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium)
+          Text(`${PlaybackSpeed.label(this.ttsSpeed)}×`).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium)
             .fontColor(this.accentColor())
         }.width('100%')
         Row({ space: AppSpacing.MD }) {
-          this.speedStepButton($r('sys.symbol.minus'), '降低朗读倍速', this.ttsSpeed > 0.5, () => {
-            this.applySpeed(this.ttsSpeed - 0.1);
+          this.speedStepButton($r('sys.symbol.minus'), '降低朗读倍速', this.ttsSpeed > PlaybackSpeed.MIN + 0.001, () => {
+            this.applySpeed(this.ttsSpeed - PlaybackSpeed.STEP);
           })
-          Slider({ value: this.ttsSpeed, min: 0.5, max: 3, step: 0.1 })
-            .layoutWeight(1).showTips(true).selectedColor(this.accentColor())
+          Slider({ value: this.ttsSpeed, min: PlaybackSpeed.MIN, max: PlaybackSpeed.MAX, step: PlaybackSpeed.STEP })
+            .layoutWeight(1).selectedColor(this.accentColor())
             .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
             .onChange((value: number) => { this.applySpeed(value); })
-          this.speedStepButton($r('sys.symbol.plus'), '提高朗读倍速', this.ttsSpeed < 3, () => {
-            this.applySpeed(this.ttsSpeed + 0.1);
+          this.speedStepButton($r('sys.symbol.plus'), '提高朗读倍速', this.ttsSpeed < PlaybackSpeed.MAX - 0.001, () => {
+            this.applySpeed(this.ttsSpeed + PlaybackSpeed.STEP);
           })
         }.width('100%')
         Row({ space: AppSpacing.MD }) {
-          this.speedChip(0.8)
-          this.speedChip(1.0)
-          this.speedChip(1.2)
-          this.speedChip(1.5)
-          this.speedChip(2.0)
-          this.speedChip(3.0)
+          ForEach(PlaybackSpeed.PRESETS, (value: number) => {
+            this.speedChip(value)
+          }, (value: number) => value.toString())
         }.width('100%')
       }.width('100%').padding(AppSpacing.XL).backgroundColor(this.cardColor())
         .borderRadius(ThemeRuntime.cardRadius())
@@ -1152,7 +1150,7 @@ struct TtsSettingsPage {
   @Builder
   speedChip(value: number) {
     Stack({ alignContent: Alignment.Center }) {
-      Text(`${value.toFixed(1)}x`)
+      Text(`${PlaybackSpeed.label(value)}x`)
         .fontSize(AppFontSize.BODY)
         .fontColor(Math.abs(this.ttsSpeed - value) < 0.01 ? this.accentColor() : this.primaryTextColor())
     }
@@ -1181,7 +1179,7 @@ struct TtsSettingsPage {
   }
 
   applySpeed(value: number): void {
-    const nextSpeed = Math.max(0.5, Math.min(3, Math.round(value * 10) / 10));
+    const nextSpeed = PlaybackSpeed.normalize(value);
     if (Math.abs(this.ttsSpeed - nextSpeed) < 0.01) {
       return;
     }

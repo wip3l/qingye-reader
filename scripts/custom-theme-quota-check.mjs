@@ -22,6 +22,7 @@ function fixture() {
     AppThemeSettings: class {},
     AppThemeSettingsStore: { cloneSettings: value => structuredClone(value), createForTheme: () => ({}) },
     CloudSyncChangeTracker: { markPreferenceChanged: () => {} },
+    CloudThemeChange: { notify: () => {} },
     ReaderSettingsStore: { profileIdFor: (themeId, schemeId) => `${themeId}__${schemeId}`,
       deleteProfile: async (_context, id) => { deletedProfiles.push(id); } }
   });

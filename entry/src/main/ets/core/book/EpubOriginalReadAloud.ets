@@ -437,7 +437,9 @@ export class EpubOriginalReadAloud {
   private async onFinished(token: number): Promise<void> {
     if (token !== this.token || !this.autoContinue || this.switching) return;
     // 有的朗读通道会提前报完成：章末没确认念到就从最后一句重读，不吞掉没念的结尾。
-    if (this.expectedEnd >= 0 && this.spokenEnd < this.expectedEnd - 4) {
+    // 全部语音已写进渲染器才报的完成（见 SystemTtsReader.finishWhenQueued）：结尾还在放，不算提前完成。
+    const queuedTail = this.engine?.finishedWithQueuedTail() === true;
+    if (!queuedTail && this.expectedEnd >= 0 && this.spokenEnd < this.expectedEnd - 4) {
       if (this.tailRetries < TAIL_RETRIES) {
         this.tailRetries++;
         console.warn(`[EpubTts] finished before chapter tail: spoken=${this.spokenEnd}, expected=${this.expectedEnd}`);
@@ -454,6 +456,9 @@ export class EpubOriginalReadAloud {
   private async advance(token: number): Promise<void> {
     const next = this.chapter + 1;
     if (next >= this.host.chapterTitles().length) {
+      // 最后一章的结尾可能还排在渲染器里，放完再停。
+      await this.engine?.drainQueuedTail();
+      if (token !== this.token) return;
       this.finish(false);
       HdsFeedback.showToast('已读完最后一章');
       return;
@@ -469,6 +474,8 @@ export class EpubOriginalReadAloud {
     }
     if (token !== this.token) return;
     if (!opened) {
+      await this.engine?.drainQueuedTail();
+      if (token !== this.token) return;
       this.finish(false);
       HdsFeedback.showToast('下一章加载失败，朗读已停止');
       return;
@@ -589,6 +596,20 @@ export class EpubOriginalReadAloud {
     HdsFeedback.showToast(`将在 ${minutes} 分钟后停止朗读`);
   }
 
+  /** 在剩余时间上加时，总时长一起加；没有进行中的定时就新开一个。 */
+  private extendSleepTimer(minutes: number): void {
+    if (minutes <= 0) return;
+    if (this.sleepTimer < 0 || this.sleepEndAt <= 0) {
+      this.setSleepTimer(minutes);
+      return;
+    }
+    this.sleepEndAt += minutes * 60 * 1000;
+    this.sleepMinutes += minutes;
+    this.sleepRemaining = Math.max(0, Math.ceil((this.sleepEndAt - Date.now()) / 1000));
+    ReaderTtsFloatingSession.updateTimer(this.ownerId, this.sleepMinutes, this.sleepRemaining);
+    HdsFeedback.showToast(`已延长 ${minutes} 分钟`);
+  }
+
   private clearSleepTimer(publish: boolean): void {
     if (this.sleepTimer >= 0) {
       clearInterval(this.sleepTimer);
@@ -612,6 +633,8 @@ export class EpubOriginalReadAloud {
       (): void => { this.playChapter(this.host.chapterIndex() + 1); },
       (value: number): void => this.setSpeed(value),
       (minutes: number): void => this.setSleepTimer(minutes));
+    ReaderTtsFloatingSession.configureTimerExtend(this.ownerId,
+      (minutes: number): void => this.extendSleepTimer(minutes));
     ReaderTtsFloatingSession.configureCatalog(this.ownerId, titles, this.host.chapterIndex(),
       (index: number): void => { this.playChapter(index); });
     this.publishVoices();

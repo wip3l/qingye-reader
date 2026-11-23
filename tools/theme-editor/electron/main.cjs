@@ -187,6 +187,18 @@ ipcMain.handle('export-folder', wrap(async (_event, name, files) => {
   return target;
 }));
 
+ipcMain.handle('save-image', wrap(async (_event, defaultName, bytes) => {
+  const last = readRecent().find((item) => item.kind === 'zip');
+  const result = await dialog.showSaveDialog(win, {
+    title: '保存预览截图',
+    defaultPath: path.join(last ? path.dirname(last.path) : app.getPath('pictures'), defaultName),
+    filters: [{ name: 'PNG 图片', extensions: ['png'] }]
+  });
+  if (result.canceled || !result.filePath) return null;
+  fs.writeFileSync(result.filePath, Buffer.from(bytes));
+  return result.filePath;
+}));
+
 ipcMain.handle('recent', wrap(async () => readRecent().map((item) => ({ ...item, exists: fs.existsSync(item.path) }))));
 ipcMain.handle('forget-recent', wrap(async (_event, target) => {
   fs.writeFileSync(userFile('recent.json'), JSON.stringify(readRecent().filter((item) => item.path !== target)));

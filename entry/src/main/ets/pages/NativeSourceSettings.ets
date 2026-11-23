@@ -174,6 +174,8 @@ struct NativeSourceSettingsPage {
       this.source.variable = variable;
       await ExploreResultCache.invalidateSources(getContext(this), [this.source.bookSourceUrl]);
       this.dirty = false;
+      // 带显示条件的变量：保存后按新值重新列一次（例如换了模式，源站换成那一组）。
+      this.items = NativeSourceService.varItems(this.source);
       HdsFeedback.showToast('已保存');
       this.loadActions();
     } catch (e) {
@@ -284,14 +286,19 @@ struct NativeSourceSettingsPage {
   }
 
   async logout(): Promise<void> {
-    if (!this.source) return;
-    NativeSourceService.logout(this.source);
+    if (!this.source || this.busy) return;
+    this.busy = true;
+    this.loginStatus = '正在退出…';
     try {
+      await NativeSourceService.logout(this.source);
       await this.saveCredential('', '');
     } catch (e) {
       if (this.disposed) return;
-      console.warn('清除登录凭据失败:', e);
+      console.warn('退出登录未完全完成:', e);
+    } finally {
+      this.busy = false;
     }
+    if (this.disposed) return;
     this.refreshLoginState();
     this.loadActions();
     HdsFeedback.showToast('已退出登录');
@@ -335,13 +342,36 @@ struct NativeSourceSettingsPage {
     }
   }
 
+  /** 卡片标题；verify 为真时右侧带“网页验证”入口（每个原生书源都有，但很少用，不单独占一行）。 */
   @Builder
-  sectionTitle(title: string) {
-    Text(title)
-      .fontSize(AppFontSize.BODY)
-      .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
-      .width('100%')
-      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.XL, bottom: AppSpacing.MD })
+  cardHeader(title: string, verify: boolean) {
+    Row() {
+      Text(title)
+        .fontSize(AppFontSize.BODY)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+        .layoutWeight(1)
+      if (verify) {
+        Text('网页验证')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(ThemeRuntime.accentColor(this.appDarkMode))
+          .padding({ left: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
+          .opacity(this.busy ? 0.5 : 1)
+          .onClick(() => { if (!this.busy) this.openLogin(true); })
+      }
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ bottom: AppSpacing.SM })
+  }
+
+  /** “网页验证”跟着第一张能放它的卡片：有账号放账号卡片，否则放操作卡片，都没有时单独一张。 */
+  private verifyInAccount(): boolean {
+    return this.hasLogin;
+  }
+
+  private verifyInActions(): boolean {
+    return !this.hasLogin && this.actions.length > 0;
   }
 
   @Builder
@@ -388,170 +418,213 @@ struct NativeSourceSettingsPage {
       .alignItems(VerticalAlign.Center)
 
       Scroll() {
-        Column() {
+        Column({ space: AppSpacing.LG }) {
           Text(this.sourceName)
             .fontSize(AppFontSize.BODY_LARGE)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
             .width('100%')
-            .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.XL })
+            .padding({ top: AppSpacing.XL })
 
           if (this.items.length > 0) {
-            this.sectionTitle('变量')
-            ForEach(this.items, (item: NativeVarItem, index: number) => {
-              Row() {
-                Text(item.label)
-                  .fontSize(AppFontSize.BODY)
-                  .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
-                  .width(96)
-                  .maxLines(2)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-                if (item.options.length > 0) {
-                  Select(item.options.map((option: string): SelectOption => ({ value: option })))
-                    .selected(Math.max(0, item.options.indexOf(item.value)))
-                    .value(item.value)
-                    .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
-                    .optionFont({ family: this.applicationFontFamily })
-                    .selectedOptionFont({ family: this.applicationFontFamily })
+            Column() {
+              this.cardHeader('设置', false)
+              ForEach(this.items, (item: NativeVarItem, index: number) => {
+                Row() {
+                  Text(item.label)
+                    .fontSize(AppFontSize.BODY)
                     .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
-                    .divider(null)
-                    .optionBgColor(Color.Transparent)
-                    .optionFontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
-                    .selectedOptionFontColor(ThemeRuntime.accentColor(this.appDarkMode))
-                    .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
-                    .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
-                    .menuBackgroundBlurStyle(BlurStyle.NONE)
-                    .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
-                    .layoutWeight(1)
-                    .onSelect((_selected: number, text: string) => {
-                      this.setValue(index, text);
-                    })
-                } else {
-                  TextInput({ text: item.value, placeholder: '未填写' })
+                    .width(96)
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+                  if (item.options.length > 0) {
+                    Select(item.options.map((option: string): SelectOption => ({ value: option })))
+                      .selected(Math.max(0, item.options.indexOf(item.value)))
+                      .value(item.value)
+                      .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+                      .optionFont({ family: this.applicationFontFamily })
+                      .selectedOptionFont({ family: this.applicationFontFamily })
+                      .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+                      .divider(null)
+                      .optionBgColor(Color.Transparent)
+                      .optionFontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+                      .selectedOptionFontColor(ThemeRuntime.accentColor(this.appDarkMode))
+                      .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+                      .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+                      .menuBackgroundBlurStyle(BlurStyle.NONE)
+                      .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+                      .layoutWeight(1)
+                      .onSelect((_selected: number, text: string) => {
+                        this.setValue(index, text);
+                      })
+                  } else {
+                    TextInput({ text: item.value, placeholder: '未填写' })
+                      .fontSize(AppFontSize.BODY)
+                      .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+                      .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+                      .borderRadius(ThemeRuntime.smallRadius())
+                      .layoutWeight(1)
+                      .onChange((value: string) => {
+                        if (value !== this.items[index].value) this.setValue(index, value);
+                      })
+                  }
+                }
+                .width('100%')
+                .padding({ top: AppSpacing.SM, bottom: AppSpacing.SM })
+                .alignItems(VerticalAlign.Center)
+
+                if (this.varNotes[item.key]) {
+                  Text(this.varNotes[item.key])
+                    .fontSize(AppFontSize.CAPTION)
+                    .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
+                    .width('100%')
+                    .padding({ left: 96 })
+                }
+              }, (item: NativeVarItem) => `${item.key}_${item.options.join('|')}_${item.options.length > 0 ? item.value : ''}`)
+            }
+            .width('100%')
+            .padding(AppSpacing.XL)
+            .borderRadius(ThemeRuntime.cardRadius())
+            .backgroundColor(ThemeRuntime.cardColor(this.appDarkMode))
+          }
+
+          if (this.hasLogin) {
+            Column() {
+              this.cardHeader('账号', this.verifyInAccount())
+              Text(this.loginStatus)
+                .fontSize(AppFontSize.BODY)
+                .fontColor(this.loginConfirmed ? ThemeRuntime.successColor(this.appDarkMode) :
+                  ThemeRuntime.subTextColor(this.appDarkMode))
+                .width('100%')
+                .padding({ bottom: AppSpacing.SM })
+
+              ForEach(this.formFields, (field: NativeLoginFieldSpec) => {
+                Row() {
+                  Text(field.label || field.key)
+                    .fontSize(AppFontSize.BODY)
+                    .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+                    .width(96)
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  TextInput({ placeholder: '请输入' })
+                    .type(field.secret === true ? InputType.Password : InputType.Normal)
                     .fontSize(AppFontSize.BODY)
                     .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
                     .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
                     .borderRadius(ThemeRuntime.smallRadius())
                     .layoutWeight(1)
                     .onChange((value: string) => {
-                      if (value !== this.items[index].value) this.setValue(index, value);
+                      this.formValues[field.key] = value;
                     })
                 }
-              }
-              .width('100%')
-              .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.SM })
-              .alignItems(VerticalAlign.Center)
+                .width('100%')
+                .padding({ top: AppSpacing.SM, bottom: AppSpacing.SM })
+                .alignItems(VerticalAlign.Center)
+              }, (field: NativeLoginFieldSpec) => field.key)
 
-              if (this.varNotes[item.key]) {
-                Text(this.varNotes[item.key])
-                  .fontSize(AppFontSize.CAPTION)
-                  .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
-                  .width('100%')
-                  .padding({ left: AppSpacing.XL + 96, right: AppSpacing.XL })
-              }
-            }, (item: NativeVarItem) => `${item.key}_${item.options.join('|')}_${item.options.length > 0 ? item.value : ''}`)
-          }
-
-          if (this.hasLogin) {
-            this.sectionTitle('账号')
-            Text(this.loginStatus)
-              .fontSize(AppFontSize.BODY)
-              .fontColor(this.loginConfirmed ? ThemeRuntime.successColor(this.appDarkMode) :
-                ThemeRuntime.subTextColor(this.appDarkMode))
-              .width('100%')
-              .padding({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: AppSpacing.MD })
-
-            ForEach(this.formFields, (field: NativeLoginFieldSpec) => {
-              Row() {
-                Text(field.label || field.key)
-                  .fontSize(AppFontSize.BODY)
-                  .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
-                  .width(96)
-                  .maxLines(2)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                TextInput({ placeholder: '请输入' })
-                  .type(field.secret === true ? InputType.Password : InputType.Normal)
-                  .fontSize(AppFontSize.BODY)
-                  .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
-                  .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
-                  .borderRadius(ThemeRuntime.smallRadius())
-                  .layoutWeight(1)
-                  .onChange((value: string) => {
-                    this.formValues[field.key] = value;
+              Flex({ wrap: FlexWrap.Wrap, space: { main: LengthMetrics.vp(AppSpacing.MD),
+                cross: LengthMetrics.vp(AppSpacing.MD) } }) {
+                if (this.formFields.length > 0) {
+                  this.actionButton('登录', ThemeRuntime.accentColor(this.appDarkMode), () => {
+                    this.submitForm();
                   })
-              }
-              .width('100%')
-              .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.SM })
-              .alignItems(VerticalAlign.Center)
-            }, (field: NativeLoginFieldSpec) => field.key)
-
-            Flex({ wrap: FlexWrap.Wrap, space: { main: LengthMetrics.vp(AppSpacing.MD),
-              cross: LengthMetrics.vp(AppSpacing.MD) } }) {
-              if (this.formFields.length > 0) {
-                this.actionButton('登录', ThemeRuntime.accentColor(this.appDarkMode), () => {
-                  this.submitForm();
-                })
-                if (this.hasSendCode) {
-                  this.actionButton(this.sendCodeLabel, ThemeRuntime.primaryTextColor(this.appDarkMode), () => {
-                    this.sendCode();
+                  if (this.hasSendCode) {
+                    this.actionButton(this.sendCodeLabel, ThemeRuntime.primaryTextColor(this.appDarkMode), () => {
+                      this.sendCode();
+                    })
+                  }
+                }
+                if (this.hasWebLogin) {
+                  this.actionButton(this.formFields.length > 0 ? '网页登录' : (this.loginConfirmed ? '重新登录' : '登录'),
+                    ThemeRuntime.accentColor(this.appDarkMode), () => this.openLogin())
+                }
+                if (this.canCheckLogin) {
+                  this.actionButton('检查登录', ThemeRuntime.primaryTextColor(this.appDarkMode), () => {
+                    this.checkLogin();
+                  })
+                }
+                if (this.loggedIn) {
+                  this.actionButton(this.loginConfirmed ? '退出登录' : '清除网页会话', ThemeRuntime.dangerColor(this.appDarkMode), () => {
+                    this.logout();
                   })
                 }
               }
-              if (this.hasWebLogin) {
-                this.actionButton(this.formFields.length > 0 ? '网页登录' : (this.loginConfirmed ? '重新登录' : '登录'),
-                  ThemeRuntime.accentColor(this.appDarkMode), () => this.openLogin())
-              }
-              if (this.canCheckLogin) {
-                this.actionButton('检查登录', ThemeRuntime.primaryTextColor(this.appDarkMode), () => {
-                  this.checkLogin();
-                })
-              }
-              if (this.loggedIn) {
-                this.actionButton(this.loginConfirmed ? '退出登录' : '清除网页会话', ThemeRuntime.dangerColor(this.appDarkMode), () => {
-                  this.logout();
-                })
-              }
+              .width('100%')
+              .padding({ top: AppSpacing.SM })
             }
             .width('100%')
-            .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM })
+            .padding(AppSpacing.XL)
+            .borderRadius(ThemeRuntime.cardRadius())
+            .backgroundColor(ThemeRuntime.cardColor(this.appDarkMode))
           }
 
           if (this.actions.length > 0) {
-            this.sectionTitle('操作')
-            Flex({ wrap: FlexWrap.Wrap, space: { main: LengthMetrics.vp(AppSpacing.MD),
-              cross: LengthMetrics.vp(AppSpacing.MD) } }) {
-              ForEach(this.actions, (action: NativeActionEntry) => {
-                this.actionButton(action.label, ThemeRuntime.primaryTextColor(this.appDarkMode), () => {
-                  this.runAction(action);
-                })
-              }, (action: NativeActionEntry) => `${action.index}_${action.label}`)
+            Column() {
+              this.cardHeader('操作', this.verifyInActions())
+              // 等宽两列：名字长短不一的按钮也对得齐，放不下的折成两行。
+              GridRow({ columns: 2, gutter: { x: AppSpacing.MD, y: AppSpacing.MD } }) {
+                ForEach(this.actions, (action: NativeActionEntry) => {
+                  GridCol({ span: 1 }) {
+                    Text(action.label)
+                      .fontSize(AppFontSize.BODY)
+                      .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+                      .textAlign(TextAlign.Center)
+                      .maxLines(2)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .width('100%')
+                      .constraintSize({ minHeight: 44 })
+                      .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.MD, bottom: AppSpacing.MD })
+                      .borderRadius(ThemeRuntime.smallRadius())
+                      .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+                      .opacity(this.busy ? 0.5 : 1)
+                      .onClick(() => { if (!this.busy) this.runAction(action); })
+                  }
+                }, (action: NativeActionEntry) => `${action.index}_${action.label}`)
+              }
+              .width('100%')
+
+              if (this.runningAction) {
+                Text(`正在执行：${this.runningAction}`)
+                  .fontSize(AppFontSize.CAPTION)
+                  .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
+                  .width('100%')
+                  .padding({ top: AppSpacing.MD })
+              }
             }
             .width('100%')
-            .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
-
-            if (this.runningAction) {
-              Text(`正在执行：${this.runningAction}`)
-                .fontSize(AppFontSize.CAPTION)
-                .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
-                .width('100%')
-                .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM })
-            }
+            .padding(AppSpacing.XL)
+            .borderRadius(ThemeRuntime.cardRadius())
+            .backgroundColor(ThemeRuntime.cardColor(this.appDarkMode))
           }
 
-          this.actionButton('网页验证', ThemeRuntime.primaryTextColor(this.appDarkMode), () => this.openLogin(true))
-
-          if (this.items.length === 0 && !this.hasLogin && this.actions.length === 0) {
-            Text('该书源没有可设置的项目')
-              .fontSize(AppFontSize.BODY)
-              .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
-              .width('100%')
-              .textAlign(TextAlign.Center)
-              .padding({ top: 80 })
+          if (!this.hasLogin && this.actions.length === 0) {
+            // 没有账号也没有操作的书源：“网页验证”自己占一张卡片，不再孤零零贴在页面底部。
+            Row() {
+              Column() {
+                Text('网页验证')
+                  .fontSize(AppFontSize.BODY)
+                  .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+                Text('站点要求过验证时，在这里打开网页完成')
+                  .fontSize(AppFontSize.CAPTION)
+                  .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
+                  .margin({ top: 2 })
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+              Text('打开')
+                .fontSize(AppFontSize.BODY)
+                .fontColor(ThemeRuntime.accentColor(this.appDarkMode))
+            }
+            .width('100%')
+            .padding(AppSpacing.XL)
+            .borderRadius(ThemeRuntime.cardRadius())
+            .backgroundColor(ThemeRuntime.cardColor(this.appDarkMode))
+            .onClick(() => { if (!this.busy) this.openLogin(true); })
           }
         }
         .width('100%')
-        .padding({ bottom: this.navBarHeight + AppSpacing.XL })
+        .padding({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: this.navBarHeight + AppSpacing.XL })
       }
       .layoutWeight(1)
       .align(Alignment.Top)

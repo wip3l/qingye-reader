@@ -1,6 +1,7 @@
 import { Context } from '@kit.AbilityKit';
 import preferences from '@ohos.data.preferences';
 import { TtsVoiceAvailability } from './TtsVoiceAvailability';
+import { PlaybackSpeed } from './PlaybackSpeed';
 
 export class TtsSettings {
   person: number = 0;
@@ -156,7 +157,7 @@ export class TtsSettingsStore {
       return Math.round(value) === 0 ? 0 : 1;
     }
     if (type === 'speed') {
-      return Math.max(0.5, Math.min(3, Math.round(value * 10) / 10));
+      return PlaybackSpeed.normalize(value);
     }
     return fallback;
   }

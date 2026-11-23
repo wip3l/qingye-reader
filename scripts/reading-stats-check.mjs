@@ -12,7 +12,9 @@ process.env.TZ = 'America/Denver';
 const root = new URL('../entry/src/main/ets/', import.meta.url);
 function load(file, globals, names) {
   const code = fs.readFileSync(new URL(file, root), 'utf8').replace(/^import[\s\S]*?;\r?\n/gm, '').replace(/^export /gm, '');
-  const context = vm.createContext({ console, ...globals });
+  // platform/TextCompare 的鸿蒙实现就是 localeCompare。
+  const compareText = (a, b, locale, options) => a.localeCompare(b, locale, options);
+  const context = vm.createContext({ console, compareText, ...globals });
   vm.runInContext(stripTypeScriptTypes(code, { mode: 'strip' }) + `\nthis.exports={${names}};`, context);
   return context.exports;
 }
@@ -62,6 +64,129 @@ test('ranking merges source editions with complete matching metadata and keeps d
   ], 'all', date(2026, 10, 20), date(2026, 10, 21));
   assert.equal(spaced.items.length, 2, 'normalization preserves meaningful word boundaries');
 });
+test('ranking merges simplified/traditional titles and attaches author-less records only when unambiguous', () => {
+  const engine = new URL('../harmony-book-ai-engine/aiengine/src/main/', import.meta.url);
+  const { ComicChineseDictionary: Dictionary } = load(new URL('ets/core/reader/ComicChineseDictionary.ts', engine),
+    {}, 'ComicChineseDictionary');
+  const raw = name => fs.readFileSync(new URL(`resources/rawfile/opencc/${name}`, engine), 'utf8');
+  const dictionary = new Dictionary(raw('TSCharacters.txt'), raw('TSPhrases.txt'));
+  const fold = text => dictionary.convertSameLength(text);
+  const at = [date(2026, 11, 18), date(2026, 11, 19)];
+  const imported = { ...row('2026-11-17', 9 * 3600000, 'legacy-import', 'android'),
+    name: '穿越兽世种田养狼', author: '土豆派豆', onShelf: false, bookUrl: 'android-history://x' };
+  const shelf = { ...row('2026-11-18', 35 * 60000, 'phone', 'shelf'),
+    name: '穿越獸世種田養狼', author: '土豆派豆', coverUrl: 'cover', bookUrl: 'shelf-url' };
+  for (const rows of [[imported, shelf], [shelf, imported]]) {
+    const merged = Summary.calculate(rows, 'all', ...at, fold);
+    assert.equal(merged.items.length, 1);
+    assert.equal(merged.items[0].name, '穿越獸世種田養狼', 'shows the shelf edition');
+    assert.equal(merged.items[0].bookUrl, 'shelf-url'); assert.equal(merged.items[0].coverUrl, 'cover');
+    assert.equal(merged.items[0].durationMs, 9 * 3600000 + 35 * 60000);
+    assert.deepEqual(Array.from(merged.items[0].recordBookKeys).sort(), ['android', 'shelf']);
+  }
+  assert.equal(Summary.calculate([imported, shelf], 'all', ...at).items.length, 2, 'no dictionary: compared as written');
+  assert.equal(Summary.calculate([{ ...imported, name: '北大硕士科举:震惊满朝' },
+    { ...shelf, name: '北大硕士科举：震惊满朝' }], 'all', ...at).items.length, 1, 'full-width punctuation folds without a dictionary');
+  // 一边没有作者：书架上同名的只有一本时并进去，两个方向都要成立。
+  assert.equal(Summary.calculate([{ ...imported, author: '' }, shelf], 'all', ...at, fold).items.length, 1);
+  assert.equal(Summary.calculate([imported, { ...shelf, author: '' }], 'all', ...at, fold).items.length, 1);
+  assert.equal(Summary.calculate([{ ...imported, author: '' }, { ...shelf, author: '' }], 'all', ...at, fold).items.length, 1);
+  // 认不准的保持分开：同名带作者的有两部、书架上同名两本、或没有一本在书架上。
+  assert.equal(Summary.calculate([{ ...imported, author: '' }, shelf,
+    { ...shelf, bookKey: 'other', author: '另一位作者', onShelf: false }], 'all', ...at, fold).items.length, 3);
+  assert.equal(Summary.calculate([{ ...imported, author: '' }, { ...shelf, author: '' },
+    { ...shelf, bookKey: 'shelf-2', author: '' }], 'all', ...at, fold).items.length, 3);
+  assert.equal(Summary.calculate([{ ...imported, author: '' },
+    { ...shelf, author: '', onShelf: false }], 'all', ...at, fold).items.length, 2);
+});
+test('manual merges fold works into one row without touching records and split restores them', () => {
+  const { ReadStatsSummary: S, ReadWorkMerges: Merges, ReadWorkIdentity: Identity } =
+    load('core/stats/ReadStatsSummary.ts', {}, 'ReadStatsSummary,ReadWorkMerges,ReadWorkIdentity');
+  const at = [date(2026, 11, 18), date(2026, 11, 19)];
+  const off = { ...row('2026-11-17', 25 * 3600000, 'legacy-import', 'old'), name: '全职艺术家', author: '我最白',
+    onShelf: false, bookUrl: 'old-url' };
+  const shelf = { ...row('2026-11-18', 5 * 3600000, 'phone', 'shelf'), name: '全职艺术家', author: '我最白 著',
+    coverUrl: 'cover', bookUrl: 'shelf-url' };
+  const other = { ...row('2026-11-18', 3600000, 'phone', 'other'), name: '道诡异仙', author: '狐尾的笔' };
+  const rows = [off, shelf, other];
+  const plain = S.calculate(rows, 'all', ...at);
+  assert.equal(plain.items.length, 3);
+  assert.deepEqual(Array.from(S.sameTitleItems(plain.items, null, []), item => item.bookKey), ['old', 'shelf']);
+  assert.equal(S.sameTitleItems(plain.items, null, ['全职艺术家']).length, 0, 'dismissed titles stay quiet');
+  const member = (name, author) => ({ work: Identity.workKey(name, author), name, author });
+  const a = member('全职艺术家', '我最白'), b = member('全职艺术家', '我最白 著'), c = member('道诡异仙', '狐尾的笔');
+  let groups = Merges.combine([], [a, b], b.work);
+  for (const order of [rows, [...rows].reverse()]) {
+    const merged = S.calculate(order, 'all', ...at, null, groups);
+    assert.equal(merged.items.length, 2);
+    assert.equal(merged.totalMs, plain.totalMs);
+    const item = merged.items[0];
+    assert.equal(item.durationMs, 30 * 3600000); assert.equal(item.mergedWorks, 2);
+    assert.equal(item.author, '我最白 著'); assert.equal(item.bookUrl, 'shelf-url'); assert(item.onShelf);
+    assert.equal(item.workKey, b.work); assert.equal(item.editions.length, 2);
+    assert.deepEqual(Array.from(item.recordBookKeys).sort(), ['old', 'shelf']);
+    assert.equal(S.sameTitleItems(merged.items, null, []).length, 0);
+  }
+  const offMain = S.calculate(rows, 'all', ...at, null, Merges.combine([], [a, b], a.work)).items[0];
+  assert.equal(offMain.author, '我最白', 'shows the chosen edition');
+  assert.equal(offMain.bookUrl, 'shelf-url', 'still opens the shelf edition');
+  const onlyOff = S.calculate([off, other], 'all', ...at, null, groups).items[0];
+  assert.equal(onlyOff.author, '我最白'); assert.equal(onlyOff.mergedWorks, 2); assert(!onlyOff.onShelf);
+  groups = Merges.combine(groups, [c, a], c.work);
+  assert.equal(groups.length, 1, 'merging into an existing group absorbs it');
+  assert.equal(groups[0].members.length, 3);
+  assert.equal(S.calculate(rows, 'all', ...at, null, groups).items.length, 1);
+  const stored = Merges.parse(JSON.stringify(groups));
+  assert.equal(stored[0].main, c.work); assert.equal(stored[0].members.length, 3);
+  assert.equal(Merges.parse('oops').length, 0);
+  assert.equal(Merges.parse(JSON.stringify([{ main: a.work, members: [a] }])).length, 0);
+  groups = Merges.remove(stored, c.work, c.work);
+  assert.equal(groups[0].members.length, 2); assert.notEqual(groups[0].main, c.work);
+  groups = Merges.remove(groups, groups[0].main, a.work);
+  assert.equal(groups.length, 0, 'a group of one is dropped');
+  assert.equal(Merges.remove(stored, c.work, '').length, 0);
+  assert.equal(S.calculate(rows, 'all', ...at, null, groups).items.length, 3);
+});
+
+test('ranking sorts by recent reading, read days or title and keeps duration ranks', () => {
+  const { ReadStatsSummary: S, ReadWorkMerges: Merges, ReadWorkIdentity: Identity } =
+    load('core/stats/ReadStatsSummary.ts', {}, 'ReadStatsSummary,ReadWorkMerges,ReadWorkIdentity');
+  const at = (key, h, m) => { const [y, mo, d] = key.split('-').map(Number); return date(y, mo, d, h, m); };
+  const read = (key, minutes, book, h = 9, m = 0) => ({ ...row(key, minutes * 60000, 'phone', book),
+    name: book, author: '作者', lastReadAt: at(key, h, m) });
+  const rows = [read('2026-11-16', 300, '宿命之环'), read('2026-11-17', 60, '宿命之环'), read('2026-11-18', 60, '宿命之环'),
+    read('2026-11-22', 30, '道诡异仙', 17, 40), read('2026-11-21', 30, '道诡异仙', 23, 30),
+    read('2026-11-22', 90, '赤心巡天', 8, 5), { ...read('2026-11-19', 20, '沧元图'), lastReadAt: 0 }];
+  const week = S.calculate(rows, 'week', date(2026, 11, 22), date(2026, 11, 22, 18, 2));
+  const names = (sort, mode = 'week', items = week.items) => Array.from(S.sortItems(items, sort, mode), item => item.name);
+  assert.deepEqual(names('duration'), ['宿命之环', '赤心巡天', '道诡异仙', '沧元图']);
+  assert.deepEqual(names('recent'), ['道诡异仙', '赤心巡天', '沧元图', '宿命之环']);
+  assert.deepEqual(names('days'), ['宿命之环', '道诡异仙', '赤心巡天', '沧元图'], 'ties fall back to the duration rank');
+  assert.deepEqual(names('title'), ['沧元图', '赤心巡天', '道诡异仙', '宿命之环'], 'titles follow pinyin');
+  assert.deepEqual(names('unknown'), names('duration'));
+  assert.deepEqual(names('days', 'day'), names('duration', 'day'), 'day view has no read-day ordering');
+  assert.equal(S.effectiveSort('days', 'day'), 'duration');
+  assert.deepEqual(Array.from(week.items, item => item.rank), [1, 2, 3, 4], 'sorting copies the list');
+  const by = name => week.items.find(item => item.name === name);
+  assert.equal(by('宿命之环').readDays, 3);
+  assert.equal(by('道诡异仙').lastReadAt, at('2026-11-22', 17, 40));
+  const now = date(2026, 11, 22, 18, 2);
+  assert.equal(S.recentLabel(by('道诡异仙'), 'week', now), '今天 17:40');
+  assert.equal(S.recentLabel(by('道诡异仙'), 'day', now), '17:40');
+  assert.equal(S.recentLabel({ ...by('道诡异仙'), lastDayKey: '2026-11-21', lastReadAt: at('2026-11-21', 23, 30) }, 'week', now), '昨天 23:30');
+  assert.equal(S.recentLabel(by('宿命之环'), 'week', now), '11月18日');
+  assert.equal(S.recentLabel(by('沧元图'), 'week', now), '11月19日', 'old records without a time show the date');
+  assert.equal(S.recentLabel(by('沧元图'), 'day', now), '', 'day view without a time falls back to the share');
+  assert.equal(S.recentLabel(by('宿命之环'), 'year', date(2027, 1, 3)), '2026年11月18日');
+  const member = name => ({ work: Identity.workKey(name, '作者'), name, author: '作者' });
+  const merged = S.calculate(rows, 'week', date(2026, 11, 22), now, null,
+    Merges.combine([], [member('宿命之环'), member('道诡异仙')], member('宿命之环').work));
+  const group = merged.items.find(item => item.mergedWorks === 2);
+  assert(group, 'merged row exists');
+  assert.equal(group.readDays, 5, 'merged rows union their read days');
+  assert.equal(group.lastReadAt, at('2026-11-22', 17, 40), 'merged rows keep the latest read');
+});
+
 test('calendar periods cover leap days, year crossings, and daylight saving days', () => {
   assert.equal(Summary.range('month', date(2024, 2, 29)).endKey, '2024-02-29');
   assert.equal(Summary.range('week', date(2026, 1, 1)).startKey, '2025-12-29');
@@ -146,6 +271,16 @@ test('legacy migration is resumable, preserves totals, snapshots and tombstones'
   await h.db.migrateReadStats();
   assert.equal((await h.query()).length, 1);
   assert.equal(h.sql.prepare('SELECT COUNT(*) AS n FROM read_stats_records').get().n, 2);
+});
+test('day rows carry the latest read time across records of that day', async t => {
+  const h = await database(t);
+  h.book('book', '书'); await h.db.migrateReadStats();
+  await h.db.addReadStats([h.entry({ lastReadAt: date(2026,10,26,9) }), h.entry({ lastReadAt: date(2026,10,26,21,30) }),
+    h.entry({ deviceId: 'tablet', lastReadAt: date(2026,10,26,22) })]);
+  const rows = await h.query('phone');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].durationMs, 120000);
+  assert.equal(rows[0].lastReadAt, date(2026,10,26,21,30));
 });
 test('record retries are idempotent, account/device scopes isolate and deletion stays scoped', async t => {
   const h = await database(t);h.book('book','原名');await h.db.migrateReadStats();

@@ -148,7 +148,7 @@ struct SyncIssuesPage {
         }
       } else if (this.issues.length === 0) {
         ListItem() {
-          Text('暂无同步问题。同步失败、云端拒收的数据（如超出限额的书源）以及本地书籍、字体上传失败都会记录在这里。')
+          Text('暂无同步问题。同步失败、云端拒收的数据（如超出限额的书源）以及本地书籍、字体、自定义主题上传失败都会记录在这里。')
             .fontSize(AppFontSize.BODY)
             .fontColor(this.subTextColor())
             .lineHeight(20)

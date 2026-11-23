@@ -404,7 +404,7 @@ struct MemberBenefitsPage {
 
   cloudSpaceText(): string {
     if (!this.isSuperMember()) return '终身超级会员专享';
-    if (!this.cloudSummary) return '书籍、字体与同步配置共用 1GB';
+    if (!this.cloudSummary) return '书籍、字体、自定义主题与同步配置共用 1GB';
     if (!this.cloudSummary.configured) return '云空间服务尚未启用';
     return `已用 ${this.formatBytes(this.cloudSummary.usedBytes)} / 1GB · 本月下载 ` +
       `${this.formatBytes(this.cloudSummary.downloadBytes)}`;
@@ -417,6 +417,8 @@ struct MemberBenefitsPage {
       this.benefitRow($r('sys.symbol.picture'), 'AI超分', '支持低清漫画与 PDF 扫描页；在阅读设置的漫画、PDF 分类中开启', true, undefined)
       this.benefitRow($r('sys.symbol.picture'), 'AI着色', '漫画阅读 → 画面设置 → AI着色', true, undefined)
       this.benefitRow($r('sys.symbol.textformat'), 'AI翻译', '漫画对白繁→简；日→中、韩→中即将推出', true, undefined)
+      this.benefitRow($r('sys.symbol.speaker_wave_2'), 'AI 字幕', '听书时在手机上把音频识别成字幕；听书面板封面下方切到“字幕”',
+        true, undefined)
       if (this.webParseEnabled) {
         this.benefitRow($r('sys.symbol.arrow_2_circlepath'), '大体积配置同步', this.largeSourceSyncText(), true, undefined)
       }
@@ -438,6 +440,7 @@ struct MemberBenefitsPage {
       if (this.isSuperMember()) {
         this.benefitRow($r('sys.symbol.textformat'), '上传字体云端同步', '导入即上传，换机可选', true, undefined)
         this.benefitRow($r('sys.symbol.book_pages'), '本地书籍云端同步', '加入书架即上传', true, undefined)
+        this.benefitRow($r('sys.symbol.paintpalette'), '自定义主题云同步', '素材与启动封面自动上传，换机自动恢复', true, undefined)
         this.benefitRow($r('sys.symbol.arrow_down'), '每月下载额度', '每月 1GB · 云空间下载', true, undefined)
       }
       this.benefitRow($r('sys.symbol.paintpalette'), '会员主题库', '现有及新增会员主题，可直接应用', true, () => {

@@ -21,6 +21,8 @@ export struct SourceGroupSortList {
   /** 正在消散的分组名，见 ListDissolve。 */
   @State dissolvingGroups: string[] = [];
   @State deleteParticleBursts: DeleteParticleBurst[] = [];
+  /** 列表可见高度；粒子层按它定高，免得 100% 高的粒子层把按内容定高的弹窗撑满屏。 */
+  @State listHeight: number = 0;
   private dissolveInFlight: boolean = false;
   private scroller: Scroller = new Scroller();
   private dragStartIndex: number = -1;
@@ -228,10 +230,16 @@ export struct SourceGroupSortList {
     .onAreaChange((_oldArea: Area, area: Area) => {
       this.viewportTop = Number(area.globalPosition.y);
       this.viewportHeight = Number(area.height);
+      if (this.listHeight !== this.viewportHeight) this.listHeight = this.viewportHeight;
     })
 
     if (this.deleteParticleBursts.length > 0) {
-      DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      Stack() {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
+      .width('100%')
+      .height(this.listHeight)
+      .hitTestBehavior(HitTestMode.None)
     }
     }
     .id('source_group_sort_root')

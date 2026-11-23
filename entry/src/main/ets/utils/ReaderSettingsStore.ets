@@ -34,6 +34,9 @@ export class ReaderSettings {
   customThemesRaw: string = '';
   pageTurnMode: number = 2;
   pageTurnAnimationType: number = 1;
+  // 横竖屏分开设置翻页动画：打开后阅读区宽大于高时改用 landscapePageTurnAnimationType，翻页方式仍然共用。
+  pageTurnAnimationSplit: boolean = false;
+  landscapePageTurnAnimationType: number = 1;
   landscapeDoublePage: boolean = false;
   screenOrientation: string = 'system';
   tapZoneActions: string = '3,3,2,3,1,2,2,2,2';
@@ -137,6 +140,8 @@ export class ReaderSettingsStore {
   static readonly KEY_PAGE_TURN_MODE: string = 'readerPageTurnMode';
   static readonly KEY_PAGE_TURN_ANIMATION: string = 'readerPageTurnAnimation';
   static readonly KEY_PAGE_TURN_ANIMATION_TYPE: string = 'readerPageTurnAnimationType';
+  static readonly KEY_PAGE_TURN_ANIMATION_SPLIT: string = 'readerPageTurnAnimationSplit';
+  static readonly KEY_LANDSCAPE_PAGE_TURN_ANIMATION_TYPE: string = 'readerLandscapePageTurnAnimationType';
   static readonly KEY_LANDSCAPE_DOUBLE_PAGE: string = 'readerLandscapeDoublePage';
   static readonly KEY_SCREEN_ORIENTATION: string = 'readerScreenOrientation';
   static readonly KEY_TAP_ZONE_ACTIONS: string = 'readerTapZoneActions';
@@ -389,6 +394,20 @@ export class ReaderSettingsStore {
       ReaderSettingsStore.PAGE_TURN_ANIMATION_NONE;
     settings.pageTurnAnimationType = ReaderSettingsStore.normalizePageTurnAnimationForMode(
       settings.pageTurnMode, settings.pageTurnAnimationType);
+    settings.pageTurnAnimationSplit = await ReaderSettingsStore.getBoolean(
+      store,
+      ReaderSettingsStore.KEY_PAGE_TURN_ANIMATION_SPLIT,
+      AppStorage.get<boolean>(ReaderSettingsStore.KEY_PAGE_TURN_ANIMATION_SPLIT) ?? false
+    );
+    settings.landscapePageTurnAnimationType = ReaderSettingsStore.normalizePageTurnAnimationForMode(
+      settings.pageTurnMode,
+      await ReaderSettingsStore.getNumber(
+        store,
+        ReaderSettingsStore.KEY_LANDSCAPE_PAGE_TURN_ANIMATION_TYPE,
+        settings.pageTurnAnimationType,
+        'pageTurnAnimationType'
+      )
+    );
     settings.landscapeDoublePage = await ReaderSettingsStore.getBoolean(
       store,
       ReaderSettingsStore.KEY_LANDSCAPE_DOUBLE_PAGE,
@@ -1129,6 +1148,22 @@ export class ReaderSettingsStore {
     await store.flush();
   }
 
+  /** 横竖屏分开设置翻页动画：开关与横屏那份动画一起存。 */
+  static async savePageTurnAnimationSplit(context: Context, split: boolean, landscapeType: number): Promise<void> {
+    const settings = ReaderSettingsStore.cachedSettings || ReaderSettingsStore.fromStorage();
+    settings.pageTurnAnimationSplit = split;
+    settings.landscapePageTurnAnimationType = ReaderSettingsStore.normalizePageTurnAnimationType(landscapeType);
+    ReaderSettingsStore.cachedSettings = ReaderSettingsStore.clone(settings);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_PAGE_TURN_ANIMATION_SPLIT, settings.pageTurnAnimationSplit);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_LANDSCAPE_PAGE_TURN_ANIMATION_TYPE,
+      settings.landscapePageTurnAnimationType);
+    const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
+    await store.put(ReaderSettingsStore.KEY_PAGE_TURN_ANIMATION_SPLIT, settings.pageTurnAnimationSplit);
+    await store.put(ReaderSettingsStore.KEY_LANDSCAPE_PAGE_TURN_ANIMATION_TYPE, settings.landscapePageTurnAnimationType);
+    await ReaderSettingsStore.persistActiveThemeProfile(store, settings);
+    await store.flush();
+  }
+
   static async saveLandscapeDoublePage(context: Context, enabled: boolean): Promise<void> {
     const settings = ReaderSettingsStore.cachedSettings || ReaderSettingsStore.fromStorage();
     settings.landscapeDoublePage = enabled;
@@ -1181,6 +1216,8 @@ export class ReaderSettingsStore {
     );
     await ReaderSettingsStore.savePageTurnMode(context, settings.pageTurnMode);
     await ReaderSettingsStore.savePageTurnAnimationType(context, settings.pageTurnAnimationType);
+    await ReaderSettingsStore.savePageTurnAnimationSplit(context, settings.pageTurnAnimationSplit,
+      settings.landscapePageTurnAnimationType);
     await ReaderSettingsStore.saveLandscapeDoublePage(context, settings.landscapeDoublePage);
     await ReaderSettingsStore.saveScreenOrientation(context, settings.screenOrientation);
     await ReaderSettingsStore.saveReadingInteractionSettings(
@@ -1243,6 +1280,9 @@ export class ReaderSettingsStore {
     ReaderSettingsStore.applyThemeToStorage(normalized);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_PAGE_TURN_MODE, normalized.pageTurnMode);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_PAGE_TURN_ANIMATION_TYPE, normalized.pageTurnAnimationType);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_PAGE_TURN_ANIMATION_SPLIT, normalized.pageTurnAnimationSplit);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_LANDSCAPE_PAGE_TURN_ANIMATION_TYPE,
+      normalized.landscapePageTurnAnimationType);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_LANDSCAPE_DOUBLE_PAGE, normalized.landscapeDoublePage);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_SCREEN_ORIENTATION, normalized.screenOrientation);
     AppStorage.setOrCreate(
@@ -1452,6 +1492,8 @@ export class ReaderSettingsStore {
   private static copyReadingBehavior(source: ReaderSettings, target: ReaderSettings): void {
     target.pageTurnMode = source.pageTurnMode;
     target.pageTurnAnimationType = source.pageTurnAnimationType;
+    target.pageTurnAnimationSplit = source.pageTurnAnimationSplit;
+    target.landscapePageTurnAnimationType = source.landscapePageTurnAnimationType;
     target.landscapeDoublePage = source.landscapeDoublePage;
     target.screenOrientation = source.screenOrientation;
     target.tapZoneActions = source.tapZoneActions;
@@ -1866,7 +1908,7 @@ export class ReaderSettingsStore {
 
   private static normalizeVerticalMargin(margin: number): number {
     const value = Math.round(margin);
-    return Math.max(0, Math.min(value, 120));
+    return Math.max(0, Math.min(value, 360));
   }
 
   private static normalizeColor(color: string, fallback: string): string {
@@ -2032,6 +2074,12 @@ export class ReaderSettingsStore {
     settings.pageTurnMode = ReaderSettingsStore.normalizePageTurnMode(source.pageTurnMode);
     settings.pageTurnAnimationType = ReaderSettingsStore.normalizePageTurnAnimationForMode(
       settings.pageTurnMode, source.pageTurnAnimationType);
+    // 旧档案没有这两个字段：开关按关闭，横屏动画沿用竖屏那份。
+    settings.pageTurnAnimationSplit = source.pageTurnAnimationSplit === true;
+    settings.landscapePageTurnAnimationType = ReaderSettingsStore.normalizePageTurnAnimationForMode(
+      settings.pageTurnMode,
+      typeof source.landscapePageTurnAnimationType === 'number' ?
+        source.landscapePageTurnAnimationType : settings.pageTurnAnimationType);
     settings.landscapeDoublePage = source.landscapeDoublePage;
     settings.screenOrientation = ReaderSettingsStore.normalizeScreenOrientation(source.screenOrientation);
     settings.tapZoneActions = ReaderSettingsStore.normalizeTapZoneActions(source.tapZoneActions);
@@ -2178,6 +2226,10 @@ export class ReaderSettingsStore {
       ReaderSettingsStore.PAGE_TURN_ANIMATION_NONE;
     settings.pageTurnAnimationType = ReaderSettingsStore.normalizePageTurnAnimationForMode(
       settings.pageTurnMode, settings.pageTurnAnimationType);
+    settings.pageTurnAnimationSplit = AppStorage.get<boolean>(ReaderSettingsStore.KEY_PAGE_TURN_ANIMATION_SPLIT) ?? false;
+    settings.landscapePageTurnAnimationType = ReaderSettingsStore.normalizePageTurnAnimationForMode(
+      settings.pageTurnMode,
+      AppStorage.get<number>(ReaderSettingsStore.KEY_LANDSCAPE_PAGE_TURN_ANIMATION_TYPE) ?? settings.pageTurnAnimationType);
     settings.landscapeDoublePage = AppStorage.get<boolean>(ReaderSettingsStore.KEY_LANDSCAPE_DOUBLE_PAGE) ?? false;
     settings.screenOrientation = ReaderSettingsStore.normalizeScreenOrientation(
       AppStorage.get<string>(ReaderSettingsStore.KEY_SCREEN_ORIENTATION) ||

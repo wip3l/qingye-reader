@@ -42,6 +42,14 @@ test('rating labels follow the five bands', () => {
     ['', '很差', '很差', '较差', '还行', '推荐', '推荐', '力荐', '力荐']);
 });
 
+test('journal sections: star bands put half stars in the lower band, months drop the current year', () => {
+  assert.deepEqual([0, 1, 2, 3, 8, 9, 10].map(v => BookMarkRules.ratingBand(v)),
+    ['未打分', '半星', '1 星', '1 星', '4 星', '4 星', '5 星']);
+  const now = new Date(2026, 10, 17).getTime();
+  assert.equal(BookMarkRules.monthLabel(new Date(2026, 10, 2).getTime(), now), '11月');
+  assert.equal(BookMarkRules.monthLabel(new Date(2025, 11, 20).getTime(), now), '2025年12月');
+});
+
 test('tags are cleaned, deduplicated, length- and count-limited', () => {
   const many = Array.from({ length: 14 }, (_, i) => `标签${i}`);
   assert.equal(BookMarkRules.normalizeCategories(many).length, 10);
@@ -85,6 +93,28 @@ test('plain objects from backup or sync are normalised', () => {
   const read = BookMarkRules.fromPlain({ workKey: 'k', bookName: '书', status: 3, finishTime: 99 });
   assert.equal(read.finishTime, 99);
   assert.equal(BookMarkStatus.label(read.status), '读过');
+  const dropped = BookMarkRules.fromPlain({ workKey: 'k', bookName: '书', status: 4, finishTime: 99 });
+  assert.equal(dropped.status, BookMarkStatus.DROPPED);
+  assert.equal(BookMarkStatus.label(dropped.status), '弃读');
+  assert.equal(dropped.finishTime, 0, 'dropped books keep no finish time');
+  const fatten = BookMarkRules.fromPlain({ workKey: 'k', bookName: '书', status: 5, finishTime: 99 });
+  assert.equal(fatten.status, BookMarkStatus.FATTEN);
+  assert.equal(BookMarkStatus.label(fatten.status), '养肥');
+  assert.equal(fatten.finishTime, 0, 'books left to fatten keep no finish time');
+  assert.equal(BookMarkRules.fromPlain({ workKey: 'k', bookName: '书', status: 6 }).status, BookMarkStatus.NONE);
+  assert.deepEqual([...BookMarkStatus.ALL.map((value) => BookMarkStatus.label(value))],
+    ['想读', '在读', '养肥', '读过', '弃读']);
+});
+
+test('average rating follows the status filter and leaves dropped books out of all', () => {
+  const make = (status, rating) => Object.assign(new BookMark(), { status, rating });
+  const marks = [make(BookMarkStatus.READ, 10), make(BookMarkStatus.READ, 8), make(BookMarkStatus.WANT, 0),
+    make(BookMarkStatus.DROPPED, 2), make(BookMarkStatus.NONE, 6)];
+  assert.equal(BookMarkRules.averageRatingText(marks, 0), '4.0');
+  assert.equal(BookMarkRules.averageRatingText(marks, BookMarkStatus.READ), '4.5');
+  assert.equal(BookMarkRules.averageRatingText(marks, BookMarkStatus.DROPPED), '1.0');
+  assert.equal(BookMarkRules.averageRatingText(marks, BookMarkStatus.WANT), '');
+  assert.equal(BookMarkRules.averageRatingText([make(BookMarkStatus.DROPPED, 4)], 0), '');
 });
 
 test('known categories are ordered by use, then by name', () => {

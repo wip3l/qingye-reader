@@ -96,6 +96,13 @@ export class ThemeAssetRegistry {
     return pack.reader(ThemeAssetRegistry.packReaderDark(assetId)).imageFit || 'cover';
   }
 
+  /** 整图阅读背景所属主题包的 themeId（读者改显示方式按它记）；不是主题包整图背景时为空串。 */
+  static readerBackgroundPackThemeId(assetId: string): string {
+    if (!ThemeAssetRegistry.readerBackgroundImage(assetId)) return '';
+    const pack = ThemeAssetRegistry.packReader(assetId);
+    return pack ? pack.themeId : '';
+  }
+
   static readerBackground(assetId: string): ResourceStr {
     const packImage = ThemeAssetRegistry.readerBackgroundImage(assetId);
     if (packImage) return packImage;
@@ -349,6 +356,26 @@ export class ThemeAssetRegistry {
     }
   }
 
+  /**
+   * 章首装饰的图片（标题饰图、首字印章）给界面上的 Image 用：内置主题的 media:<资源名> 换成资源，
+   * 主题包的本机地址原样返回。新增内置图时这里和 BuiltinThemeRegistry.chapterHead 一起加。
+   */
+  static chapterArtwork(source: string): ResourceStr {
+    switch (source) {
+      case 'media:theme_chapter_head_obsidian_archive_light': return $r('app.media.theme_chapter_head_obsidian_archive_light');
+      case 'media:theme_chapter_head_obsidian_archive_dark': return $r('app.media.theme_chapter_head_obsidian_archive_dark');
+      case 'media:theme_drop_cap_obsidian_archive_light': return $r('app.media.theme_drop_cap_obsidian_archive_light');
+      case 'media:theme_drop_cap_obsidian_archive_dark': return $r('app.media.theme_drop_cap_obsidian_archive_dark');
+      case 'media:theme_chapter_head_celestial_vault_light': return $r('app.media.theme_chapter_head_celestial_vault_light');
+      case 'media:theme_chapter_head_celestial_vault_dark': return $r('app.media.theme_chapter_head_celestial_vault_dark');
+      case 'media:theme_drop_cap_celestial_vault_light': return $r('app.media.theme_drop_cap_celestial_vault_light');
+      case 'media:theme_drop_cap_celestial_vault_dark': return $r('app.media.theme_drop_cap_celestial_vault_dark');
+      case 'media:theme_chapter_head_plain_default_light': return $r('app.media.theme_chapter_head_plain_default_light');
+      case 'media:theme_chapter_head_plain_default_dark': return $r('app.media.theme_chapter_head_plain_default_dark');
+      default: return source;
+    }
+  }
+
   static readerBackgroundTrailingRotation(assetId: string): number {
     const trailing = ThemeAssetRegistry.readerBackgroundTrailingDecoration(assetId);
     return trailing && trailing === ThemeAssetRegistry.readerBackgroundDecoration(assetId) ? 180 : 0;
@@ -361,7 +388,7 @@ export class ThemeAssetRegistry {
   }
 
   /**
-   * 角饰的当前内容（左上|右下|大小）。主题包素材改了但背景 ID 没变时，预览靠它判断要不要重画：
+   * 角饰的当前内容（左上|右下|大小|边距）。主题包素材改了但背景 ID 没变时，预览靠它判断要不要重画：
    * ReaderThemeBackground 的属性都没变就不会重新取图和尺寸。
    */
   static readerDecorationSignature(assetId: string): string {
@@ -369,7 +396,9 @@ export class ThemeAssetRegistry {
     return `${ThemeAssetRegistry.readerBackgroundDecoration(assetId)}|` +
       `${ThemeAssetRegistry.readerBackgroundTrailingDecoration(assetId)}|` +
       `${ThemeAssetRegistry.readerBackgroundOrnamentScale(assetId, false)}|` +
-      `${ThemeAssetRegistry.readerBackgroundOrnamentScale(assetId, true)}`;
+      `${ThemeAssetRegistry.readerBackgroundOrnamentScale(assetId, true)}|` +
+      `${ThemeAssetRegistry.readerBackgroundOrnamentInset(assetId, false)}|` +
+      `${ThemeAssetRegistry.readerBackgroundOrnamentInset(assetId, true)}`;
   }
 
   /** 左上（trailing 为 false）或右下角饰的显示大小倍数：主题包自己设的，内置背景一律 1。 */
@@ -381,27 +410,53 @@ export class ThemeAssetRegistry {
     return trailing ? reader.trailingScale : reader.leadingScale;
   }
 
+  /** 左上（trailing 为 false）或右下角饰离屏幕边缘的边距倍数（0 是贴边）：主题包自己设的，内置背景一律 1。 */
+  static readerBackgroundOrnamentInset(assetId: string, trailing: boolean): number {
+    const pack = ThemeAssetRegistry.packReader(assetId);
+    if (!pack) return 1;
+    const reader = pack.reader(ThemeAssetRegistry.packReaderDark(assetId));
+    if (!ThemeAssetRegistry.packReaderHasOrnaments(reader)) return 1;
+    return trailing ? reader.trailingInset : reader.leadingInset;
+  }
+
   /** selected 为 true 时优先取选中态图标：主题包和星穹御藏有选中态，其余内置图标包没有。 */
-  static navigationIcon(iconPackId: string, tabId: string, selected: boolean = false): ResourceStr {
+  static navigationIcon(iconPackId: string, tabId: string, selected: boolean = false,
+    darkMode: boolean = false): ResourceStr {
     const normalizedPackId = ThemeAssetRegistry.normalizeIconPackId(iconPackId);
     const normalizedTabId = ThemeAssetRegistry.normalizeTabId(tabId);
     if (ThemePackRegistry.isPackId(normalizedPackId)) {
       const pack = ThemePackRegistry.get(normalizedPackId);
       if (pack && pack.hasAnyNavigation()) {
+        let key = 'bookshelf';
         let normal = pack.navBookshelf;
         let active = pack.navBookshelfSelected;
         if (normalizedTabId === ThemeAssetRegistry.TAB_EXPLORE) {
+          key = 'explore';
           normal = pack.navExplore;
           active = pack.navExploreSelected;
         } else if (normalizedTabId === ThemeAssetRegistry.TAB_MINE) {
+          key = 'mine';
           normal = pack.navMine;
           active = pack.navMineSelected;
         } else if (normalizedTabId === ThemeAssetRegistry.TAB_LISTEN) {
+          key = 'listen';
           normal = pack.navListen;
           active = pack.navListenSelected;
         } else if (normalizedTabId === ThemeAssetRegistry.TAB_FOOTPRINT) {
+          key = 'footprint';
           normal = pack.navFootprint;
           active = pack.navFootprintSelected;
+        }
+        if (darkMode && pack.navDark.size > 0) {
+          // 深色那套的图标优先；给了深色普通图标却没给深色选中态时，选中也用深色普通图标，不借浅色的选中态。
+          const darkNormal = pack.navDark.get(key) || '';
+          const darkActive = pack.navDark.get(`${key}Selected`) || '';
+          if (darkNormal) {
+            normal = darkNormal;
+            active = darkActive;
+          } else if (darkActive) {
+            active = darkActive;
+          }
         }
         if (selected && active) return active;
         if (normal) return normal;
@@ -451,6 +506,10 @@ export class ThemeAssetRegistry {
         return $r('app.media.theme_logo_custom');
       case ThemeIds.PLAIN_DEFAULT:
         return $r('app.media.theme_logo_plain_default');
+      case ThemeIds.PLAIN_BASE:
+        return $r('app.media.theme_logo_plain_base');
+      case ThemeIds.MORNING_MIST:
+        return $r('app.media.theme_logo_morning_mist');
       case ThemeIds.WARM_PAPER:
         return $r('app.media.theme_logo_warm_paper');
       case ThemeIds.FOREST_MIST:
@@ -500,6 +559,7 @@ export class ThemeAssetRegistry {
       return $r('app.media.theme_startup_classic_blue');
     }
     switch ((themeId || '').trim().toLowerCase()) {
+      case ThemeIds.MORNING_MIST: return $r('app.media.theme_startup_morning_mist');
       case ThemeIds.WARM_PAPER: return $r('app.media.theme_startup_warm_paper');
       case ThemeIds.FOREST_MIST: return $r('app.media.theme_startup_forest_mist');
       case ThemeIds.INK_WASH: return $r('app.media.theme_startup_ink_wash');
@@ -555,6 +615,10 @@ export class ThemeAssetRegistry {
             $r('app.media.home_bg_celestial_vault_light_anim');
         }
         return darkMode ? $r('app.media.home_bg_celestial_vault_dark') : $r('app.media.home_bg_celestial_vault_light');
+      case ThemeIds.PLAIN_DEFAULT:
+        return darkMode ? $r('app.media.home_bg_plain_default_dark') : $r('app.media.home_bg_plain_default_light');
+      case ThemeIds.MORNING_MIST:
+        return darkMode ? $r('app.media.home_bg_morning_mist_dark') : $r('app.media.home_bg_morning_mist_light');
       default: return null;
     }
   }
@@ -596,6 +660,14 @@ export class ThemeAssetRegistry {
     }
     switch ((assetId || '').trim().toLowerCase()) {
       case '': return [];
+      case ThemeIds.PLAIN_DEFAULT: return [
+        $r('app.media.theme_cover_plain_default_01'), $r('app.media.theme_cover_plain_default_02'),
+        $r('app.media.theme_cover_plain_default_03'), $r('app.media.theme_cover_plain_default_04')
+      ];
+      case ThemeIds.MORNING_MIST: return [
+        $r('app.media.theme_cover_morning_mist_01'), $r('app.media.theme_cover_morning_mist_02'),
+        $r('app.media.theme_cover_morning_mist_03'), $r('app.media.theme_cover_morning_mist_04')
+      ];
       case ThemeIds.WARM_PAPER: return [
         $r('app.media.theme_cover_warm_paper_01'), $r('app.media.theme_cover_warm_paper_02'),
         $r('app.media.theme_cover_warm_paper_03'), $r('app.media.theme_cover_warm_paper_04')
@@ -709,13 +781,20 @@ export class ThemeAssetRegistry {
     }
   }
 
-  static themeShelfFrame(assetId: string): ResourceStr {
+  /** 默认浅深色共用一张；主题包的 shelfFrameDark 和两套超级会员专属主题在深色模式换另一张。 */
+  static themeShelfFrame(assetId: string, darkMode: boolean = false, depth: number = 0): ResourceStr {
     if (ThemePackRegistry.isPackId(assetId)) {
       const pack = ThemePackRegistry.get(assetId);
-      return pack ? pack.shelfFrame : '';
+      if (!pack) return '';
+      // 这个模式没有自己的图、也没选“不用”：退回基底主题的那张。
+      const own = pack.shelfFrameFor(darkMode);
+      if (own || pack.shelfFrameOff(darkMode) || !pack.shelfFrameFallbackId || depth > 2) return own;
+      return ThemeAssetRegistry.themeShelfFrame(pack.shelfFrameFallbackId, darkMode, depth + 1);
     }
     switch ((assetId || '').trim().toLowerCase()) {
       case '': return '';
+      case ThemeIds.PLAIN_DEFAULT: return $r('app.media.theme_frame_plain_default');
+      case ThemeIds.MORNING_MIST: return $r('app.media.theme_frame_morning_mist');
       case ThemeIds.WARM_PAPER: return $r('app.media.theme_frame_warm_paper');
       case ThemeIds.FOREST_MIST: return $r('app.media.theme_frame_forest_mist');
       case ThemeIds.INK_WASH: return $r('app.media.theme_frame_ink_wash');
@@ -731,21 +810,30 @@ export class ThemeAssetRegistry {
       case ThemeIds.AZURE_MECHA: return $r('app.media.theme_frame_azure_mecha');
       case ThemeIds.STARWISH_MAGIC: return $r('app.media.theme_frame_starwish_magic');
       case ThemeIds.LETTERPRESS_PAGE: return $r('app.media.theme_frame_letterpress_page');
-      case ThemeIds.OBSIDIAN_ARCHIVE: return $r('app.media.theme_frame_obsidian_archive');
+      // 两套超级会员专属主题的边框是透明 WebP 位图（金属质感），其余内置主题是 SVG。
+      // 浅金细线在象牙底上发虚、午夜蓝珐琅在深底上看不见，所以各有一张给另一种模式的配色。
+      case ThemeIds.OBSIDIAN_ARCHIVE: return darkMode ? $r('app.media.theme_frame_obsidian_archive') :
+        $r('app.media.theme_frame_obsidian_archive_light');
       case ThemeIds.NEON_HARBOR: return $r('app.media.theme_frame_neon_harbor');
-      case ThemeIds.CELESTIAL_VAULT: return $r('app.media.theme_frame_celestial_vault');
+      case ThemeIds.CELESTIAL_VAULT: return darkMode ? $r('app.media.theme_frame_celestial_vault_dark') :
+        $r('app.media.theme_frame_celestial_vault');
       default: return $r('app.media.theme_frame_classic_blue');
     }
   }
 
   /** 分组文件夹插画。和封面一样默认浅深色共用；有深色那张的主题（主题包的 shelfFolderDark、两套专属主题）深色模式换成它。 */
-  static themeShelfFolder(assetId: string, darkMode: boolean = false): ResourceStr {
+  static themeShelfFolder(assetId: string, darkMode: boolean = false, depth: number = 0): ResourceStr {
     if (ThemePackRegistry.isPackId(assetId)) {
       const pack = ThemePackRegistry.get(assetId);
-      return pack ? pack.shelfFolderFor(darkMode) : '';
+      if (!pack) return '';
+      const own = pack.shelfFolderFor(darkMode);
+      if (own || pack.shelfFolderOff(darkMode) || !pack.shelfFolderFallbackId || depth > 2) return own;
+      return ThemeAssetRegistry.themeShelfFolder(pack.shelfFolderFallbackId, darkMode, depth + 1);
     }
     switch ((assetId || '').trim().toLowerCase()) {
       case '': return '';
+      case ThemeIds.PLAIN_DEFAULT: return $r('app.media.theme_folder_art_plain_default');
+      case ThemeIds.MORNING_MIST: return $r('app.media.theme_folder_art_morning_mist');
       case ThemeIds.WARM_PAPER: return $r('app.media.theme_folder_art_warm_paper');
       case ThemeIds.FOREST_MIST: return $r('app.media.theme_folder_art_forest_mist');
       case ThemeIds.INK_WASH: return $r('app.media.theme_folder_art_ink_wash');
@@ -770,10 +858,11 @@ export class ThemeAssetRegistry {
     }
   }
 
-  static regexBubbleFrame(styleId: string): ResourceStr {
+  /** 默认浅深色共用；主题包的 bubbleDark 和两套超级会员专属主题的气泡在深色模式换另一套端饰和边框。 */
+  static regexBubbleFrame(styleId: string, darkMode: boolean = false): ResourceStr {
     if (ThemePackRegistry.isPackId(styleId)) {
       const pack = ThemePackRegistry.get(styleId);
-      return pack ? pack.bubbleFrame : '';
+      return pack ? pack.bubbleForStyle(styleId, darkMode).frame : '';
     }
     switch ((styleId || '').trim().toLowerCase()) {
       case 'classic-glass': return $r('app.media.regex_frame_classic_glass');
@@ -792,21 +881,23 @@ export class ThemeAssetRegistry {
       case 'mecha-comm': return $r('app.media.regex_frame_mecha_comm');
       case 'starwish-ribbon': return $r('app.media.regex_frame_starwish_ribbon');
       case 'pencil-mark': return $r('app.media.regex_frame_pencil_mark');
-      case 'gilded-orbit': return $r('app.media.regex_frame_gilded_orbit');
+      case 'gilded-orbit': return darkMode ? $r('app.media.regex_frame_gilded_orbit_dark') :
+        $r('app.media.regex_frame_gilded_orbit');
       case 'harbor-postcard': return $r('app.media.regex_frame_harbor_postcard');
-      case 'celestial-orbit': return $r('app.media.regex_frame_celestial_orbit');
+      case 'celestial-orbit': return darkMode ? $r('app.media.regex_frame_celestial_orbit_dark') :
+        $r('app.media.regex_frame_celestial_orbit');
       default: return '';
     }
   }
 
-  static hasRegexBubbleFrame(styleId: string): boolean {
-    return !!ThemeAssetRegistry.regexBubbleFrame(styleId);
+  static hasRegexBubbleFrame(styleId: string, darkMode: boolean = false): boolean {
+    return !!ThemeAssetRegistry.regexBubbleFrame(styleId, darkMode);
   }
 
-  static regexBubbleCap(styleId: string): ResourceStr {
+  static regexBubbleCap(styleId: string, darkMode: boolean = false): ResourceStr {
     if (ThemePackRegistry.isPackId(styleId)) {
       const pack = ThemePackRegistry.get(styleId);
-      return pack ? pack.bubbleCap : '';
+      return pack ? pack.bubbleForStyle(styleId, darkMode).cap : '';
     }
     switch ((styleId || '').trim().toLowerCase()) {
       case 'classic-glass': return $r('app.media.regex_cap_classic_glass');
@@ -825,15 +916,17 @@ export class ThemeAssetRegistry {
       case 'mecha-comm': return $r('app.media.regex_cap_mecha_comm');
       case 'starwish-ribbon': return $r('app.media.regex_cap_starwish_ribbon');
       case 'pencil-mark': return $r('app.media.regex_cap_pencil_mark');
-      case 'gilded-orbit': return $r('app.media.regex_cap_gilded_orbit');
+      case 'gilded-orbit': return darkMode ? $r('app.media.regex_cap_gilded_orbit_dark') :
+        $r('app.media.regex_cap_gilded_orbit');
       case 'harbor-postcard': return $r('app.media.regex_cap_harbor_postcard');
-      case 'celestial-orbit': return $r('app.media.regex_cap_celestial_orbit');
+      case 'celestial-orbit': return darkMode ? $r('app.media.regex_cap_celestial_orbit_dark') :
+        $r('app.media.regex_cap_celestial_orbit');
       default: return '';
     }
   }
 
-  static hasRegexBubbleCap(styleId: string): boolean {
-    return !!ThemeAssetRegistry.regexBubbleCap(styleId);
+  static hasRegexBubbleCap(styleId: string, darkMode: boolean = false): boolean {
+    return !!ThemeAssetRegistry.regexBubbleCap(styleId, darkMode);
   }
 
   static normalizeBackgroundAssetId(assetId: string): string {
@@ -916,8 +1009,18 @@ export class ThemeAssetRegistry {
     if (normalizedPackId === ThemeAssetRegistry.ICON_PACK_CELESTIAL_VAULT) return true;
     if (!ThemePackRegistry.isPackId(normalizedPackId)) return false;
     const pack = ThemePackRegistry.get(normalizedPackId);
-    return !!pack && pack.hasAnyNavigation() && !!(pack.navBookshelfSelected || pack.navExploreSelected ||
-      pack.navMineSelected || pack.navListenSelected || pack.navFootprintSelected);
+    return !!pack && pack.hasAnyNavigation() && (!!(pack.navBookshelfSelected || pack.navExploreSelected ||
+      pack.navMineSelected || pack.navListenSelected || pack.navFootprintSelected) ||
+      ['bookshelfSelected', 'exploreSelected', 'mineSelected', 'listenSelected', 'footprintSelected']
+        .some((key: string): boolean => pack.navDark.has(key)));
+  }
+
+  /** 主题包带了深色模式单独的图标。 */
+  static navigationHasDarkIcons(iconPackId: string): boolean {
+    const normalizedPackId = ThemeAssetRegistry.normalizeIconPackId(iconPackId);
+    if (!ThemePackRegistry.isPackId(normalizedPackId)) return false;
+    const pack = ThemePackRegistry.get(normalizedPackId);
+    return !!pack && pack.hasAnyNavigation() && pack.navDark.size > 0;
   }
 
   /** 主题包要求底栏只显示图标。 */

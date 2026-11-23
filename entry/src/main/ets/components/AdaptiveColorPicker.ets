@@ -19,6 +19,7 @@ export struct AdaptiveColorPicker {
   @Prop hideOptionTrigger: boolean = false;
   @Prop directSelection: boolean = false;
   @Prop colorMode: string = '';
+  @Prop rowDivider: boolean = false;
   @State favoriteColors: string[] = [];
   onColorChange: (color: string) => void = (_color: string): void => {};
   onColorModeChange: (mode: string) => void = (_mode: string): void => {};
@@ -89,6 +90,7 @@ export struct AdaptiveColorPicker {
         optionTitle: this.optionTitle,
         hideOptionTrigger: this.hideOptionTrigger,
         colorMode: this.colorMode,
+        rowDivider: this.rowDivider,
         onColorChange: (color: string) => {
           this.onColorChange(color);
         },

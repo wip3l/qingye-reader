@@ -2,10 +2,15 @@
 // 阅读角饰尺寸取 ReaderThemeDecorationLayout（短边 × 0.36，夹在 112–260），朗读面板的分层取 TtsPanelThemeBackground。
 import { assetFontFamily, assetUrl, h, project, S, type Mode } from './state.ts';
 import { baseTheme, bubbleLabel, effective, GENERIC_BUBBLES, type Effective } from './tokens.ts';
-import { cssColor, luminance } from './colors.ts';
+import { cssColor, luminance, withAlpha } from './colors.ts';
 import { NAV_TABS, EXTRA_NAV_TABS } from './sections.ts';
+import { frameAspect, frameSettingsOf, frameSpanStyle, tintedUrl } from './frameStretch.ts';
+import { commentImageSettingsOf, imageBubble } from './commentStretch.ts';
+import { bookShelfFrameFor, commentBubbleHasImage } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 
 export const PHONE_W = 360;
+/** 预览正文的行高倍数，同 styles.css 的 .reader .content。 */
+const READER_LINE_HEIGHT = 1.8;
 export const PHONE_H = 780;
 const ORNAMENT = Math.max(112, Math.min(260, PHONE_W * 0.36));
 const ORNAMENT_INSET = Math.max(8, Math.min(22, PHONE_W * 0.025));
@@ -96,7 +101,7 @@ const BOOKS: [string, string][] = [['山海拾遗', '读到 12%'], ['夜航船',
 function coverTile(index: number, title: string): HTMLElement {
   const book = project().parts.book || {};
   const { covers, crops } = coversFor(book, screenMode);
-  const frame = assetUrl(book.shelfFrame);
+  const frame = assetUrl(bookShelfFrameFor(book, screenMode === 'dark'));
   const tile = h('div', { class: 'bk', 'data-sec': 'book' });
   if (covers.length) {
     const ref = covers[index % covers.length];
@@ -113,7 +118,17 @@ function coverTile(index: number, title: string): HTMLElement {
 /** 底栏一个页签的图标：SVG 用遮罩按文字色着色，位图原样显示，和应用一致。 */
 function navIcon(key: string, selected: boolean): HTMLElement {
   const nav = project().parts.navigation || {};
-  const ref = (selected && nav[`${key}Selected`]) || nav[key] || '';
+  let normal = nav[key] || '';
+  let active = nav[`${key}Selected`] || '';
+  // 深色那套优先；给了深色普通图标却没给深色选中态时，选中也用深色普通图标（同应用 navigationIcon）。
+  const dark = screenMode === 'dark' && nav.bookshelf ? project().parts.navigationDark || {} : {};
+  if (dark[key]) {
+    normal = dark[key];
+    active = dark[`${key}Selected`] || '';
+  } else if (dark[`${key}Selected`]) {
+    active = dark[`${key}Selected`];
+  }
+  const ref = (selected && active) || normal || '';
   const url = assetUrl(ref);
   if (url && project().assets.get(ref)?.kind === 'image') return h('img', { class: 'ico', src: url, alt: '' });
   return h('i', { class: 'ico', style: `--m:url("${url || svgUrl(DEFAULT_NAV[key])}")` });
@@ -281,15 +296,24 @@ function screenMine(mode: Mode, e: Effective): HTMLElement {
     group(['书源管理', '同步与备份', '帮助']));
 }
 
-function emphasis(text: string, e: Effective): HTMLElement | string {
+function emphasis(text: string, e: Effective, fontPx: number = 19): HTMLElement | string {
   if (e.e.mode === 'none') return text;
   if (e.e.mode === 'bubble') {
-    const bubble = project().parts.bubble || {};
+    const bubble = e.b || {};
     const span = h('span', { class: 'em-bubble', 'data-sec': 'emphasis' });
     if (e.e.bubble === 'pack') {
       const cap = assetUrl(bubble.cap);
-      const frame = assetUrl(bubble.frame);
-      if (frame) span.style.cssText = `background-image:url("${frame}");background-size:100% 100%`;
+      const frameStyle = bubble.frame ?
+        frameSpanStyle(bubble.frame, frameSettingsOf(bubble, frameAspect(bubble.frame)), fontPx, e.e.color) : '';
+      if (frameStyle) {
+        // 同应用：边框按行画在文字外面，端饰在边框外侧。
+        const framed = h('span', { class: 'em-frame', style: frameStyle }, text);
+        const wrap = h('span', { class: 'em-framed', 'data-sec': 'emphasis', style: `color:${cssColor(e.e.textColor)}` });
+        if (cap) wrap.append(h('img', { class: 'bcap', src: cap, alt: '' }));
+        wrap.append(framed);
+        if (cap) wrap.append(h('img', { class: 'bcap r', src: cap, alt: '' }));
+        return wrap;
+      }
       if (cap) span.append(h('img', { class: 'bcap', src: cap, alt: '' }));
       span.append(text);
       if (cap) span.append(h('img', { class: 'bcap r', src: cap, alt: '' }));
@@ -300,6 +324,152 @@ function emphasis(text: string, e: Effective): HTMLElement | string {
     return span;
   }
   return h('span', { class: e.e.mode === 'highlight' ? 'em-highlight' : 'em-text', 'data-sec': 'emphasis' }, text);
+}
+
+/**
+ * 章节标题按主题的标题强调画（相当于读者选了“跟随主题”）：颜色写进 --p-em / --p-em-text 盖住正文强调的；
+ * 气泡样式自动时有标题气泡就用它，否则和正文强调同一套。
+ */
+function titleEmphasis(text: string, e: Effective, fontPx: number): HTMLElement | string {
+  const t = e.title;
+  if (!t.mode || t.mode === 'none') return text;
+  const color = t.color || e.e.color;
+  const textColor = t.textColor || e.e.textColor;
+  let bubble = e.e.bubble;
+  let art = e.b;
+  if (t.mode === 'bubble') {
+    const style = t.bubbleStyle;
+    if ((!style && e.tb) || (style && style.endsWith(':title'))) {
+      bubble = 'pack';
+      art = e.tb;
+    } else if (style && style !== 'emphasis') {
+      bubble = style;
+      art = null;
+    }
+  }
+  const view = { ...e, e: { ...e.e, mode: t.mode, bubble, color, textColor }, b: art } as Effective;
+  return h('span', { class: 'title-em', 'data-sec': 'title', style: `--p-em:${cssColor(color)};--p-em-text:${cssColor(textColor)}` },
+    emphasis(text, view, fontPx));
+}
+
+/** 两色按比例混合（#RRGGBB / #AARRGGBB，忽略透明度），同应用 ReaderRegexBubbleStyleResolver.mix。 */
+function mixColor(base: string, over: string, ratio: number): string {
+  const rgb = (hex: string): number[] => {
+    const v = (hex || '').replace('#', '').slice(-6);
+    return [0, 2, 4].map((i) => parseInt(v.substring(i, i + 2), 16) || 0);
+  };
+  const a = rgb(base);
+  const b = rgb(over);
+  return '#' + a.map((x, i) => Math.round(x + (b[i] - x) * ratio).toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+const COMMENT_ORNAMENT_GLYPH: Record<string, string> = {
+  star: '✦', sparkle: '✧', dot: '●', moon: '☾', leaf: '❦', sprig: '❧', rose: '✿', paw: '❁', seal: '■',
+  diamond: '◆', pendant: '◇', scroll: '❍', cord: '—', signal: '▮', frame: '▢', sketch: '✎', postcard: '✉', folio: '❖'
+};
+
+/**
+ * 段评气泡的近似样子：包里写了的颜色、形状、角标照写；没写时包内气泡按强调底色推导（同应用），
+ * 内置气泡样式的配色表不在编辑器里，用中性灰示意，应用内按样式显示。
+ */
+function commentBubble(count: string, e: Effective, fontSize = 19): HTMLElement {
+  const t = e.comment;
+  const dark = e.mode === 'dark';
+  const paper = e.reader.backgroundColor;
+  let fill = '#8A9099';
+  let stroke = '#6F757E';
+  let text = '#FFFFFF';
+  let radius = '0.5em';
+  let title = '段评气泡：跟随气泡样式（应用内按样式显示）';
+  if (e.e.bubble === 'pack') {
+    fill = mixColor(paper, e.e.color, dark ? 0.3 : 0.18);
+    stroke = e.e.color;
+    text = e.e.textColor;
+    radius = '0.3em';
+    title = '段评气泡：跟随包内气泡的强调配色';
+  } else if (e.e.bubble === 'capsule' && !t.shape) {
+    fill = 'transparent';
+    stroke = withAlpha(e.reader.textColor, dark ? 140 : 115);
+    text = stroke;
+    radius = '0.4em';
+  }
+  if (t.shape === 'outline') {
+    fill = 'transparent';
+    stroke = t.stroke || withAlpha(e.reader.textColor, dark ? 140 : 115);
+    text = t.text || stroke;
+    radius = '0.4em';
+  } else {
+    if (t.shape === 'pill') radius = '0.66em';
+    else if (t.shape === 'rounded') radius = `${(t.radius >= 0 ? t.radius : 0.2) * 1.32}em`;
+    else if (t.shape === 'cut') radius = '0';
+    if (t.fill) fill = t.fill;
+    if (t.stroke) stroke = t.stroke;
+    if (t.text) text = t.text;
+  }
+  if (t.shape || t.fill || t.stroke || t.text || t.ornament) title = '段评气泡（包里的设置）';
+  const customOrnament = t.ornament === 'custom' && t.ornamentImage ?
+    { ref: t.ornamentImage, corner: t.ornamentCorner, size: t.ornamentSize, tint: t.ornamentColor } : null;
+  if (commentBubbleHasImage(t)) {
+    // 同应用：段评字号比正文小 5，气泡大小默认 80%。
+    const bubbleFont = Math.max(10, fontSize - 5) * 0.8;
+    const imageFill = t.fill || (e.e.bubble === 'capsule' ? e.e.color : fill);
+    return imageBubble(t.image, commentImageSettingsOf(t, frameAspect(t.image)), count, bubbleFont, text, imageFill, true,
+      customOrnament);
+  }
+  const span = h('span', {
+    class: `cmt${t.shape === 'cut' ? ' cut' : ''}`, 'data-sec': 'emphasis', title,
+    style: `background:${cssColor(fill)};border-color:${cssColor(stroke)};color:${cssColor(text)};border-radius:${radius}`
+  }, count);
+  const glyph = t.ornament && t.ornament !== 'none' ? COMMENT_ORNAMENT_GLYPH[t.ornament] : '';
+  if (glyph) span.append(h('i', { class: 'cmt-orn', style: `color:${cssColor(t.ornamentColor || stroke)}` }, glyph));
+  if (customOrnament && assetUrl(customOrnament.ref)) {
+    span.append(h('img', { class: 'cmt-orn-img', alt: '',
+      src: customOrnament.tint ? tintedUrl(assetUrl(customOrnament.ref), customOrnament.tint) : assetUrl(customOrnament.ref),
+      style: `width:${0.62 * (customOrnament.size > 0 ? customOrnament.size : 1) * 1.32}em;height:auto;` +
+        `${customOrnament.corner === 'topLeft' ? 'left:-.3em' : 'right:-.3em'};` +
+        `${customOrnament.corner === 'bottomRight' ? 'bottom:-.3em' : 'top:-.45em'}` }));
+  }
+  return span;
+}
+
+/**
+ * 章节标题连同章首饰图，尺寸同应用 ReaderV2ChapterHeadLayout：左侧时高 = 一行标题的行框（字号 × 1.25）× 倍数、
+ * 最宽占版心 30%；上方、下方时高 = 字号 × 0.9 × 倍数。序号行颜色要读者开了标题分段才生效，预览里染在“第十七章”上示意。
+ */
+function chapterTitle(e: Effective, fontPx: number, columnWidth: number): HTMLElement {
+  const head = e.head;
+  // 标题强调会给整个标题换文字色，这时序号行颜色不单独示意。
+  const plain = !e.title.mode || e.title.mode === 'none';
+  const title = h('h2', {}, head && head.numberColor && plain ?
+    h('span', {}, h('span', { style: `color:${cssColor(head.numberColor)}` }, '第十七章'), ' 灯下') :
+    titleEmphasis('第十七章 灯下', e, fontPx));
+  const url = head ? assetUrl(head.image) : '';
+  if (!head || !url) return title;
+  const scale = head.scale > 0 ? head.scale : 1;
+  const wrap = h('div', { class: `chapter-head ${head.placement || 'side'}`, 'data-sec': 'chapterHead' });
+  if (head.placement === 'top' || head.placement === 'bottom') {
+    const img = h('img', { src: url, alt: '', style: `height:${fontPx * 0.9 * scale}px;max-width:100%` });
+    if (head.placement === 'top') wrap.append(img, title);
+    else wrap.append(title, img);
+    return wrap;
+  }
+  wrap.append(h('img', { src: url, alt: '', style: `height:${fontPx * 1.25 * scale}px;max-width:${columnWidth * 0.3}px` }), title);
+  return wrap;
+}
+
+/**
+ * 首字装饰：方框高 = (行数 − 1) × 行距 + 1.04 个字号（同应用 ReaderV2Paginator.resolveDropCap），浮在段落左上角；
+ * 垫印章图时字高按字占比，只放大时字撑满方框。没设首字时返回 null。
+ */
+function dropCap(char: string, e: Effective, fontPx: number): HTMLElement | null {
+  const head = e.head;
+  if (!head || head.dropCapLines < 2) return null;
+  const box = (head.dropCapLines - 1) * fontPx * READER_LINE_HEIGHT + fontPx * 1.04;
+  const url = assetUrl(head.dropCapImage);
+  const size = url ? box * (head.dropCapRatio > 0 ? head.dropCapRatio : 0.62) : box / 1.04;
+  const style = `width:${box}px;height:${box}px;font-size:${size}px;margin-top:${fontPx * (READER_LINE_HEIGHT - 1.04) / 2}px;` +
+    (head.dropCapColor ? `color:${cssColor(head.dropCapColor)};` : '') + (url ? `background-image:url("${url}")` : '');
+  return h('span', { class: 'drop-cap', 'data-sec': 'chapterHead', style }, char);
 }
 
 function readerBody(e: Effective): HTMLElement {
@@ -318,8 +488,11 @@ function readerBody(e: Effective): HTMLElement {
       return `width:${size}px;height:${size}px`;
     };
     const mirrored = !!r.leading && r.trailing === r.leading;
-    if (assetUrl(r.leading)) s.append(h('img', { class: 'orn l', src: assetUrl(r.leading), style: `${sized(r.leadingScale)};left:${ORNAMENT_INSET}px;top:${ORNAMENT_INSET}px`, alt: '' }));
-    if (assetUrl(r.trailing)) s.append(h('img', { class: 'orn t', src: assetUrl(r.trailing), style: `${sized(r.trailingScale)};right:${ORNAMENT_INSET}px;bottom:${ORNAMENT_INSET}px${mirrored ? ';transform:rotate(180deg)' : ''}`, alt: '' }));
+    // 同 ReaderThemeDecorationLayout.inset：倍数乘在默认边距上，0 是贴边。
+    const li = ORNAMENT_INSET * r.leadingInset;
+    const ti = ORNAMENT_INSET * r.trailingInset;
+    if (assetUrl(r.leading)) s.append(h('img', { class: 'orn l', src: assetUrl(r.leading), style: `${sized(r.leadingScale)};left:${li}px;top:${li}px`, alt: '' }));
+    if (assetUrl(r.trailing)) s.append(h('img', { class: 'orn t', src: assetUrl(r.trailing), style: `${sized(r.trailingScale)};right:${ti}px;bottom:${ti}px${mirrored ? ';transform:rotate(180deg)' : ''}`, alt: '' }));
   }
   if (r.source === 'base-art') {
     const style = `width:${ORNAMENT}px;height:${ORNAMENT}px`;
@@ -331,12 +504,18 @@ function readerBody(e: Effective): HTMLElement {
   const layout = p.layout || {};
   const fontSize = typeof layout.fontSize === 'number' && layout.fontSize >= 12 && layout.fontSize <= 40 ? layout.fontSize : 19;
   const margin = typeof layout.marginLeft === 'number' ? Math.max(8, Math.min(48, layout.marginLeft)) : 20;
-  const content = h('div', { class: 'content', style: `font-size:${fontSize}px;padding:6px ${margin}px` }, h('h2', {}, '第十七章 灯下'));
-  const p1 = h('p', {}, '船过石桥时，舱里的灯忽然暗了一下。老周把书合上，抬头看了看窗外的水色，');
-  p1.append(emphasis('“今晚风大，怕是要靠岸了。”', e));
+  const content = h('div', { class: 'content', style: `font-size:${fontSize}px;padding:6px ${margin}px` },
+    chapterTitle(e, Math.round(fontSize * 1.3), PHONE_W - margin * 2));
+  const cap = dropCap('船', e, fontSize);
+  // 同应用：做首字的段落去掉段首缩进，绕排的几行都紧贴首字方框。
+  const p1 = h('p', cap ? { style: 'text-indent:0' } : {});
+  if (cap) p1.append(cap);
+  p1.append(`${cap ? '' : '船'}过石桥时，舱里的灯忽然暗了一下。老周把书合上，抬头看了看窗外的水色，`);
+  p1.append(emphasis('“今晚风大，怕是要靠岸了。”', e, fontSize), commentBubble('23', e, fontSize));
   const p2 = h('p', {}, '阿遥没有应声，只把那页折了个角。她记得母亲说过，');
-  p2.append(emphasis('“夜里读书，读到哪儿就算到哪儿。”', e), '水声一阵紧过一阵，像是有人在船底翻书。');
-  const p3 = h('p', {}, '岸上的灯笼一盏一盏亮起来，映在河面上，碎成许多小小的金色鳞片。她伸手去碰，只碰到了凉。');
+  p2.append(emphasis('“夜里读书，读到哪儿就算到哪儿。”', e, fontSize), '水声一阵紧过一阵，像是有人在船底翻书。');
+  const p3 = h('p', {}, '岸上的灯笼一盏一盏亮起来，映在河面上，碎成许多小小的金色鳞片。她伸手去碰，只碰到了凉。',
+    commentBubble('6', e, fontSize));
   const p4 = h('p', {}, '老周又把书翻开，从折角的那一页读起。');
   content.append(p1, p2, p3, p4);
   s.append(content);
@@ -410,7 +589,7 @@ export function describe(): string[] {
   if (has(p.light && p.light.emphasis) || has(p.dark && p.dark.emphasis) || (p.bubble && p.bubble.cap)) out.push('正文强调');
   if (p.ttsPanel && (has(p.ttsPanel.light) || has(p.ttsPanel.dark))) out.push('朗读面板');
   if (p.navigation && has(p.navigation)) out.push('导航图标');
-  if (p.book && ((p.book.covers || []).length || (p.book.coversDark || []).length || p.book.shelfFrame || p.book.shelfFolder || p.book.shelfFolderDark)) out.push('书籍素材');
+  if (p.book && ((p.book.covers || []).length || (p.book.coversDark || []).length || p.book.shelfFrame || p.book.shelfFrameDark || p.book.shelfFolder || p.book.shelfFolderDark)) out.push('书籍素材');
   if (p.startup && ((p.startup.light && p.startup.light.image) || (p.startup.dark && p.startup.dark.image))) out.push('启动封面');
   if (p.homeBackdrop && (p.homeBackdrop.light || p.homeBackdrop.dark)) out.push('首页背景');
   if (Object.values(p.shelfBackdrop || {}).some((entry: any) => entry && (entry.light || entry.dark))) out.push('书架背景');

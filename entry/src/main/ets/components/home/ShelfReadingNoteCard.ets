@@ -5,6 +5,7 @@ import { AccountSessionStore } from '../../account/AccountSessionStore';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
+import { HomeTabBarSettingsStore } from '../../utils/HomeTabBarSettingsStore';
 
 const NOTE_WEEK_DAYS = 7;
 /** 连续天数往回最多查这么多天；再长也只显示到这个数，避免每次回书架都扫全量记录。 */
@@ -107,6 +108,19 @@ export struct ShelfReadingNoteCard {
     return ThemeRuntime.subTextColor(this.appDarkMode);
   }
 
+  /** 底栏开了足迹页签就切过去；没开则打开独立足迹页。 */
+  openFootprint(): void {
+    if (HomeTabBarSettingsStore.normalizeExtraTab(AppStorage.get<string>(HomeTabBarSettingsStore.KEY_EXTRA_TAB)) ===
+      HomeTabBarSettingsStore.EXTRA_FOOTPRINT) {
+      AppStorage.setOrCreate('homeTabRequestIndex', 3);
+      AppStorage.setOrCreate('homeTabRequestNonce', (AppStorage.get<number>('homeTabRequestNonce') || 0) + 1);
+      return;
+    }
+    this.getUIContext().getRouter().pushUrl({ url: 'pages/Footprint' }).catch((error: Error) => {
+      console.warn('打开足迹失败:', error);
+    });
+  }
+
   hairlineColor(): string {
     return this.appDarkMode ? '#1FFFFFFF' : '#14000000';
   }
@@ -122,12 +136,18 @@ export struct ShelfReadingNoteCard {
           .fontWeight(FontWeight.Bold)
           .fontColor(this.accentColor())
         Blank()
-        Text(this.readStatsRecording ? '阅读统计' : '已暂停记录')
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.readStatsRecording ? this.subTextColor() : ThemeRuntime.warningColor(this.appDarkMode))
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(12)
-          .fontColor([this.subTextColor()])
+        // 右上角单独进足迹，卡片其余位置仍进阅读统计。
+        Row({ space: AppSpacing.SM }) {
+          Text(this.readStatsRecording ? '足迹' : '已暂停记录')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.readStatsRecording ? this.subTextColor() : ThemeRuntime.warningColor(this.appDarkMode))
+          SymbolGlyph($r('sys.symbol.chevron_right'))
+            .fontSize(12)
+            .fontColor([this.subTextColor()])
+        }
+        .padding({ left: AppSpacing.LG, top: AppSpacing.SM, bottom: AppSpacing.SM })
+        .margin({ top: -AppSpacing.SM, bottom: -AppSpacing.SM })
+        .onClick(() => this.openFootprint())
       }
       .width('100%')
 

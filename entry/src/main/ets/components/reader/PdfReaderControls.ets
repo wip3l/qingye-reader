@@ -75,6 +75,8 @@ export struct PdfReaderControls {
   @Prop brightnessValue: number = -1;
   @Prop lastManualBrightness: number = 50;
   @Prop brightnessReady: boolean = false;
+  /** 智感握姿：-1 左手、1 右手、0 未知（亮度条按默认靠右）。 */
+  @Prop holdingHandSide: number = 0;
   @State viewportWidth: number = 360;
   @State viewportHeight: number = 720;
   @State jumpText: string = '';
@@ -105,7 +107,11 @@ export struct PdfReaderControls {
    * 阅读设置用通用的设置行。
    */
   @Prop alignedLayout: boolean = false;
-  @Prop pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  // 与普通阅读页同一组设置：未分开时只用竖屏那份；分开后两行各改各的，当前方向那行标“当前”。
+  @Prop portraitPageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  @Prop landscapePageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  @Prop pageTurnAnimationSplit: boolean = false;
+  @Prop pageTurnAnimationLandscapeNow: boolean = false;
   @Prop tapZoneActions: string = '3,3,2,3,1,2,2,2,2';
   @Prop tapZoneSummary: string = '';
   @Prop volumeTurnPage: boolean = false;
@@ -116,7 +122,9 @@ export struct PdfReaderControls {
   @Prop pdfNightMode: string = 'original';
   @Prop pageBadge: boolean = true;
   @Prop bookmarkedPage: boolean = false;
-  onPageTurnAnimationChange: (type: number) => void = (_type: number): void => {};
+  onPageTurnAnimationChange: (type: number, landscape: boolean) => void =
+    (_type: number, _landscape: boolean): void => {};
+  onPageTurnAnimationSplitChange: (enabled: boolean) => void = (_enabled: boolean): void => {};
   onTapZones: () => void = (): void => {};
   onVolumeTurnChange: (enabled: boolean) => void = (_enabled: boolean): void => {};
   onSmartKeyTurnChange: (enabled: boolean) => void = (_enabled: boolean): void => {};
@@ -293,8 +301,9 @@ export struct PdfReaderControls {
       thumbColor: this.solidPanelColor(),
       onChange: (value: number, persist: boolean): void => this.onBrightnessChange(value, persist)
     })
-      .position({ x: Math.max(0, this.viewportWidth - ReaderBrightnessControl.WIDTH - 12), y: this.brightnessTop() })
-      .transition(ReaderChromeMotion.side(ReaderBrightnessControl.WIDTH + 12))
+      .position({ x: ReaderBrightnessControl.left(this.viewportWidth, this.holdingHandSide < 0),
+        y: this.brightnessTop() })
+      .transition(ReaderChromeMotion.side(ReaderBrightnessControl.WIDTH + 12, this.holdingHandSide < 0))
   }
 
   @Builder
@@ -558,15 +567,34 @@ export struct PdfReaderControls {
           accentColor: ThemeRuntime.accentColor(this.darkMode), dark: this.darkMode, menuColor: this.solidPanelColor(),
           onSelect: (index: number): void => this.onContinuousChange(index === 0) })
         if (!this.continuous) {
-          ReaderSettingSelectRow({ title: '翻页动画', description: '点按与按键翻页时的效果，与书籍共用',
+          ReaderSettingSelectRow({
+            title: this.pageTurnAnimationSplit ?
+              (this.pageTurnAnimationLandscapeNow ? '竖屏翻页动画' : '竖屏翻页动画 · 当前') : '翻页动画',
+            description: '点按与按键翻页时的效果，与书籍共用',
             options: ReaderPageTurnAnimation.labels().map((label: string): SelectOption => ({ value: label })),
-            selected: Math.max(0, ReaderPageTurnAnimation.types().indexOf(this.pageTurnAnimation)),
+            selected: Math.max(0, ReaderPageTurnAnimation.types().indexOf(this.portraitPageTurnAnimation)),
             textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode),
             accentColor: ThemeRuntime.accentColor(this.darkMode), dark: this.darkMode, menuColor: this.solidPanelColor(),
             onSelect: (index: number): void => {
               const types = ReaderPageTurnAnimation.types();
-              if (index >= 0 && index < types.length) this.onPageTurnAnimationChange(types[index]);
+              if (index >= 0 && index < types.length) this.onPageTurnAnimationChange(types[index], false);
             } })
+          if (this.pageTurnAnimationSplit) {
+            ReaderSettingSelectRow({
+              title: this.pageTurnAnimationLandscapeNow ? '横屏翻页动画 · 当前' : '横屏翻页动画',
+              description: '阅读区宽大于高时使用',
+              options: ReaderPageTurnAnimation.labels().map((label: string): SelectOption => ({ value: label })),
+              selected: Math.max(0, ReaderPageTurnAnimation.types().indexOf(this.landscapePageTurnAnimation)),
+              textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+              accentColor: ThemeRuntime.accentColor(this.darkMode), dark: this.darkMode, menuColor: this.solidPanelColor(),
+              onSelect: (index: number): void => {
+                const types = ReaderPageTurnAnimation.types();
+                if (index >= 0 && index < types.length) this.onPageTurnAnimationChange(types[index], true);
+              } })
+          }
+          ReaderSettingSwitchRow({ title: '横竖屏分开设置', description: '横屏双页更适合仿真，竖屏可以继续用平移',
+            checked: this.pageTurnAnimationSplit, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+            subTextColor: ThemeRuntime.subTextColor(this.darkMode), onChange: this.onPageTurnAnimationSplitChange })
         }
         ReaderSettingActionRow({ title: '点击区域动作', description: this.tapZoneSummary,
           actionText: '配置', textColor: ThemeRuntime.primaryTextColor(this.darkMode),

@@ -11,9 +11,18 @@ import {
   ThemePack,
   ThemeReaderLayoutTokens,
   ThemeRegexEmphasisModes,
+  ThemeTitleEmphasisTokens,
   ThemeVariant
 } from './ThemeModels';
 import { HexColor } from '../utils/HexColor';
+import {
+  chapterHeadIsEmpty,
+  commentBubbleIsEmpty,
+  normalizeChapterHead,
+  normalizeCommentBubble,
+  ThemePackageChapterHead,
+  ThemePackageCommentBubble
+} from './share/ThemePackageFormat';
 
 export class ThemeRuntime {
   static readonly KEY_THEME_ID: string = 'appThemeId';
@@ -65,6 +74,15 @@ export class ThemeRuntime {
   static readonly KEY_DARK_REGEX_EMPHASIS_COLOR: string = 'themeDarkRegexEmphasisColor';
   static readonly KEY_LIGHT_REGEX_EMPHASIS_TEXT_COLOR: string = 'themeLightRegexEmphasisTextColor';
   static readonly KEY_DARK_REGEX_EMPHASIS_TEXT_COLOR: string = 'themeDarkRegexEmphasisTextColor';
+  // 段评气泡外观（ThemePackageCommentBubble 的 JSON），空串表示全部沿用气泡样式。
+  static readonly KEY_LIGHT_COMMENT_BUBBLE: string = 'themeLightCommentBubble';
+  static readonly KEY_DARK_COMMENT_BUBBLE: string = 'themeDarkCommentBubble';
+  // 标题强调（ThemeTitleEmphasisTokens 的 JSON），空串表示主题不设置。
+  static readonly KEY_LIGHT_TITLE_EMPHASIS: string = 'themeLightTitleEmphasis';
+  static readonly KEY_DARK_TITLE_EMPHASIS: string = 'themeDarkTitleEmphasis';
+  // 章首装饰（ThemePackageChapterHead 的 JSON，饰图是本机 URI），空串表示主题不设置。
+  static readonly KEY_LIGHT_CHAPTER_HEAD: string = 'themeLightChapterHead';
+  static readonly KEY_DARK_CHAPTER_HEAD: string = 'themeDarkChapterHead';
 
   static readonly KEY_RADIUS_SMALL: string = 'themeRadiusSmall';
   static readonly KEY_RADIUS_MEDIUM: string = 'themeRadiusMedium';
@@ -495,6 +513,54 @@ export class ThemeRuntime {
       fallback);
   }
 
+  /** 当前主题这个模式的标题强调；主题不设置时 mode 为空。 */
+  static titleEmphasisTokens(darkMode: boolean): ThemeTitleEmphasisTokens {
+    const raw = AppStorage.get<string>(darkMode ? ThemeRuntime.KEY_DARK_TITLE_EMPHASIS :
+      ThemeRuntime.KEY_LIGHT_TITLE_EMPHASIS);
+    const parse = (value: ThemeTitleEmphasisTokens | null | undefined): ThemeTitleEmphasisTokens => {
+      const result = new ThemeTitleEmphasisTokens();
+      if (!value) return result;
+      result.mode = value.mode || '';
+      result.bubbleStyle = value.bubbleStyle || '';
+      result.color = value.color || '';
+      result.textColor = value.textColor || '';
+      return result;
+    };
+    if (raw === undefined) return parse(ThemeRuntime.fallbackVariant(darkMode).regexEmphasis.title);
+    if (!raw) return new ThemeTitleEmphasisTokens();
+    try {
+      return parse(JSON.parse(raw) as ThemeTitleEmphasisTokens);
+    } catch (_) {
+      return new ThemeTitleEmphasisTokens();
+    }
+  }
+
+  /** 当前主题这个模式的章首装饰；主题不设置时各字段为空。 */
+  static chapterHeadTokens(darkMode: boolean): ThemePackageChapterHead {
+    const raw = AppStorage.get<string>(darkMode ? ThemeRuntime.KEY_DARK_CHAPTER_HEAD :
+      ThemeRuntime.KEY_LIGHT_CHAPTER_HEAD);
+    if (raw === undefined) return normalizeChapterHead(ThemeRuntime.fallbackVariant(darkMode).regexEmphasis.chapterHead);
+    if (!raw) return new ThemePackageChapterHead();
+    try {
+      return normalizeChapterHead(JSON.parse(raw) as ThemePackageChapterHead);
+    } catch (_) {
+      return new ThemePackageChapterHead();
+    }
+  }
+
+  /** 当前主题这个模式的段评气泡设置；没设时各字段为空。 */
+  static commentBubbleTokens(darkMode: boolean): ThemePackageCommentBubble {
+    const raw = AppStorage.get<string>(darkMode ? ThemeRuntime.KEY_DARK_COMMENT_BUBBLE :
+      ThemeRuntime.KEY_LIGHT_COMMENT_BUBBLE);
+    if (raw === undefined) return normalizeCommentBubble(ThemeRuntime.fallbackVariant(darkMode).regexEmphasis.commentBubble);
+    if (!raw) return new ThemePackageCommentBubble();
+    try {
+      return normalizeCommentBubble(JSON.parse(raw) as ThemePackageCommentBubble);
+    } catch (_) {
+      return new ThemePackageCommentBubble();
+    }
+  }
+
   static smallRadius(): number {
     if (ThemeRuntime.currentThemeId() === ThemeIds.CUSTOM) {
       return ThemeRuntime.customSourceTheme('radius').radius.small;
@@ -565,6 +631,13 @@ export class ThemeRuntime {
       fallback.regexEmphasis.emphasisMode);
     const bubbleStyle = ThemeRuntime.normalizeBubbleStyle(variant.regexEmphasis.bubbleStyle,
       fallback.regexEmphasis.bubbleStyle);
+    const comment = normalizeCommentBubble(variant.regexEmphasis.commentBubble);
+    const commentJson = commentBubbleIsEmpty(comment) ? '' : JSON.stringify(comment);
+    const title = variant.regexEmphasis.title;
+    const titleJson = title && title.mode ? JSON.stringify(title) : '';
+    const head = normalizeChapterHead(variant.regexEmphasis.chapterHead);
+    ThemeRuntime.setString(darkMode ? ThemeRuntime.KEY_DARK_CHAPTER_HEAD : ThemeRuntime.KEY_LIGHT_CHAPTER_HEAD,
+      chapterHeadIsEmpty(head) ? '' : JSON.stringify(head));
 
     if (darkMode) {
       ThemeRuntime.setString(ThemeRuntime.KEY_DARK_PAGE_COLOR, pageColor);
@@ -589,6 +662,8 @@ export class ThemeRuntime {
       ThemeRuntime.setString(ThemeRuntime.KEY_DARK_REGEX_BUBBLE_STYLE, bubbleStyle);
       ThemeRuntime.setString(ThemeRuntime.KEY_DARK_REGEX_EMPHASIS_COLOR, regexColor);
       ThemeRuntime.setString(ThemeRuntime.KEY_DARK_REGEX_EMPHASIS_TEXT_COLOR, regexTextColor);
+      ThemeRuntime.setString(ThemeRuntime.KEY_DARK_COMMENT_BUBBLE, commentJson);
+      ThemeRuntime.setString(ThemeRuntime.KEY_DARK_TITLE_EMPHASIS, titleJson);
       AppStorage.setOrCreate('appDarkAccentColor', accentColor);
       AppStorage.setOrCreate('appDarkButtonColor', buttonColor);
       return;
@@ -616,6 +691,8 @@ export class ThemeRuntime {
     ThemeRuntime.setString(ThemeRuntime.KEY_LIGHT_REGEX_BUBBLE_STYLE, bubbleStyle);
     ThemeRuntime.setString(ThemeRuntime.KEY_LIGHT_REGEX_EMPHASIS_COLOR, regexColor);
     ThemeRuntime.setString(ThemeRuntime.KEY_LIGHT_REGEX_EMPHASIS_TEXT_COLOR, regexTextColor);
+    ThemeRuntime.setString(ThemeRuntime.KEY_LIGHT_COMMENT_BUBBLE, commentJson);
+    ThemeRuntime.setString(ThemeRuntime.KEY_LIGHT_TITLE_EMPHASIS, titleJson);
     AppStorage.setOrCreate('appLightAccentColor', accentColor);
     AppStorage.setOrCreate('appLightButtonColor', buttonColor);
   }

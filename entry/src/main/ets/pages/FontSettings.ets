@@ -469,7 +469,7 @@ struct FontSettingsPage {
   }
 
   fileNameFromUri(uri: string): string {
-    const decoded = decodeURIComponent(uri || '');
+    const decoded = ReaderFontHelper.safeDecodeURIComponent(uri || '');
     const index = Math.max(decoded.lastIndexOf('/'), decoded.lastIndexOf('\\'));
     return index >= 0 ? decoded.substring(index + 1) : decoded || '自定义字体';
   }

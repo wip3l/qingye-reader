@@ -52,7 +52,14 @@ export class BookMarkStatus {
   static readonly WANT: number = 1;
   static readonly READING: number = 2;
   static readonly READ: number = 3;
-  static readonly LABELS: string[] = ['', '想读', '在读', '读过'];
+  /** 读了一部分不打算读下去。值排在读过之后，旧版本按未标状态处理。 */
+  static readonly DROPPED: number = 4;
+  /** 读了一部分，等它多更些再接着读。界面上排在在读和读过之间，值接在弃读之后，旧版本按未标状态处理。 */
+  static readonly FATTEN: number = 5;
+  static readonly LABELS: string[] = ['', '想读', '在读', '读过', '弃读', '养肥'];
+  /** 可选状态，按界面上的先后排列。 */
+  static readonly ALL: number[] = [BookMarkStatus.WANT, BookMarkStatus.READING, BookMarkStatus.FATTEN,
+    BookMarkStatus.READ, BookMarkStatus.DROPPED];
 
   static label(status: number): string {
     return BookMarkStatus.LABELS[BookMarkStatus.normalize(status)];
@@ -60,7 +67,7 @@ export class BookMarkStatus {
 
   static normalize(value: number | string | undefined | null): number {
     const status = Math.floor(Number(value) || 0);
-    return status >= BookMarkStatus.WANT && status <= BookMarkStatus.READ ? status : BookMarkStatus.NONE;
+    return status >= BookMarkStatus.WANT && status <= BookMarkStatus.FATTEN ? status : BookMarkStatus.NONE;
   }
 }
 
@@ -124,6 +131,22 @@ export class BookMarkRules {
     return '力荐';
   }
 
+  /**
+   * 某个状态下打过分的书的平均星级文字，没有打分的书返回空串。
+   * status 为 0 表示“全部”，不算弃读的书：弃读多半是读不下去，打的低分会把整体均分拉偏。
+   */
+  static averageRatingText(marks: BookMark[], status: number): string {
+    let sum = 0;
+    let count = 0;
+    for (const mark of marks) {
+      if (mark.rating <= 0) continue;
+      if (status === BookMarkStatus.NONE ? mark.status === BookMarkStatus.DROPPED : mark.status !== status) continue;
+      sum += mark.rating;
+      count++;
+    }
+    return count > 0 ? (sum / count / 2).toFixed(1) : '';
+  }
+
   /** “4.5”这样的星级文字。 */
   static ratingText(rating: number): string {
     return (BookMarkRules.normalizeRating(rating) / 2).toFixed(1);
@@ -135,6 +158,21 @@ export class BookMarkRules {
     if (value >= (index + 1) * 2) return 1;
     if (value === index * 2 + 1) return 0.5;
     return 0;
+  }
+
+  /** 读书手账按评分排序时的分段名：整星一档，半星归到下一档（4.5 星在“4 星”里）。 */
+  static ratingBand(rating: number): string {
+    const value = BookMarkRules.normalizeRating(rating);
+    if (value <= 0) return '未打分';
+    if (value === 1) return '半星';
+    return `${Math.floor(value / 2)} 星`;
+  }
+
+  /** 读书手账按最近标记排序时的分段名：今年只写月份，往年带年份。 */
+  static monthLabel(time: number, now: number): string {
+    const date = new Date(time);
+    const month = `${date.getMonth() + 1}月`;
+    return date.getFullYear() === new Date(now).getFullYear() ? month : `${date.getFullYear()}年${month}`;
   }
 
   /** 备份、同步读回来的可能是普通对象，逐个字段规整；没有作品键或书名的返回 null。 */

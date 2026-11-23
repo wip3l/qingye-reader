@@ -487,8 +487,11 @@ export class ReaderEmulationFlipPainter {
     }
     context.save();
     context.clip(flatPath);
+    // 每条外侧纸边的外法线，下标与 flap 的边一致；折线边为 null。
+    const outs: (FoldPoint | null)[] = [];
     for (let index = 0; index < lifted.length; index++) {
       const next = (index + 1) % lifted.length;
+      outs.push(null);
       if (this.isFoldEdge(lifted[index], lifted[next], mid, normal)) {
         continue;
       }
@@ -506,12 +509,63 @@ export class ReaderEmulationFlipPainter {
         outY = -outY;
       }
       const out: FoldPoint = { x: outX, y: outY };
+      outs[index] = out;
       const strip = this.polygonPath([start, end, { x: end.x + outX * shadowWidth, y: end.y + outY * shadowWidth },
         { x: start.x + outX * shadowWidth, y: start.y + outY * shadowWidth }]);
       context.fillStyle = this.easedGradient(context, start, out, shadowWidth, this.flatFlapShadowColor);
       context.fill(strip);
     }
+    // 两条纸边各自向外落的窄条在纸角外侧留下一块楔形空缺，阴影在角上缺一块。
+    // 以纸角为圆心、按同样的衰减补一段扇形，把两条阴影连成圆角。
+    for (let index = 0; index < flap.length; index++) {
+      const previous = outs[(index + flap.length - 1) % flap.length];
+      const current = outs[index];
+      if (previous && current) {
+        this.fillCornerShadow(context, flap[index], previous, current, shadowWidth);
+      }
+    }
     context.restore();
+  }
+
+  // 纸角 corner 处，从外法线 from 转到 to 的扇形阴影；角度取两者之间小于 180° 的那一侧，即纸背外侧。
+  private fillCornerShadow(context: CanvasRenderingContext2D, corner: FoldPoint, from: FoldPoint, to: FoldPoint,
+    radius: number): void {
+    const start = Math.atan2(from.y, from.x);
+    let sweep = Math.atan2(to.y, to.x) - start;
+    while (sweep > Math.PI) sweep -= Math.PI * 2;
+    while (sweep < -Math.PI) sweep += Math.PI * 2;
+    if (Math.abs(sweep) < 0.01) {
+      return;
+    }
+    const wedge = new Path2D();
+    wedge.moveTo(corner.x, corner.y);
+    // 扇形外缘略大于阴影半径，渐变到半径处已全透明，多出的部分不可见；与两侧窄条各重叠一点，避免接缝处漏光。
+    const reach = radius * 1.05;
+    const steps = Math.max(2, Math.ceil(Math.abs(sweep) / (Math.PI / 12)));
+    const overlap = 0.02 * (sweep > 0 ? 1 : -1);
+    for (let step = 0; step <= steps; step++) {
+      const angle = start - overlap + (sweep + overlap * 2) * step / steps;
+      wedge.lineTo(corner.x + Math.cos(angle) * reach, corner.y + Math.sin(angle) * reach);
+    }
+    wedge.closePath();
+    context.fillStyle = this.easedRadialGradient(context, corner, radius, this.flatFlapShadowColor);
+    context.fill(wedge);
+  }
+
+  // easedGradient 的径向版本：圆心最深，到 radius 处按 (1-t)² 衰减为全透明。
+  private easedRadialGradient(context: CanvasRenderingContext2D, center: FoldPoint, radius: number,
+    color: string): CanvasGradient {
+    const rgba = color.match(/^rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)$/i);
+    const rgb = rgba ? `${rgba[1]},${rgba[2]},${rgba[3]}` : '0,0,0';
+    const alpha = rgba ? Number(rgba[4]) : 0.3;
+    const gradient = context.createRadialGradient(center.x, center.y, 0, center.x, center.y, Math.max(0.5, radius));
+    const steps = 6;
+    for (let index = 0; index <= steps; index++) {
+      const t = index / steps;
+      const strength = (1 - t) * (1 - t);
+      gradient.addColorStop(t, `rgba(${rgb},${(alpha * strength).toFixed(4)})`);
+    }
+    return gradient;
   }
 
   // 纸背的外侧纸边描一条细线，把纸背和下层页面分开。

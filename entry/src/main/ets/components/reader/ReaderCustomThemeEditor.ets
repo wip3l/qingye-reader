@@ -10,6 +10,8 @@ import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { HexColor } from '../../utils/HexColor';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
+import { ReaderBackgroundDisplay } from '../../utils/ReaderBackgroundDisplay';
+import { ReaderBackgroundDisplayControl } from './ReaderBackgroundDisplayControl';
 
 /**
  * 阅读页"自定义"配色的编辑器：多套方案的新增、删除、改名，背景色或背景图片，文字颜色。
@@ -22,6 +24,10 @@ export struct ReaderCustomThemeEditor {
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @Prop dark: boolean = false;
   @Prop textColor: string = '#202124';
+  @Prop subTextColor: string = '#666666';
+  /** 背景在阅读页铺开的大小，决定取景滑杆是上下还是左右；不传时按屏幕。 */
+  @Prop viewportWidth: number = 0;
+  @Prop viewportHeight: number = 0;
   @Prop accentColor: string = '#0A59F7';
   @Prop menuColor: string = '#FFFFFF';
   onChanged: () => void = (): void => {
@@ -63,11 +69,6 @@ export struct ReaderCustomThemeEditor {
 
   private backgroundTypeIndex(): number {
     return this.scheme().backgroundType === 'image' ? 1 : 0;
-  }
-
-  private fitIndex(): number {
-    const fit = this.scheme().backgroundImageFit;
-    return fit === 'contain' ? 1 : (fit === 'fill' ? 2 : 0);
   }
 
   private fieldColor(): string {
@@ -165,10 +166,14 @@ export struct ReaderCustomThemeEditor {
     this.persist(data);
   }
 
-  private setImageFit(index: number): void {
-    const fits = ['cover', 'contain', 'fill'];
+  /** 拖动取景途中不保存：自定义背景一改就会重排正文，松手时再存。 */
+  private setDisplay(display: ReaderBackgroundDisplay, commit: boolean): void {
+    if (!commit) return;
     const data = this.data();
-    ReaderCustomThemeHelper.selected(data, this.appDarkMode).backgroundImageFit = fits[index] || 'cover';
+    const current = ReaderCustomThemeHelper.selected(data, this.appDarkMode);
+    current.backgroundImageFit = display.fit;
+    current.backgroundImagePosition = display.position;
+    current.backgroundImageGap = display.gap;
     this.persist(data);
   }
 
@@ -290,29 +295,25 @@ export struct ReaderCustomThemeEditor {
               .backgroundColor(this.fieldColor())
               .fontColor(this.textColor)
               .onClick(() => this.clearImage())
-            Select([{ value: '裁剪填充' }, { value: '完整显示' }, { value: '拉伸铺满' }])
-              .selected(this.fitIndex())
-              .value(['裁剪填充', '完整显示', '拉伸铺满'][this.fitIndex()])
-              .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
-              .optionFont({ family: this.applicationFontFamily })
-              .selectedOptionFont({ family: this.applicationFontFamily })
-              .fontColor(this.textColor)
-              .backgroundColor(this.fieldColor())
-              .borderRadius(16)
-              .border({ width: 0 })
-              .layoutWeight(1)
-              .divider(null)
-              .optionBgColor(Color.Transparent)
-              .optionFontColor(this.textColor)
-              .selectedOptionFontColor(this.accentColor)
-              .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.dark))
-              .menuBackgroundColor(this.menuColor)
-              .menuBackgroundBlurStyle(BlurStyle.NONE)
-              .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel, this.dark, this.menuColor))
-              .onSelect((index: number) => this.setImageFit(index))
           }
         }
         .width('100%')
+
+        if (this.scheme().backgroundImageUri) {
+          ReaderBackgroundDisplayControl({
+            fit: this.scheme().backgroundImageFit,
+            cropPosition: this.scheme().backgroundImagePosition,
+            gap: this.scheme().backgroundImageGap,
+            imageUri: this.scheme().backgroundImageUri,
+            viewportWidth: this.viewportWidth,
+            viewportHeight: this.viewportHeight,
+            dark: this.dark,
+            textColor: this.textColor,
+            subTextColor: this.subTextColor,
+            accentColor: this.accentColor,
+            onChange: (display: ReaderBackgroundDisplay, commit: boolean): void => this.setDisplay(display, commit)
+          })
+        }
       }
 
       AdaptiveColorPicker({

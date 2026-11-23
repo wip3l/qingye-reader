@@ -3,7 +3,9 @@ import fs from '@ohos.file.fs';
 import { fileUri } from '../platform/FileUri';
 import hash from '@ohos.file.hash';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
+import { DefaultBaseRevision } from '../theme/ThemeModels';
 import { InstalledThemePack, ThemePackRecord, ThemePackRegistry } from '../theme/ThemePackRegistry';
+import { CloudThemeChange } from '../account/CloudThemeChange';
 import {
   assetPath,
   checkSvgSource,
@@ -60,6 +62,15 @@ export class ThemePackStore {
     return count;
   }
 
+  /**
+   * 桌面卡片跑在单独的进程里，不经过 EntryAbility 的冷启动加载，每次出数据前整份重读：
+   * 应用里新装、改过或删掉的包要同步过来。清空和重读之间没有 await，并发的卡片更新看不到半份注册表。
+   */
+  static async reloadInstalled(context: Context): Promise<number> {
+    ThemePackRegistry.clear();
+    return ThemePackStore.loadInstalled(context);
+  }
+
   static isLoaded(): boolean {
     return ThemePackStore.loaded;
   }
@@ -74,6 +85,20 @@ export class ThemePackStore {
     const installed = ThemePackStore.readInstalled(context, record.packageId);
     if (!installed) {
       throw new Error('主题包安装后无法读取');
+    }
+    ThemePackRegistry.register(installed);
+    CloudThemeChange.notify();
+    return installed;
+  }
+
+  /**
+   * 注册已经整包放进目录的主题包（云同步下载的），不重写 pack.json：
+   * 云端按文件内容比对新旧，重写会让两台设备永远对不上。
+   */
+  static registerExisting(context: Context, packageId: string): InstalledThemePack {
+    const installed = ThemePackStore.readInstalled(context, packageId);
+    if (!installed) {
+      throw new Error('主题包无法读取');
     }
     ThemePackRegistry.register(installed);
     return installed;
@@ -91,6 +116,7 @@ export class ThemePackStore {
   static uninstall(context: Context, packageId: string): void {
     ThemePackRegistry.unregister(packageId);
     ThemePackStore.removeDir(ThemePackStore.packDir(context, packageId));
+    CloudThemeChange.notify();
   }
 
   /** 删掉没有任何方案再引用的包（注册表里的和只剩目录的都算）。 */
@@ -128,7 +154,9 @@ export class ThemePackStore {
     record.author = parsed.author || '';
     record.version = parsed.version || '';
     record.description = parsed.description || '';
-    record.baseTheme = parsed.baseTheme || '';
+    // 素笺之前装的包：没写的部件原本取自旧默认主题。
+    record.baseTheme = DefaultBaseRevision.isLegacy(parsed.baseRevision) ?
+      DefaultBaseRevision.upgradeId(parsed.baseTheme || '') : (parsed.baseTheme || '');
     record.installedAt = parsed.installedAt || 0;
     record.credits = parsed.credits || null;
     record.navFallbackIconPackId = parsed.navFallbackIconPackId || '';
@@ -260,7 +288,9 @@ export class ThemePackStore {
     parts.ttsPanelLight = source.ttsPanelLight || null;
     parts.ttsPanelDark = source.ttsPanelDark || null;
     parts.navigation = source.navigation || null;
+    parts.navigationDark = source.navigationDark || null;
     parts.book = source.book || null;
+    if (parts.book && !parts.book.shelfFrameDark) parts.book.shelfFrameDark = '';
     if (parts.book && !Array.isArray(parts.book.covers)) parts.book.covers = [];
     if (parts.book && !Array.isArray(parts.book.coverCrops)) parts.book.coverCrops = [];
     if (parts.book && !Array.isArray(parts.book.coversDark)) parts.book.coversDark = [];
@@ -268,9 +298,19 @@ export class ThemePackStore {
     if (parts.book && !parts.book.shelfFolderCrop) parts.book.shelfFolderCrop = null;
     if (parts.book && !parts.book.shelfFolderDark) parts.book.shelfFolderDark = '';
     if (parts.book && !parts.book.shelfFolderCropDark) parts.book.shelfFolderCropDark = null;
+    // 本机旧记录里没有“不用”标记。
+    if (parts.book) {
+      parts.book.noShelfFrame = parts.book.noShelfFrame === true;
+      parts.book.noShelfFrameDark = parts.book.noShelfFrameDark === true;
+      parts.book.noShelfFolder = parts.book.noShelfFolder === true;
+      parts.book.noShelfFolderDark = parts.book.noShelfFolderDark === true;
+    }
     parts.startupLight = source.startupLight || null;
     parts.startupDark = source.startupDark || null;
     parts.bubble = source.bubble || null;
+    parts.bubbleDark = source.bubbleDark || null;
+    parts.titleBubble = source.titleBubble || null;
+    parts.titleBubbleDark = source.titleBubbleDark || null;
     parts.homeBackdropLight = source.homeBackdropLight || '';
     parts.homeBackdropDark = source.homeBackdropDark || '';
     parts.homeBackdropLightCrop = source.homeBackdropLightCrop || null;

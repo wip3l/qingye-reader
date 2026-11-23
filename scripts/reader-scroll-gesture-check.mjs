@@ -30,7 +30,8 @@ function fixture() {
     readerComicChapterSwitching: false, currentChapterIndex: 1, chapters: [{}, {}, {}],
     isReaderContinuousScrollSurfaceActive: () => true,
     cancelContinuousReaderSelectionTimer: () => pointerActions.push('cancel-selection'),
-    pauseReaderAutoScroll: () => pointerActions.push('pause-auto-scroll'),
+    holdReaderAutoScrollForDrag: () => pointerActions.push('hold-auto-scroll'),
+    releaseReaderAutoScrollDragHold: () => pointerActions.push('release-auto-scroll'),
     stopReaderComicScreenScroll: () => stopped++,
     resetReaderComicBoundaryFeedback: () => {
       p.readerComicBoundaryDirection = 0;
@@ -54,7 +55,7 @@ for (const sign of [-1, 1]) {
   h.p.beginReaderContinuousPan({ offsetY: sign });
   assert.equal(h.position(), 400 - sign);
   assert.equal(h.p.readerContinuousSelectionMoved, true);
-  assert.deepEqual(h.pointerActions, ['cancel-selection', 'pause-auto-scroll']);
+  assert.deepEqual(h.pointerActions, ['cancel-selection', 'hold-auto-scroll']);
   h.p.updateReaderComicPan({ offsetY: sign * 2 });
   h.p.updateReaderComicPan({ offsetY: sign * 3 });
   assert.deepEqual(h.moves, [-sign, -sign, -sign], 'recognition displacement is neither lost nor doubled');

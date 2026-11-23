@@ -1,6 +1,7 @@
 import image from '@ohos.multimedia.image';
 import drawing from '@ohos.graphics.drawing';
 import common2D from '@ohos.graphics.common2D';
+import graphicsText from '@ohos.graphics.text';
 import { ReaderV2PageLayout } from './ReaderV2PageLayout';
 import { ReaderV2PagePainter } from './ReaderV2PagePainter';
 
@@ -15,6 +16,8 @@ export class ReaderRasterImage {
   rotation: number;
   /** Fit the bitmap inside the rect keeping its aspect ratio, centred (ArkUI ImageFit.Contain). */
   contain: boolean;
+  /** Gaussian blur sigma in surface pixels (the blurred backdrop behind a contained background image); 0 is sharp. */
+  blurSigma: number = 0;
 
   constructor(pixelMap: image.PixelMap, left: number, top: number, right: number, bottom: number,
     rotation: number = 0, contain: boolean = false) {
@@ -54,18 +57,79 @@ export class ReaderRasterPageRequest {
   }
 }
 
+/**
+ * One line of header/footer text, drawn inside the rect its live Text node occupies (unscaled surface pixels) so the
+ * turning sheet carries the same metadata row as the page on screen.
+ */
+export class ReaderRasterText {
+  text: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  fontSizePx: number;
+  color: string;
+  /** 0–1, multiplied into the colour's alpha (the slot opacity of the live row). */
+  opacity: number;
+  fontFamilies: string[];
+
+  constructor(text: string, left: number, top: number, width: number, height: number, fontSizePx: number,
+    color: string, opacity: number, fontFamilies: string[]) {
+    this.text = text;
+    this.left = left;
+    this.top = top;
+    this.width = width;
+    this.height = height;
+    this.fontSizePx = fontSizePx;
+    this.color = color;
+    this.opacity = opacity;
+    this.fontFamilies = fontFamilies;
+  }
+}
+
+/** A rounded rectangle of the header/footer row (battery outline and level, progress bar, divider). */
+export class ReaderRasterRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  radius: number;
+  color: string;
+  opacity: number;
+  /** > 0 strokes the outline with this width instead of filling. */
+  strokeWidth: number;
+
+  constructor(left: number, top: number, right: number, bottom: number, radius: number, color: string,
+    opacity: number, strokeWidth: number = 0) {
+    this.left = left;
+    this.top = top;
+    this.right = right;
+    this.bottom = bottom;
+    this.radius = radius;
+    this.color = color;
+    this.opacity = opacity;
+    this.strokeWidth = strokeWidth;
+  }
+}
+
 export class ReaderPageRasterSpec {
   /** Unscaled surface size in pixels; the bitmap is this size times scale. */
   widthPx: number = 0;
   heightPx: number = 0;
   scale: number = 1;
   paperColor: string = '#FFFFFF';
-  /** A custom theme background image already decoded at raster resolution, drawn exactly into its rect. */
-  background: ReaderRasterImage | null = null;
+  /**
+   * The whole-image background as drawn layers, bottom first: a blurred backdrop, the image itself, or one entry per
+   * tile. Each is already decoded at raster resolution and drawn exactly into its rect.
+   */
+  backgrounds: ReaderRasterImage[] = [];
   decorations: ReaderRasterImage[] = [];
   pages: ReaderRasterPage[] = [];
   images: ReaderRasterImage[] = [];
   caps: ReaderRasterImage[] = [];
+  /** Header/footer row drawn last, above the page. */
+  infoRects: ReaderRasterRect[] = [];
+  infoTexts: ReaderRasterText[] = [];
 }
 
 /**
@@ -95,7 +159,13 @@ export class ReaderPageRasterizer {
       canvas.drawRect(0, 0, spec.widthPx, spec.heightPx);
       canvas.detachBrush();
       const sampling = new drawing.SamplingOptions(drawing.FilterMode.FILTER_MODE_LINEAR);
-      if (spec.background) ReaderPageRasterizer.drawImage(canvas, spec.background, sampling);
+      if (spec.backgrounds.length > 0) {
+        // Layers and tiles may run past the surface (a cropped cover, a scaled backdrop); keep them on the sheet.
+        canvas.save();
+        canvas.clipRect({ left: 0, top: 0, right: spec.widthPx, bottom: spec.heightPx });
+        for (const layer of spec.backgrounds) ReaderPageRasterizer.drawImage(canvas, layer, sampling);
+        canvas.restore();
+      }
       for (const decoration of spec.decorations) ReaderPageRasterizer.drawImage(canvas, decoration, sampling);
       for (const page of spec.pages) {
         canvas.save();
@@ -105,6 +175,8 @@ export class ReaderPageRasterizer {
       }
       for (const picture of spec.images) ReaderPageRasterizer.drawImage(canvas, picture, sampling);
       for (const cap of spec.caps) ReaderPageRasterizer.drawImage(canvas, cap, sampling);
+      for (const rect of spec.infoRects) ReaderPageRasterizer.drawRect(canvas, rect);
+      for (const text of spec.infoTexts) ReaderPageRasterizer.drawText(canvas, text);
       return pixelMap;
     } catch (error) {
       console.warn('[ReaderRaster] page raster failed:', error);
@@ -129,7 +201,7 @@ export class ReaderPageRasterizer {
     return image.createPixelMapSync(new ArrayBuffer(width * height * 4), options);
   }
 
-  private static drawImage(canvas: drawing.Canvas, item: ReaderRasterImage, sampling: drawing.SamplingOptions): void {
+  static drawImage(canvas: drawing.Canvas, item: ReaderRasterImage, sampling: drawing.SamplingOptions): void {
     let left = item.left;
     let top = item.top;
     let right = item.right;
@@ -150,6 +222,16 @@ export class ReaderPageRasterizer {
       bottom = centerY + fitHeight / 2;
     }
     const rect: common2D.Rect = { left: left, top: top, right: right, bottom: bottom };
+    if (item.blurSigma > 0) {
+      // The blur is applied when the layer is restored, like ArkUI's content blur on the live Image.
+      const brush = new drawing.Brush();
+      brush.setImageFilter(drawing.ImageFilter.createBlurImageFilter(item.blurSigma, item.blurSigma,
+        drawing.TileMode.CLAMP));
+      canvas.saveLayer(rect, brush);
+      canvas.drawImageRect(item.pixelMap, rect, sampling);
+      canvas.restore();
+      return;
+    }
     if (item.rotation) {
       canvas.save();
       canvas.rotate(item.rotation, (left + right) / 2, (top + bottom) / 2);
@@ -158,6 +240,62 @@ export class ReaderPageRasterizer {
       return;
     }
     canvas.drawImageRect(item.pixelMap, rect, sampling);
+  }
+
+  private static fadedColor(value: string, opacity: number): common2D.Color {
+    const color = ReaderPageRasterizer.parseColor(value);
+    color.alpha = Math.round(color.alpha * Math.max(0, Math.min(1, opacity)));
+    return color;
+  }
+
+  private static drawRect(canvas: drawing.Canvas, item: ReaderRasterRect): void {
+    if (item.right <= item.left || item.bottom <= item.top) return;
+    const color = ReaderPageRasterizer.fadedColor(item.color, item.opacity);
+    if (color.alpha <= 0) return;
+    // ArkUI draws a border inside the node's box: inset the stroke by half its width.
+    const inset = item.strokeWidth > 0 ? item.strokeWidth / 2 : 0;
+    const rect: common2D.Rect = {
+      left: item.left + inset, top: item.top + inset, right: item.right - inset, bottom: item.bottom - inset
+    };
+    const radius = Math.max(0, Math.min(item.radius - inset, (rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2));
+    const round = new drawing.RoundRect(rect, radius, radius);
+    if (item.strokeWidth > 0) {
+      const pen = new drawing.Pen();
+      pen.setAntiAlias(true);
+      pen.setColor(color);
+      pen.setStrokeWidth(item.strokeWidth);
+      canvas.attachPen(pen);
+      canvas.drawRoundRect(round);
+      canvas.detachPen();
+      return;
+    }
+    const brush = new drawing.Brush();
+    brush.setAntiAlias(true);
+    brush.setColor(color);
+    canvas.attachBrush(brush);
+    canvas.drawRoundRect(round);
+    canvas.detachBrush();
+  }
+
+  private static drawText(canvas: drawing.Canvas, item: ReaderRasterText): void {
+    if (!item.text || item.width <= 0) return;
+    const style: graphicsText.TextStyle = {
+      color: ReaderPageRasterizer.fadedColor(item.color, item.opacity),
+      fontSize: item.fontSizePx,
+      fontFamilies: item.fontFamilies,
+      ellipsis: '…',
+      ellipsisMode: graphicsText.EllipsisMode.END
+    };
+    const builder = new graphicsText.ParagraphBuilder({ textStyle: style, maxLines: 1 },
+      graphicsText.FontCollection.getGlobalInstance());
+    builder.pushStyle(style);
+    builder.addText(item.text);
+    builder.popStyle();
+    const paragraph = builder.build();
+    // The node is as wide as its laid-out line; a little slack keeps rounding from ellipsizing a line that fits.
+    paragraph.layoutSync(item.width + 2);
+    // The live Text uses a line box as tall as the font size with the glyphs centred in it.
+    paragraph.paint(canvas, item.left, item.top + (item.height - paragraph.getHeight()) / 2);
   }
 
   /** '#RGB', '#RRGGBB', '#AARRGGBB', 'rgb(r,g,b)' and 'rgba(r,g,b,a)'; anything else is opaque white. */

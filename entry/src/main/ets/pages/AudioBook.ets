@@ -25,6 +25,8 @@ import { AudioBookAvSessionHolder } from '../utils/AudioBookMediaSession';
 import { ReaderCacheBudgetPolicy } from '../core/book/ReaderCacheBudgetPolicy';
 import { AudioStartTiming, RemoteAudioPlayback, RemoteAudioPlaybackListener } from '../utils/RemoteAudioPlayback';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
+import { PlaybackSpeed } from '../utils/PlaybackSpeed';
+import { AudioSkipRange } from '../utils/AudioSkipRange';
 import { BookCoverCache } from '../utils/BookCoverCache';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
@@ -38,6 +40,12 @@ import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
+import { SearchExplorePendingBook } from '../utils/SearchExplorePendingBook';
+import { SearchBookShelfHelper } from '../utils/SearchBookShelfHelper';
+import { NewBookGroupStore } from '../utils/NewBookGroupStore';
+import { NewBookGroup } from '../utils/NewBookGroup';
+import { BookMarkService } from '../core/mark/BookMarkService';
+import { PendingTrialBookCleanup } from '../utils/PendingTrialBookCleanup';
 
 /** 书源解析出音频地址的总时限。WebView 嗅探本身最多 15 秒，失败后还会回退 HTTP 规则。 */
 const AUDIO_URL_RESOLVE_TIMEOUT_MS = 30000;
@@ -79,9 +87,14 @@ struct AudioBookPage {
   @StorageLink('appDarkAccentColor') appDarkAccentColor: string = '#4E9BFF';
   @StorageLink('appThemeBookCoverEnabled') @Watch('onThemeBookCoverChanged')
   themeBookCoverEnabled: boolean = false;
+  @StorageLink('appThemeBookFrameEnabled') @Watch('onThemeBookCoverChanged')
+  themeBookFrameEnabled: boolean = false;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   @State book: Book | null = null;
+  /** 从搜索、发现试听的临时书为 false：播放面板右上角显示“加入书架”而不是“下载”。 */
+  @State bookOnShelf: boolean = true;
+  private addingToShelf: boolean = false;
   @State chapters: BookChapter[] = [];
   /** 已下载音频的章节序号 → 下载时间。 */
   @State offlineChapterDates: Map<number, number> = new Map();
@@ -135,6 +148,25 @@ struct AudioBookPage {
   private progressSaveTimerId: number = -1;
   private progressSaveQueue: Promise<void> = Promise.resolve();
   private sleepTimerId: number = -1;
+  private speedSaveTimerId: number = -1;
+  private skipSaveTimerId: number = -1;
+  /** 本书跳过的片头、片尾秒数，见 AudioSkipRange。 */
+  private skipHeadSeconds: number = 0;
+  private skipTailSeconds: number = 0;
+  /** 从片头之后开始播放的章节；等知道总时长后核对是否够长、再弹提示。-1 表示没有。 */
+  private headSkipPendingChapter: number = -1;
+  /** 跳片尾进入的下一章跳片头时不再单独提示，跳片尾的提示已经说过了。 */
+  private headSkipQuiet: boolean = false;
+  private nextHeadSkipQuiet: boolean = false;
+  /** 用户点了“听完上集”的章节：这一章不再跳片尾。 */
+  private tailSkipDisabledChapter: number = -1;
+  private lastObservedPositionMs: number = 0;
+  private lastObservedAt: number = 0;
+  /** 最近一次跳过，提示还在时可以撤回。 */
+  private skipUndoKind: string = '';
+  private skipUndoChapter: number = -1;
+  private skipUndoDurationMs: number = 0;
+  private skipUndoExpiresAt: number = 0;
   private playbackRetryCount: number = 0;
   private chapterDataSource: CatalogTitleDataSource = new CatalogTitleDataSource();
   private chapterScroller: ListScroller = new ListScroller();
@@ -250,6 +282,10 @@ struct AudioBookPage {
         onOpenVoice: () => this.openVoiceDialog(),
         onOpenCatalog: () => this.openChapterList(),
         hostDownloadAvailable: !!this.book && this.book.origin !== 'local',
+        hostOnShelf: !this.book || this.bookOnShelf,
+        onAddToShelf: () => {
+          this.addBookToShelf().catch((error: Error) => console.warn('听书页加入书架失败:', error));
+        },
         onOpenDownload: () => {
           this.openOfflineMenu(this.getUIContext()).catch((error: Error) => console.warn('打开离线下载菜单失败:', error));
         },
@@ -362,7 +398,7 @@ struct AudioBookPage {
       this.audioChapterControl($r('sys.symbol.arrow_left'), '上一章', -1)
       this.audioPlaybackControl()
       this.audioChapterControl($r('sys.symbol.arrow_right'), '下一章', 1)
-      this.audioPanelControl($r('sys.symbol.hourglass'), `${this.speed.toFixed(1)}x`, true,
+      this.audioPanelControl($r('sys.symbol.hourglass'), `${PlaybackSpeed.label(this.speed)}x`, true,
         () => this.audioOptionsPanel = this.audioOptionsPanel === 2 ? 0 : 2)
     }
     .width('100%')
@@ -597,11 +633,9 @@ struct AudioBookPage {
   @Builder
   speedSection() {
     Row({ space: AppSpacing.MD }) {
-      this.audioSpeedChip(0.8)
-      this.audioSpeedChip(1.0)
-      this.audioSpeedChip(1.2)
-      this.audioSpeedChip(1.5)
-      this.audioSpeedChip(2.0)
+      ForEach(PlaybackSpeed.PRESETS, (value: number) => {
+        this.audioSpeedChip(value)
+      }, (value: number) => value.toString())
     }
     .width('100%')
   }
@@ -621,7 +655,7 @@ struct AudioBookPage {
 
   @Builder
   audioSpeedChip(value: number) {
-    Text(`${value.toFixed(1)}x`)
+    Text(`${PlaybackSpeed.label(value)}x`)
       .fontSize(AppFontSize.CAPTION)
       .fontWeight(Math.abs(this.speed - value) < 0.01 ? FontWeight.Bold : FontWeight.Regular)
       .fontColor(Math.abs(this.speed - value) < 0.01 ? '#FFFFFF' : this.primaryTextColor())
@@ -729,9 +763,12 @@ struct AudioBookPage {
       BookTypeSupport.applyBookType(storedBook, this.source);
       storedBook.type = storedBook.type || BookTypeSupport.AUDIO;
       this.book = storedBook;
+      this.bookOnShelf = !SearchExplorePendingBook.isPendingAddToShelf(storedBook);
       this.audioVoiceCode = storedBook.getVariable('custom') || '';
       this.refreshVoiceOptions();
       this.speed = this.savedSpeed(storedBook);
+      this.skipHeadSeconds = AudioSkipRange.parse(storedBook.getVariable(AudioSkipRange.HEAD_KEY));
+      this.skipTailSeconds = AudioSkipRange.parse(storedBook.getVariable(AudioSkipRange.TAIL_KEY));
       const engine = ReadBookEngine.get();
       const requestedBookUrl = storedBook.bookUrl;
       await engine.openBook(storedBook);
@@ -837,6 +874,14 @@ struct AudioBookPage {
     let timedOut = false;
     // 被新的选章取代或超时后，书源请求在取消检查点停下，不再占着书源的请求频率额度。
     const cancelled = (): boolean => timedOut || serial !== this.loadingSerial;
+    // 从章首开始播放时直接从片头之后开始；这一章够不够长要等播放器报出总时长再核对。
+    const skipHead = startPositionMs <= 0 && this.skipHeadSeconds > 0;
+    if (skipHead) startPositionMs = this.skipHeadSeconds * 1000;
+    this.headSkipPendingChapter = skipHead ? chapterIndex : -1;
+    this.headSkipQuiet = this.nextHeadSkipQuiet;
+    this.nextHeadSkipQuiet = false;
+    this.lastObservedPositionMs = Math.max(0, startPositionMs);
+    this.lastObservedAt = Date.now();
     this.latestPositionMs = Math.max(0, startPositionMs);
     this.latestDurationMs = 0;
     if (this.pageVisible) {
@@ -869,7 +914,7 @@ struct AudioBookPage {
         timing.mark('resolve-url');
         if (serial !== this.loadingSerial) return;
         const url = AudioUrlResolver.resolveAudioUrl(content, chapter.url || book.bookUrl || this.source?.bookSourceUrl || '');
-        if (!url) throw new Error(AudioUrlResolver.invalidAudioAddressMessage(content));
+        if (!url) throw new Error(AudioUrlResolver.invalidAudioAddressMessage(content, engine.contentError(chapterIndex)));
         const headers = AudioUrlResolver.audioHeaders(url, this.source, content);
         await this.playback.play(book.bookUrl, chapterIndex, url, headers, startPositionMs, this.speed, timing);
       }
@@ -977,11 +1022,12 @@ struct AudioBookPage {
     });
   }
 
-  async selectChapter(index: number): Promise<void> {
+  async selectChapter(index: number, startPositionMs: number = 0): Promise<void> {
     if (index < 0 || index >= this.chapters.length || index === this.chapterIndex) {
       this.closeChapterList();
       return;
     }
+    if (index !== this.tailSkipDisabledChapter) this.tailSkipDisabledChapter = -1;
     // 上一章还在取地址或缓冲时也允许直接改选：playCurrentChapter 让旧加载失效并取消它的书源请求。
     // 以前这里会锁住切章，慢书源上点了没反应，只能等它加载完或超时。
     // saveProgressNow 在第一个 await 之前就记下了当前章节和进度，所以可以先发出再改 chapterIndex。
@@ -992,7 +1038,7 @@ struct AudioBookPage {
     this.latestPositionMs = 0;
     this.latestDurationMs = 0;
     this.closeChapterList();
-    await Promise.all([savePrevious, this.playCurrentChapter(0)]);
+    await Promise.all([savePrevious, this.playCurrentChapter(startPositionMs)]);
   }
 
   handleMediaChapterCommand(offset: number): void {
@@ -1033,6 +1079,7 @@ struct AudioBookPage {
   }
 
   onPlaybackPositionChanged(positionMs: number, durationMs: number): void {
+    if (this.applySkipRange(positionMs, durationMs)) return;
     this.latestPositionMs = positionMs;
     this.latestDurationMs = durationMs;
     if (this.pageVisible) {
@@ -1050,6 +1097,111 @@ struct AudioBookPage {
       this.updateAudioAvSessionState(this.isPlaying() ? avSession.PlaybackState.PLAYBACK_STATE_PLAY :
         avSession.PlaybackState.PLAYBACK_STATE_PAUSE).catch(() => {});
     }
+  }
+
+  /**
+   * 进度回调里处理跳过：从片头之后开始的章节报出总时长后，太短就退回章首，否则提示已跳过；
+   * 正常播放越过片尾起点时直接进下一章。返回 true 表示已经切走，这次回调不再往下处理。
+   */
+  private applySkipRange(positionMs: number, durationMs: number): boolean {
+    const previous = this.lastObservedPositionMs;
+    const now = Date.now();
+    const elapsedMs = now - this.lastObservedAt;
+    this.lastObservedPositionMs = positionMs;
+    this.lastObservedAt = now;
+    if (durationMs <= 0) return false;
+    const fits = AudioSkipRange.fits(durationMs, this.skipHeadSeconds, this.skipTailSeconds);
+    if (this.headSkipPendingChapter === this.chapterIndex) {
+      this.headSkipPendingChapter = -1;
+      if (!fits) {
+        this.seekTo(0);
+        return true;
+      }
+      if (!this.headSkipQuiet) {
+        this.offerSkipUndo('head', durationMs);
+        ReaderTtsFloatingSession.showAudioSkipNotice(this.floatingSessionOwnerId,
+          `已跳过片头 ${AudioSkipRange.label(this.skipHeadSeconds)}`, '从头听');
+      }
+    }
+    if (!fits || !this.isPlaying() || this.chapterIndex >= this.chapters.length - 1 ||
+      this.tailSkipDisabledChapter === this.chapterIndex ||
+      !AudioSkipRange.crossedTail(previous, positionMs, durationMs, this.skipTailSeconds, elapsedMs, this.speed)) {
+      return false;
+    }
+    this.offerSkipUndo('tail', durationMs);
+    this.nextHeadSkipQuiet = true;
+    ReaderTtsFloatingSession.showAudioSkipNotice(this.floatingSessionOwnerId, '已跳过片尾', '听完上集');
+    this.selectChapter(this.chapterIndex + 1).catch((error: Error) => console.warn('跳过片尾切章失败:', error));
+    return true;
+  }
+
+  private offerSkipUndo(kind: string, durationMs: number): void {
+    this.skipUndoKind = kind;
+    this.skipUndoChapter = this.chapterIndex;
+    this.skipUndoDurationMs = durationMs;
+    // 面板上的提示显示 3 秒，这里多留一点，免得刚好点在消失前一刻却没反应。
+    this.skipUndoExpiresAt = Date.now() + 5000;
+  }
+
+  /** 撤回最近一次跳过：片头回到章首；片尾回到上一章的片尾起点，并且那一章不再跳片尾。 */
+  undoSkip(): void {
+    const kind = this.skipUndoKind;
+    const chapter = this.skipUndoChapter;
+    this.skipUndoKind = '';
+    if (!kind || Date.now() > this.skipUndoExpiresAt) return;
+    if (kind === 'head') {
+      if (chapter === this.chapterIndex) this.seekTo(0);
+      return;
+    }
+    if (chapter !== this.chapterIndex - 1) return;
+    this.headSkipPendingChapter = -1;
+    this.tailSkipDisabledChapter = chapter;
+    // 起点至少 1 毫秒：从 0 开始会被当成章首再跳一次片头。
+    const start = Math.max(1, this.skipUndoDurationMs - this.skipTailSeconds * 1000);
+    this.selectChapter(chapter, start).catch((error: Error) => console.warn('撤回跳过片尾失败:', error));
+  }
+
+  /** 页面进度条、面板、通知栏的定位都走这里。 */
+  seekTo(positionMs: number): void {
+    const target = Math.max(0, Math.min(positionMs, this.latestDurationMs || positionMs));
+    this.latestPositionMs = target;
+    this.lastObservedPositionMs = target;
+    this.lastObservedAt = Date.now();
+    if (this.pageVisible) this.positionMs = target;
+    this.playback.seek(target);
+    this.scheduleProgressSave();
+  }
+
+  /** 前进/后退：按播放器的实时位置算，停在章末前 1 秒，免得直接触发播完。 */
+  seekBy(deltaMs: number): void {
+    if (!this.book || !this.playback.matches(this.book.bookUrl, this.chapterIndex)) return;
+    const duration = this.playback.durationMs || this.latestDurationMs;
+    let target = Math.max(0, this.playback.positionMs + deltaMs);
+    if (duration > 0) target = Math.min(target, Math.max(0, duration - 1000));
+    this.seekTo(target);
+  }
+
+  /** 面板改了片头片尾：立即生效，写库合并成停手后的一次。 */
+  changeSkipRange(headSeconds: number, tailSeconds: number): void {
+    this.skipHeadSeconds = AudioSkipRange.normalize(headSeconds);
+    this.skipTailSeconds = AudioSkipRange.normalize(tailSeconds);
+    ReaderTtsFloatingSession.updateAudioSkip(this.floatingSessionOwnerId, this.skipHeadSeconds, this.skipTailSeconds);
+    const book = this.book;
+    if (!book) return;
+    const head = this.skipHeadSeconds > 0 ? String(this.skipHeadSeconds) : '';
+    const tail = this.skipTailSeconds > 0 ? String(this.skipTailSeconds) : '';
+    book.putVariable(AudioSkipRange.HEAD_KEY, head);
+    book.putVariable(AudioSkipRange.TAIL_KEY, tail);
+    const engineBook = ReadBookEngine.get().book;
+    if (engineBook && engineBook !== book && engineBook.bookUrl === book.bookUrl) {
+      engineBook.putVariable(AudioSkipRange.HEAD_KEY, head);
+      engineBook.putVariable(AudioSkipRange.TAIL_KEY, tail);
+    }
+    if (this.skipSaveTimerId >= 0) clearTimeout(this.skipSaveTimerId);
+    this.skipSaveTimerId = setTimeout(() => {
+      this.skipSaveTimerId = -1;
+      this.queueBookStateSave(book).catch((error: Error) => console.warn('保存跳过片头片尾失败:', error));
+    }, 400);
   }
 
   onPlaybackCompleted(): void {
@@ -1076,13 +1228,20 @@ struct AudioBookPage {
   }
 
   changeSpeed(value: number): void {
-    this.speed = value;
-    this.playback.setSpeed(value);
-    if (this.book) {
-      this.book.putVariable('audioSpeed', String(value));
-      this.queueBookStateSave(this.book).catch((error: Error) => {
-        console.warn('保存听书倍速失败:', error);
-      });
+    const speed = PlaybackSpeed.normalize(value);
+    this.speed = speed;
+    this.playback.setSpeed(speed);
+    const book = this.book;
+    if (book) {
+      book.putVariable('audioSpeed', String(speed));
+      // 拖动倍速滑条时每一格都会进来，合并成停手后的一次写库。
+      if (this.speedSaveTimerId >= 0) clearTimeout(this.speedSaveTimerId);
+      this.speedSaveTimerId = setTimeout(() => {
+        this.speedSaveTimerId = -1;
+        this.queueBookStateSave(book).catch((error: Error) => {
+          console.warn('保存听书倍速失败:', error);
+        });
+      }, 300);
     }
     this.updateFloatingSession();
   }
@@ -1097,14 +1256,32 @@ struct AudioBookPage {
     this.startSleepTimerUi();
   }
 
+  /** 在剩余时间上加时，总时长一起加；没有进行中的定时就新开一个。 */
+  extendSleepTimer(minutes: number): void {
+    if (minutes <= 0) return;
+    if (this.sleepMinutes <= 0 || this.playback.sleepRemainingSeconds() <= 0) {
+      this.setSleepTimer(minutes);
+      return;
+    }
+    this.playback.extendSleepTimer(minutes);
+    this.sleepMinutes += minutes;
+    this.sleepRemainingSeconds = this.playback.sleepRemainingSeconds();
+    ReaderTtsFloatingSession.updateTimer(this.floatingSessionOwnerId, this.sleepMinutes, this.sleepRemainingSeconds);
+    HdsFeedback.showToast(`已延长 ${minutes} 分钟`);
+  }
+
   startSleepTimerUi(): void {
     this.sleepTimerId = setInterval(() => {
       this.sleepRemainingSeconds = this.playback.sleepRemainingSeconds();
       if (this.sleepRemainingSeconds <= 0) {
         this.clearSleepTimer();
         this.sleepMinutes = 0;
+        ReaderTtsFloatingSession.updateTimer(this.floatingSessionOwnerId, 0, 0);
         HdsFeedback.showToast('定时停止已生效');
+        return;
       }
+      // 暂停时没有播放进度回调带着刷新，播放面板的分秒倒计时要靠这里每秒发布。
+      ReaderTtsFloatingSession.updateTimer(this.floatingSessionOwnerId, this.sleepMinutes, this.sleepRemainingSeconds);
     }, 1000);
   }
 
@@ -1291,17 +1468,21 @@ struct AudioBookPage {
       (value: number) => this.changeSpeed(value),
       (minutes: number) => this.setSleepTimer(minutes)
     );
+    ReaderTtsFloatingSession.configureTimerExtend(this.floatingSessionOwnerId,
+      (minutes: number) => this.extendSleepTimer(minutes));
     ReaderTtsFloatingSession.configureAudioControls(
       this.floatingSessionOwnerId,
       this.currentVoiceCode(),
       () => this.openFloatingPanel('voice'),
-      (positionMs: number) => {
-        const target = Math.max(0, Math.min(positionMs, this.latestDurationMs || positionMs));
-        this.latestPositionMs = target;
-        if (this.pageVisible) this.positionMs = target;
-        this.playback.seek(target);
-        this.scheduleProgressSave();
-      }
+      (positionMs: number) => this.seekTo(positionMs)
+    );
+    ReaderTtsFloatingSession.configureAudioSkip(
+      this.floatingSessionOwnerId,
+      this.skipHeadSeconds,
+      this.skipTailSeconds,
+      (headSeconds: number, tailSeconds: number) => this.changeSkipRange(headSeconds, tailSeconds),
+      (deltaMs: number) => this.seekBy(deltaMs),
+      () => this.undoSkip()
     );
     this.publishVoiceChoices();
     ReaderTtsFloatingSession.configureCatalog(
@@ -1328,7 +1509,7 @@ struct AudioBookPage {
     ReaderTtsFloatingSession.updateDetails(
       this.floatingSessionOwnerId,
       this.displayIntro(), '', '', '', this.panelCover(),
-      this.shouldUseThemeBookCover() ? this.activeThemeShelfFrame() : '',
+      this.activeThemeShelfFrame(),
       `${this.chapterIndex + 1}/${Math.max(1, this.chapters.length)}章`,
       this.speed, this.sleepMinutes, this.sleepRemainingSeconds,
       this.chapterIndex > 0, this.chapterIndex < this.chapters.length - 1
@@ -1427,7 +1608,7 @@ struct AudioBookPage {
 
   savedSpeed(book: Book): number {
     const value = Number(book.getVariable('audioSpeed') || 1);
-    return Number.isFinite(value) ? Math.max(0.5, Math.min(2.5, value)) : 1;
+    return PlaybackSpeed.normalize(value);
   }
 
   displayCover(): ResourceStr {
@@ -1439,16 +1620,13 @@ struct AudioBookPage {
     this.updateFloatingSession();
   }
 
-  shouldUseThemeBookCover(): boolean {
-    return ThemeBookCoverSettings.enabled(this.appDarkMode, this.themeBookCoverEnabled);
-  }
-
   panelCover(): ResourceStr {
     return this.displayCover();
   }
 
+  /** 主题边框不论封面来源都套，开关见主题页“主题边框”。 */
   activeThemeShelfFrame(): ResourceStr {
-    return ThemeBookCoverSettings.frame(this.appDarkMode);
+    return ThemeBookCoverSettings.frameIf(this.appDarkMode);
   }
 
   formatDuration(valueMs: number): string {
@@ -1645,6 +1823,11 @@ struct AudioBookPage {
     session.on('playNext', (): void => AudioBookAvSessionHolder.commands?.next());
     session.on('playPrevious', (): void => AudioBookAvSessionHolder.commands?.previous());
     session.on('seek', (time: number): void => AudioBookAvSessionHolder.commands?.seek(time));
+    // 回调参数按文档是秒；没给就按面板上的 15 秒。
+    session.on('fastForward', (time?: number): void =>
+      AudioBookAvSessionHolder.commands?.seekBy(time && time > 0 ? time * 1000 : AudioSkipRange.SEEK_STEP_MS));
+    session.on('rewind', (time?: number): void =>
+      AudioBookAvSessionHolder.commands?.seekBy(-(time && time > 0 ? time * 1000 : AudioSkipRange.SEEK_STEP_MS)));
     session.on('setSpeed', (speed: number): void => AudioBookAvSessionHolder.commands?.setSpeed(speed));
   }
 
@@ -1664,11 +1847,8 @@ struct AudioBookPage {
       },
       next: (): void => this.handleMediaChapterCommand(1),
       previous: (): void => this.handleMediaChapterCommand(-1),
-      seek: (time: number): void => {
-        this.latestPositionMs = Math.max(0, time);
-        this.playback.seek(time);
-        this.scheduleProgressSave();
-      },
+      seek: (time: number): void => this.seekTo(time),
+      seekBy: (deltaMs: number): void => this.seekBy(deltaMs),
       setSpeed: (speed: number): void => this.changeSpeed(speed),
       keepAlive: (): Promise<void> => this.keepAudioBackgroundAlive(),
       refreshMetadata: async (): Promise<void> => {
@@ -1685,6 +1865,8 @@ struct AudioBookPage {
     try { session.off('playNext'); } catch (_) {}
     try { session.off('playPrevious'); } catch (_) {}
     try { session.off('seek'); } catch (_) {}
+    try { session.off('fastForward'); } catch (_) {}
+    try { session.off('rewind'); } catch (_) {}
     try { session.off('setSpeed'); } catch (_) {}
   }
 
@@ -1812,6 +1994,10 @@ struct AudioBookPage {
       author: book.author || '',
       cachedLabel: '已下载',
       summary: this.offlineSummaryText(),
+      onShelf: this.bookOnShelf,
+      addToShelf: (): void => {
+        this.addBookToShelf().catch((error: Error) => console.warn('听书页加入书架失败:', error));
+      },
       openDownload: (ui: UIContext): void => {
         this.openOfflineMenu(ui).catch((error: Error) => console.warn('打开离线下载菜单失败:', error));
       },
@@ -1823,9 +2009,66 @@ struct AudioBookPage {
     });
   }
 
+  /**
+   * 试听的临时书转正入架，和详情页“加入书架”一样套新书默认分组、带上标记标签。
+   * 书架已有同一作品的别的来源时只提示，不在播放中换源。
+   */
+  async addBookToShelf(): Promise<void> {
+    const book = this.book;
+    if (!book || this.bookOnShelf || this.addingToShelf) return;
+    this.addingToShelf = true;
+    try {
+      const context = getContext(this);
+      const db = AppDatabase.getInstance();
+      await db.initWithContext(context);
+      const sameWork = await SearchBookShelfHelper.findSameWorkShelfBook(book, book.bookUrl);
+      if (sameWork) {
+        HdsFeedback.showToast(`书架已有《${sameWork.name || book.name}》（来源：${sameWork.originName || '其他书源'}）`);
+        return;
+      }
+      const groupName = await NewBookGroupStore.apply(context, book);
+      SearchExplorePendingBook.clearPendingAddToShelf(book);
+      const engineBook = ReadBookEngine.get().book;
+      if (engineBook && engineBook !== book && engineBook.bookUrl === book.bookUrl) {
+        engineBook.group = book.group;
+        SearchExplorePendingBook.clearPendingAddToShelf(engineBook);
+      }
+      await BookMarkService.carryTagsToShelfBook(book);
+      await db.updateBook(book, true, 'audio_panel_add_to_shelf');
+      // 详情页“不加入”后留着等停播再删的临时书，现在不用删了。
+      PendingTrialBookCleanup.cancel(book.bookUrl);
+      this.bookOnShelf = true;
+      this.publishAudioOffline();
+      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+      HdsFeedback.showToast(NewBookGroup.addedToast(groupName));
+    } catch (error) {
+      console.error('听书页加入书架失败:', error);
+      HdsFeedback.showToast('加入书架失败');
+    } finally {
+      this.addingToShelf = false;
+    }
+  }
+
   onShelfUpdateTimeChanged(): void {
     // 书架上的下载任务结束、删除已下载音频、边听边下完成一章后都会通知。
     this.refreshOfflineChapters();
+    if (!this.bookOnShelf) this.recheckBookOnShelf();
+  }
+
+  /** 试听中从详情页等别处加入了书架，面板右上角换回“下载”。 */
+  private async recheckBookOnShelf(): Promise<void> {
+    const book = this.book;
+    if (!book || this.addingToShelf) return;
+    try {
+      const stored = await AppDatabase.getInstance().getBook(book.bookUrl);
+      if (!stored || SearchExplorePendingBook.isPendingAddToShelf(stored) || this.book !== book) return;
+      book.group = stored.group;
+      SearchExplorePendingBook.clearPendingAddToShelf(book);
+      this.bookOnShelf = true;
+      this.publishAudioOffline();
+    } catch (error) {
+      console.warn('读取书架状态失败:', error);
+    }
   }
 
   /** 目录摘要行的离线说明。 */

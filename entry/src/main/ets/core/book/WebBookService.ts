@@ -2,10 +2,11 @@ import { ReaderImageRecovery } from './ReaderImageRecovery';
 import { appDb } from '../../model/data/AppDatabase';
 import { ReaderImageCache } from './ReaderImageCache';
 import { ReaderImageReferences } from './ReaderImageReferences';
-import { SourceEngineHost, Book, BookChapter, BookSource, ContentRule, HttpClient, HttpResponse, AnalyzeUrl, AnalyzeRule, RuleContext, VerificationSupport, EncodedSourceUrl, BookUrlResolver, BookFieldSanitizer, AjaxRuleCompat, JavaRegexCompat, JsRuntime, ScriptEngine, ScriptEngineContext, BookSourceRuntimeRouter, SourceRuntimeStage, BookSourceStageWebRuntime, StageWebRuntimeRequest, ReaderActionMarker, CookieStore, RuleExecutionService, RuleBatchExecutionRequest, RuleFieldRequest, CooperativeScheduler, RuleExecutionTarget, RuleValue, BookSourceDebugContext, LogText, NativeSourceService, NetworkErrorText } from '@legado/sourceengine';
+import { SourceEngineHost, Book, BookChapter, BookSource, ContentRule, HttpClient, HttpResponse, AnalyzeUrl, AnalyzeRule, RuleContext, VerificationSupport, EncodedSourceUrl, BookUrlResolver, BookFieldSanitizer, AjaxRuleCompat, JavaRegexCompat, JsRuntime, ScriptEngine, ScriptEngineContext, BookSourceRuntimeRouter, SourceRuntimeStage, BookSourceStageWebRuntime, StageWebRuntimeRequest, ReaderActionMarker, ReaderActionHot, CookieStore, RuleExecutionService, RuleBatchExecutionRequest, RuleFieldRequest, CooperativeScheduler, RuleExecutionTarget, RuleValue, BookSourceDebugContext, LogText, NativeSourceService, NetworkErrorText } from '@legado/sourceengine';
 import { util } from '@kit.ArkTS';
 import { BookSourceDataUrlSupport } from './BookSourceDataUrlSupport';
 import { ReaderImageMarker } from './ReaderImageMarker';
+import { MixedVideoChapter } from './MixedVideoChapter';
 import { ComicImagePipeline, ComicImageTiming } from './ComicImagePipeline';
 import { ReaderImageRequest, ReaderImageScheduler } from './ReaderImageScheduler';
 import { ReaderImageResults } from './ReaderImageResults';
@@ -21,6 +22,22 @@ class ContentPageData {
   nextUrl: string = '';
 }
 
+/** 书源自带的本章说图卡拆出的条数与那一条评论。 */
+class ReaderDataImageChapter {
+  count: string = '';
+  /** 卡面上依次列出的评论；常见的只有一条，也有书源把几条都画在同一张卡上。 */
+  items: ReaderActionHot[] = [];
+
+  /** 第一条评论的文字，卡面没有评论时为空。 */
+  get text(): string {
+    return this.items.length ? this.items[0].text : '';
+  }
+
+  hots(): ReaderActionHot[] {
+    return this.items.filter((item: ReaderActionHot): boolean => !!item.text);
+  }
+}
+
 export class WebBookService {
   static readonly GENERIC_TOC_FALLBACK_KEY: string = '__genericTocFallback';
   private http: HttpClient;
@@ -28,11 +45,52 @@ export class WebBookService {
 
   private preparationCancelled: (() => boolean) | null;
   private requireCompleteCatalog: boolean;
+  /**
+   * 书架检查更新用：目录分页有一页取不到（请求失败或要网页验证）就整体失败，不返回半截目录。
+   * 半截目录会被当成新目录写进库，最新章节反而退回到中间某章。比换源的完整模式宽松：字段规则
+   * 报错、分页地址循环照旧容忍，免得个别规则小毛病让这本书每次检查都失败。
+   */
+  private requireAllCatalogPages: boolean;
+  /**
+   * 原生书源的详情、目录、正文脚本这次能不能弹出网页（browser.verify / browser.open）。默认可以；书架检查更新、
+   * 缓存下载、预加载、搜索结果补封面等后台调用设为不行，书源要验证时改走「去验证」，不打断用户。
+   */
+  private sourceInteraction: () => boolean = (): boolean => true;
 
-  constructor(preparationCancelled: (() => boolean) | null = null, requireCompleteCatalog: boolean = false) {
+  constructor(preparationCancelled: (() => boolean) | null = null, requireCompleteCatalog: boolean = false,
+    requireAllCatalogPages: boolean = false) {
     this.http = new HttpClient(10000);
     this.preparationCancelled = preparationCancelled;
     this.requireCompleteCatalog = requireCompleteCatalog;
+    this.requireAllCatalogPages = requireAllCatalogPages;
+  }
+
+  /** 目录分页没取全：换源模式与书架检查模式各自抛出对应说明，其余调用方照旧保留已取到的部分。 */
+  private rejectIncompleteCatalog(switchMessage: string, refreshMessage: string): void {
+    if (this.requireCompleteCatalog) throw new Error(switchMessage);
+    if (this.requireAllCatalogPages) throw new Error(refreshMessage);
+  }
+
+  /** 网页书源目录每读完一页回报（已读页数、已得章数）；换源用来显示进度。原生书源不回报。 */
+  private catalogProgress: ((pages: number, chapters: number) => void) | null = null;
+
+  setCatalogProgress(listener: ((pages: number, chapters: number) => void) | null): void {
+    this.catalogProgress = listener;
+  }
+
+  private reportCatalogProgress(pages: number, chapters: number): void {
+    if (!this.catalogProgress) return;
+    try {
+      this.catalogProgress(pages, chapters);
+    } catch (error) {
+      console.warn('[WS] catalog progress listener failed:', (error as Error).message);
+    }
+  }
+
+  /** 见 sourceInteraction。返回自身便于链式创建。 */
+  setSourceInteraction(allowed: () => boolean): WebBookService {
+    this.sourceInteraction = allowed;
+    return this;
   }
 
   private checkPreparation(): void {
@@ -71,7 +129,8 @@ export class WebBookService {
     const video = new VideoPlaybackSource();
     try {
       if (NativeSourceService.isNative(source)) {
-        const result = await NativeSourceService.getVideoContent(source, this.http, book, chapter, cancelled);
+        const result = await NativeSourceService.getVideoContent(source, this.http, book, chapter, cancelled,
+          this.sourceInteraction);
         if (cancelled()) return video;
         video.url = VideoPlaybackSupport.httpUrl(result.text);
         video.pageUrl = VideoPlaybackSupport.httpUrl(result.videoPage || '');
@@ -100,7 +159,8 @@ export class WebBookService {
     if (NativeSourceService.isNative(source)) {
       // 原生书源不经过脚本引擎，也不套用兼容书源的各类兜底修补。
       try {
-        return await NativeSourceService.getBookInfo(source, this.http, book, debugContext, (): boolean => this.isPreparationCancelled());
+        return await NativeSourceService.getBookInfo(source, this.http, book, debugContext,
+          (): boolean => this.isPreparationCancelled(), this.sourceInteraction);
       } catch (e) {
         console.warn('[WS] native book info failed:', source.bookSourceName, (e as Error).message);
         SourceEngineHost.setError(source, (e as Error).message || '详情解析失败');
@@ -339,7 +399,8 @@ export class WebBookService {
     if (NativeSourceService.isNative(source)) {
       try {
         const nativeChapters = await NativeSourceService.getChapterList(source, this.http, book,
-          maxChapters > 0 ? Math.max(1, Math.round(maxChapters)) : 0, debugContext, (): boolean => this.isPreparationCancelled(), this.requireCompleteCatalog);
+          maxChapters > 0 ? Math.max(1, Math.round(maxChapters)) : 0, debugContext, (): boolean => this.isPreparationCancelled(),
+          this.requireCompleteCatalog, this.sourceInteraction);
         if (nativeChapters.length === 0) {
           SourceEngineHost.setError(source, '目录规则没有匹配到章节');
         }
@@ -445,7 +506,7 @@ export class WebBookService {
     for (let page = 0; page < 1000; page++) {
       this.checkPreparation();
       if (!currentResp.success || !currentResp.body) {
-        if (this.requireCompleteCatalog) throw new Error('目录分页加载失败，已保留原书源');
+        this.rejectIncompleteCatalog('目录分页加载失败，已保留原书源', `目录第 ${page + 1} 页加载失败`);
         break;
       }
       const pageKey = this.urlWithoutFragment(currentResp.url || currentUrl);
@@ -458,7 +519,7 @@ export class WebBookService {
       const pageChapters = await parsePage(currentResp, currentUrl, page === 0);
       this.checkPreparation();
       if (pageChapters === null) {
-        if (this.requireCompleteCatalog) throw new Error('目录需要网页验证，已保留原书源');
+        this.rejectIncompleteCatalog('目录需要网页验证，已保留原书源', '目录需要网页验证');
         break;
       }
       if (page === 0 && !tocRule.nextTocUrl && hasStageRule && pageChapters.length > 0) {
@@ -467,6 +528,7 @@ export class WebBookService {
         if (!lastError) return pageChapters;
       }
       appendChapters(pageChapters);
+      this.reportCatalogProgress(seenPageUrls.size, chapters.length);
       // A later page produced chapters: a diagnostic left by an empty earlier attempt is no longer the outcome.
       if (page > 0 && pageChapters.length > 0) SourceEngineHost.setError(source, '');
       if (chapterLimit > 0 && chapters.length >= chapterLimit) break;
@@ -507,17 +569,19 @@ export class WebBookService {
           seenPageUrls.add(this.urlWithoutFragment(batchUrls[index]));
           this.checkPreparation();
           if (!listedResp || !listedResp.success || !listedResp.body) {
-            if (this.requireCompleteCatalog) throw new Error('目录分页加载失败，已保留原书源');
+            this.rejectIncompleteCatalog('目录分页加载失败，已保留原书源',
+              `目录第 ${seenPageUrls.size} 页加载失败`);
             continue;
           }
           const listedChapters = await parsePage(listedResp, batchUrls[index], false);
           this.checkPreparation();
           if (listedChapters === null) {
-            if (this.requireCompleteCatalog) throw new Error('目录需要网页验证，已保留原书源');
+            this.rejectIncompleteCatalog('目录需要网页验证，已保留原书源', '目录需要网页验证');
             stopped = true;
             break;
           }
           appendChapters(listedChapters);
+          this.reportCatalogProgress(seenPageUrls.size, chapters.length);
           if (listedChapters.length > 0) SourceEngineHost.setError(source, '');
           if (chapterLimit > 0 && chapters.length >= chapterLimit) {
             stopped = true;
@@ -692,14 +756,16 @@ export class WebBookService {
   /**
    * imageRequest 决定正文图片的调度优先级，以及是否先返回待加载标记，见 ReaderImageRequest。
    * nextChapterUrl 是目录里下一章的地址：“正文下一页”翻到它就停，不把后面的章节拼进本章。
+   * sourceInteraction 给出时代替本实例的设置，用于同一阅读引擎里区分当前章与预加载的邻章。
    */
   async getContent(source: BookSource, book: Book, chapter: BookChapter,
     shouldCancel: (() => boolean) | null = null,
     debugContext: BookSourceDebugContext | null = null,
     imageRequest: ReaderImageRequest = ReaderImageRequest.DEFAULT,
-    nextChapterUrl: string = ''): Promise<string> {
+    nextChapterUrl: string = '', sourceInteraction: (() => boolean) | null = null): Promise<string> {
     if (NativeSourceService.isNative(source)) {
-      return await this.getNativeContent(source, book, chapter, shouldCancel, debugContext, imageRequest);
+      return await this.getNativeContent(source, book, chapter, shouldCancel, debugContext, imageRequest,
+        sourceInteraction ?? this.sourceInteraction);
     }
     // `ruleContent.audioUrl` is the dedicated media-address rule of an audio source. It takes
     // precedence over `content`, which remains the fallback when it yields nothing.
@@ -718,11 +784,14 @@ export class WebBookService {
 
   private async getNativeContent(source: BookSource, book: Book, chapter: BookChapter,
     shouldCancel: (() => boolean) | null, debugContext: BookSourceDebugContext | null = null,
-    imageRequest: ReaderImageRequest = ReaderImageRequest.DEFAULT): Promise<string> {
+    imageRequest: ReaderImageRequest = ReaderImageRequest.DEFAULT,
+    sourceInteraction: (() => boolean) | null = null): Promise<string> {
     SourceEngineHost.setError(source, '');
+    // 图文书里的视频章只给阅读页一张播放卡片，不请求网络；调试页照常取，方便核对 video 规则。
+    if (!debugContext && MixedVideoChapter.isMixedVideo(book, chapter)) return MixedVideoChapter.cardText(chapter);
     try {
       const result = await NativeSourceService.getContent(source, this.http, book, chapter,
-        (): boolean => this.contentRequestCanceled(shouldCancel), debugContext);
+        (): boolean => this.contentRequestCanceled(shouldCancel), debugContext, sourceInteraction ?? this.sourceInteraction);
       if (this.contentRequestCanceled(shouldCancel)) return '';
       if (result.kind === 'audio' || result.kind === 'video') return result.text.trim();
       if (result.kind === 'images' && result.images.length > 0) {
@@ -1462,10 +1531,13 @@ export class WebBookService {
     }
 
     let value = content || '';
+    value = await this.inlineRemoteSvgControls(source, value, baseUrl, cancelled);
     value = this.convertReaderNativeActions(source, value, baseUrl);
     value = value.replace(/<(?:img|image)\b[^>]*>/gi, (tag: string): string => {
       const images = this.collectReaderImageUrls([tag], baseUrl, false);
-      return images.length > 0 ? `\n\n${ReaderImageMarker.create(images[0])}\n\n` : ' ';
+      if (images.length === 0) return ' ';
+      const icon = this.readerInlineIconSize(tag);
+      return `\n\n${ReaderImageMarker.create(images[0], icon[0], icon[1])}\n\n`;
     });
     value = value.replace(/!\[[^\]]*\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g,
       (_all: string, rawUrl: string): string => {
@@ -1587,7 +1659,10 @@ export class WebBookService {
       const clickMarker = this.readerActionMarkerFromClickableImage(tag);
       if (clickMarker) return this.readerActionLine(clickMarker);
       const data = /data:image\/[A-Za-z0-9.+-]+;base64,([A-Za-z0-9+/=]+),(\{[\s\S]*\})/i.exec(tag);
-      if (!data || !data[2]) return tag;
+      if (!data || !data[2]) {
+        const remote = this.readerRemoteBubbleAction(tag, offset, whole);
+        return remote === null ? tag : remote;
+      }
       const action = this.readerImageOptionString(data[2], 'click') ||
         this.readerImageOptionString(data[2], 'js');
       if (!action) return tag;
@@ -1603,9 +1678,13 @@ export class WebBookService {
       const count = isChapterTail || isHot ? '' : this.readerDataImageLabel(texts);
       const kind = isChapterTail ? '章评' : (isHot ? '热评' : '段评');
       const label = count ? `段评 ${count}` : kind;
-      const hot = isHot || isChapterTail ? this.readerDataImageHot(texts) : ['', ''];
-      // 本章说卡面上的数字含义因书源而异，不当点赞数。
-      const marker = ReaderActionMarker.createSourceScript(label, action, kind, hot[0], isChapterTail ? '' : hot[1]);
+      const hot = isHot ? this.readerDataImageHot(texts) : ['', ''];
+      // 本章说卡面拆成条数与那一条评论；卡面上的数字含义因书源而异，不当点赞数。
+      const chapter = isChapterTail ? this.readerDataImageChapter(texts) : new ReaderDataImageChapter();
+      const marker = isChapterTail ?
+        ReaderActionMarker.createSourceScript(label, action, kind, chapter.text || chapter.count, '', chapter.count,
+          chapter.hots()) :
+        ReaderActionMarker.createSourceScript(label, action, kind, hot[0], hot[1]);
       // This data-image is an interaction control, not正文 artwork. If its imported click script exceeds the
       // bounded action budget, drop the control instead of passing the enormous base64/options tag into the
       // ordinary image pipeline (the latter can exhaust memory while opening the chapter).
@@ -1628,6 +1707,134 @@ export class WebBookService {
     const card = !!data && /^(?:热评|章评)$/.test(data.title || '');
     if (card) return `\n${marker}\n`;
     return inline ? marker : `${marker}\n`;
+  }
+
+  /**
+   * A paragraph-comment badge served by the source's own server:
+   * `<img src='https://…/bubble.svg?…&n=12,{"click":"…","style":"text"}'>`. It is the same control as the
+   * data-image bubble, only fetched remotely, so it becomes the same 段评 action instead of a picture: drawn as one,
+   * the SVG's declared size stretched it over half a page and its `<text>` count did not render. The count is the
+   * number the source appended to the address. Returns null when the tag is no such badge, '' when its script
+   * exceeds the action budget (the control is dropped, as for data-image bubbles).
+   */
+  private readerRemoteBubbleAction(tag: string, offset: number, whole: string): string | null {
+    const value = this.decodeHtmlEntities(this.findReaderImageAttribute(tag)).trim();
+    if (!value || /^data:/i.test(value)) return null;
+    const optionIndex = this.readerImageOptionIndex(value);
+    if (optionIndex < 0) return null;
+    const options = value.substring(optionIndex + 1).trim();
+    if (!/^text$/i.test(this.readerImageOptionString(options, 'style'))) return null;
+    const action = this.readerImageOptionString(options, 'click') || this.readerImageOptionString(options, 'js');
+    if (!action) return null;
+    const count = /[=\/](\d{1,7})$/.exec(value.substring(0, optionIndex).trim());
+    const marker = ReaderActionMarker.createSourceScript(count ? `段评 ${count[1]}` : '段评', action, '段评');
+    if (!marker) return '';
+    const inline = /^[^\S\n]*[^\s<]/.test(whole.substring(offset + tag.length, offset + tag.length + 16));
+    return this.readerActionLine(marker, inline);
+  }
+
+  /**
+   * Layout size (vp) for an image that is an icon in the line rather than an illustration: a `style:"text"` image
+   * the source draws inside the text, or one sized at most 64×64 px by its own attributes or inline style. Without
+   * a size the paginator treats an image as a full-page illustration, so a stray badge took half a page.
+   */
+  private readerInlineIconSize(tag: string): number[] {
+    const value = this.decodeHtmlEntities(this.findReaderImageAttribute(tag)).trim();
+    const optionIndex = this.readerImageOptionIndex(value);
+    if (optionIndex >= 0 && /^text$/i.test(this.readerImageOptionString(value.substring(optionIndex + 1).trim(),
+      'style'))) {
+      return [WebBookService.INLINE_ICON_VP, WebBookService.INLINE_ICON_VP];
+    }
+    const length = (name: string): number => {
+      const css = new RegExp(`(?:^|[;\\s"'])${name}\\s*:\\s*(\\d+(?:\\.\\d+)?)px`, 'i')
+        .exec(/\bstyle\s*=\s*(["'])([\s\S]*?)\1/i.exec(tag)?.[2] || '');
+      const attr = new RegExp(`\\s${name}\\s*=\\s*["']?(\\d+(?:\\.\\d+)?)(?:px)?["']?(?=[\\s/>])`, 'i').exec(tag);
+      return Number((css && css[1]) || (attr && attr[1]) || 0);
+    };
+    const width = length('width');
+    const height = length('height');
+    return width > 0 && height > 0 && width <= 64 && height <= 64 ? [Math.max(1, width), Math.max(1, height)] :
+      [0, 0];
+  }
+
+  private static readonly INLINE_ICON_VP: number = 24;
+  private static readonly REMOTE_SVG_CONTROL_LIMIT: number = 8;
+  /** Remote control address → its SVG as base64, '' when the address served something else. */
+  private static readonly remoteSvgControls: Map<string, string> = new Map<string, string>();
+
+  /**
+   * Clickable cards a source serves as remote SVGs (`<img src='https://…/hot.svg,{"click":"…","style":"full"}'>`:
+   * hot comment, 本章说, author's words). Their words are SVG `<text>`, which does not render, so drawn as pictures
+   * they were blank boxes. Fetch each one (at most a few per chapter) and, when it really is an SVG, inline it as
+   * the data-image card it stands for; convertReaderImageScriptActions then reads its wording and turns it into the
+   * matching card. Anything else, or a failed fetch, stays an ordinary image.
+   */
+  private async inlineRemoteSvgControls(source: BookSource, content: string, baseUrl: string,
+    cancelled: () => boolean): Promise<string> {
+    if (!/<img\b/i.test(content || '') || !/\b(?:click|js)\b/.test(content)) return content;
+    const pending = new Map<string, string[]>();
+    const urls: string[] = [];
+    for (const tag of content.match(/<img\b[^>]*>/gi) || []) {
+      if (pending.has(tag)) continue;
+      const value = this.decodeHtmlEntities(this.findReaderImageAttribute(tag)).trim();
+      if (!value || /^data:/i.test(value)) continue;
+      const optionIndex = this.readerImageOptionIndex(value);
+      if (optionIndex < 0) continue;
+      const options = value.substring(optionIndex + 1).trim();
+      // Badges (style text) need no fetch: readerRemoteBubbleAction reads their count from the address.
+      if (/^text$/i.test(this.readerImageOptionString(options, 'style'))) continue;
+      if (!this.readerImageOptionString(options, 'click') && !this.readerImageOptionString(options, 'js')) continue;
+      const url = BookUrlResolver.resolve(value.substring(0, optionIndex).trim(), baseUrl);
+      if (!/^https?:\/\//i.test(url)) continue;
+      if (!urls.includes(url)) {
+        if (urls.length >= WebBookService.REMOTE_SVG_CONTROL_LIMIT) continue;
+        urls.push(url);
+      }
+      pending.set(tag, [url, options]);
+    }
+    if (pending.size === 0) return content;
+    const svgs = new Map<string, string>();
+    await Promise.all(urls.map(async (url: string): Promise<void> => {
+      svgs.set(url, await this.fetchRemoteSvgControl(source, url));
+    }));
+    if (cancelled()) return content;
+    return content.replace(/<img\b[^>]*>/gi, (tag: string): string => {
+      const item = pending.get(tag);
+      const encoded = item ? svgs.get(item[0]) || '' : '';
+      if (!item || !encoded) return tag;
+      // Entity-encode what would end the tag or its attribute; option reading decodes entities again.
+      const options = item[1].replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      return `<img src='data:image/svg+xml;base64,${encoded},${options}'/>`;
+    });
+  }
+
+  private async fetchRemoteSvgControl(source: BookSource, url: string): Promise<string> {
+    const cached = WebBookService.remoteSvgControls.get(url);
+    if (cached !== undefined) return cached;
+    try {
+      const analyzer = new AnalyzeUrl(source, this.http);
+      analyzer.parse(url);
+      const response = await this.http.execute({
+        ...analyzer.buildRequest(),
+        connectTimeout: 5000,
+        readTimeout: 8000,
+        maxResponseBytes: 256 * 1024
+      });
+      if (!response.success) return '';
+      const body = (response.body || '').trim();
+      const isSvg = /^(?:<\?xml[^>]*>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!DOCTYPE[^>]*>\s*)?<svg\b/i.test(body) &&
+        /<\/svg>$/i.test(body);
+      const encoded = isSvg ? new util.Base64Helper().encodeToStringSync(new util.TextEncoder().encodeInto(body)) : '';
+      if (WebBookService.remoteSvgControls.size >= 128) {
+        const oldest = WebBookService.remoteSvgControls.keys().next().value as string;
+        WebBookService.remoteSvgControls.delete(oldest);
+      }
+      WebBookService.remoteSvgControls.set(url, encoded);
+      return encoded;
+    } catch (_) {
+      return '';
+    }
   }
 
   /**
@@ -1681,7 +1888,7 @@ export class WebBookService {
     try {
       const bytes = new util.Base64Helper().decodeSync(encoded || '');
       const svg = util.TextDecoder.create('utf-8').decodeWithStream(bytes, { stream: false });
-      const found = (svg.match(/<text\b[^>]*>[\s\S]{0,8000}?<\/text>/gi) || []).slice(0, 24)
+      const found = (svg.match(/<text\b[^>]*>[\s\S]{0,8000}?<\/text>/gi) || []).slice(0, 48)
         .concat((svg.match(/<foreignObject\b[^>]*>[\s\S]{0,8000}?<\/foreignObject>/gi) || []).slice(0, 4));
       return found.map((item: string): string => this.decodeHtmlEntities(item.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim())
         .filter((text: string): boolean => !!text);
@@ -1759,6 +1966,66 @@ export class WebBookService {
     return [text, likes];
   }
 
+  /**
+   * A 本章说 SVG card split into its parts: the comment count (“79 条评论” → “79条评论”) for the card's title row,
+   * and the comments it shows. A card listing several comments draws each as nickname, a bare number in a pill,
+   * then the comment's wrapped lines, so a short line followed by a bare number starts the next comment. A card
+   * with no such numbers shows one comment: a short first line is the nickname, the remaining lines its text.
+   * Numbers on these cards mean different things per source, so none is read as a like count.
+   */
+  private readerDataImageChapter(texts: string[]): ReaderDataImageChapter {
+    const found = new ReaderDataImageChapter();
+    const parts: string[] = [];
+    const numbers: boolean[] = [];
+    for (const raw of texts) {
+      const text = raw.replace(/^(?:本章说|章评|章末评论)\s*/, '').replace(/[\s〉›>»]+$/, '').trim();
+      if (!text) continue;
+      const count = /^(?:共\s*)?(\d+(?:\.\d+)?[万wWkK千]?\+?)\s*(?:条评论|条|评论)$/.exec(text);
+      if (count && !found.count) {
+        found.count = `${count[1]}条评论`;
+        continue;
+      }
+      parts.push(text);
+      numbers.push(/^(?:\d+(?:\.\d+)?[kKwW万千]?\+?|99\+)$/.test(text));
+    }
+    const nickname = (text: string): boolean => text.length <= 16 && !/[，。！？：；,.!?:;…]$/.test(text);
+    const headsAt = (i: number): boolean => !numbers[i] && i + 1 < parts.length && numbers[i + 1] &&
+      nickname(parts[i]);
+    let listed = false;
+    for (let i = 0; i < parts.length; i++) {
+      if (headsAt(i)) {
+        listed = true;
+        break;
+      }
+    }
+    if (listed) {
+      let current: ReaderActionHot | null = null;
+      for (let i = 0; i < parts.length; i++) {
+        if (headsAt(i)) {
+          current = new ReaderActionHot();
+          current.user = parts[i];
+          found.items.push(current);
+          i++;
+          continue;
+        }
+        if (numbers[i]) continue;
+        if (!current) {
+          current = new ReaderActionHot();
+          found.items.push(current);
+        }
+        current.text += parts[i];
+      }
+      return found;
+    }
+    const lines = parts.filter((_: string, i: number): boolean => !numbers[i]);
+    const hot = new ReaderActionHot();
+    if (lines.length >= 2 && nickname(lines[0])) {
+      hot.user = lines.shift() as string;
+    }
+    hot.text = lines.join('');
+    if (hot.text) found.items.push(hot);
+    return found;
+  }
 
   /**
    * iOS-style Legado markup puts the action on the image itself:
@@ -1782,9 +2049,13 @@ export class WebBookService {
     const card = /热评|神评/.test(wording) ||
       this.readerDataImageIsCard(texts, '', this.readerDataImageIsWide(svg[1] || ''));
     const label = /本章说|章评|章末/.test(wording) ? '章评' : (card ? '热评' : (count ? `段评 ${count}` : '评论'));
-    const hot = label === '热评' || label === '章评' ? this.readerDataImageHot(texts) : ['', ''];
-    return ReaderActionMarker.create(label, url, label === '章评' ? '章评' : (label === '热评' ? '热评' : '段评'),
-      hot[0], label === '章评' ? '' : hot[1]);
+    if (label === '章评') {
+      const chapter = this.readerDataImageChapter(texts);
+      return ReaderActionMarker.create(label, url, '章评', chapter.text || chapter.count, '', chapter.count,
+        chapter.hots());
+    }
+    const hot = label === '热评' ? this.readerDataImageHot(texts) : ['', ''];
+    return ReaderActionMarker.create(label, url, label === '热评' ? '热评' : '段评', hot[0], hot[1]);
   }
 
   private readerActionMarkerFromCommentAttributes(attrs: string): string {
@@ -1808,7 +2079,9 @@ export class WebBookService {
     cancelled: () => boolean = (): boolean => false,
     imageRequest: ReaderImageRequest = ReaderImageRequest.DEFAULT): Promise<string> {
     if (!content || !content.includes(ReaderImageMarker.PREFIX)) return content;
-    const pattern = new RegExp(`${this.escapeRegex(ReaderImageMarker.PREFIX)}([^\\]]+)` +
+    // The encoded source never contains "|" (encodeURIComponent escapes it), so a size given at marker creation
+    // (an inline icon, see readerInlineIconSize) is captured apart and carried onto the processed marker.
+    const pattern = new RegExp(`${this.escapeRegex(ReaderImageMarker.PREFIX)}([^\\]|]+)(?:\\|(\\d{1,6})x(\\d{1,6}))?` +
       `${this.escapeRegex(ReaderImageMarker.SUFFIX)}`, 'g');
     const values: string[] = [];
     let match: RegExpExecArray | null;
@@ -1867,9 +2140,10 @@ export class WebBookService {
       Promise.all(jobs).then((): void => {
         if (!stop()) report('渐进');
       });
-      return content.replace(pattern, (_all: string, encoded: string): string => {
+      return content.replace(pattern, (_all: string, encoded: string, width?: string, height?: string): string => {
         try {
-          return ReaderImageMarker.create(ReaderImageMarker.pendingSource(decodeURIComponent(encoded)));
+          return ReaderImageMarker.create(ReaderImageMarker.pendingSource(decodeURIComponent(encoded)),
+            Number(width || 0), Number(height || 0));
         } catch (_) {
           return _all;
         }
@@ -1883,10 +2157,10 @@ export class WebBookService {
         resolved[value] = await processImage(value, index, cancelled);
       })));
     report('整章');
-    return content.replace(pattern, (_all: string, encoded: string): string => {
+    return content.replace(pattern, (_all: string, encoded: string, width?: string, height?: string): string => {
       try {
         const raw = decodeURIComponent(encoded);
-        return ReaderImageMarker.create(resolved[raw] || raw);
+        return ReaderImageMarker.create(resolved[raw] || raw, Number(width || 0), Number(height || 0));
       } catch (_) {
         return _all;
       }

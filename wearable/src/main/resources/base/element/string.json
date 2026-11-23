@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "开源轻页手表端，给手机阅读页翻页"
+    },
+    {
+      "name": "ability_desc",
+      "value": "点屏幕或转表冠，翻手机上正在看的书"
+    },
+    {
+      "name": "ability_label",
+      "value": "开源轻页"
+    }
+  ]
+}

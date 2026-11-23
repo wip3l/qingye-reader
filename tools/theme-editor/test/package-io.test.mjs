@@ -336,11 +336,16 @@ test('export reports the same errors the app would', async () => {
   project.parts.light.reader.trailing = '';
   project.parts.light.reader.leadingScale = 1.4;
   project.parts.light.reader.trailingScale = 1;
+  // 边距 0 是贴边要写出去，1 是默认不写。
+  project.parts.light.reader.leadingInset = 0;
+  project.parts.light.reader.trailingInset = 1;
   const single = await io.exportFiles(project);
   assert.ok(JSON.parse(strFromU8(single.get('manifest.json'))).requires.includes('reader-single-corner-v1'));
   const singleReader = JSON.parse(strFromU8(single.get('theme.json'))).parts.light.reader;
   assert.equal(singleReader.leadingScale, 1.4);
   assert.equal('trailingScale' in singleReader, false);
+  assert.equal(singleReader.leadingInset, 0);
+  assert.equal('trailingInset' in singleReader, false);
   const leading = project.parts.light.reader.leading;
   project.parts.light.reader.leading = '';
   await assert.rejects(io.exportFiles(project), /至少要有 leading 或 trailing/);
@@ -348,6 +353,8 @@ test('export reports the same errors the app would', async () => {
   project.parts.light.reader.trailing = 'assets/br.svg';
   delete project.parts.light.reader.leadingScale;
   delete project.parts.light.reader.trailingScale;
+  delete project.parts.light.reader.leadingInset;
+  delete project.parts.light.reader.trailingInset;
   const both = await io.exportFiles(project);
   assert.ok(!JSON.parse(strFromU8(both.get('manifest.json'))).requires.includes('reader-single-corner-v1'));
   project.manifest.packageId = 'bad id';
@@ -444,4 +451,177 @@ test('uploaded files are renamed to safe asset paths and checked', () => {
   assert.equal(io.safeAssetPath('封面 01.png', 'png', () => false), 'assets/01.png');
   assert.match(String(io.makeAsset('assets/x.svg', strToU8('<svg><script>1</script></svg>'))), /不允许的内容/);
   assert.match(String(io.makeAsset('assets/x.bin', strToU8('hello'))), /认不出/);
+});
+
+test('a bitmap or cap-less bubble frame exports with bubble-frame-v1 and keeps its stretch settings', async () => {
+  const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
+  project.assets.set('assets/plaque.png', { path: 'assets/plaque.png', bytes: png(600, 160), kind: 'image', ext: 'png', width: 600, height: 160 });
+  project.parts.bubble = { cap: '', frame: 'assets/plaque.png', frameSlice: { left: 0.17, right: 0.17, top: 0.08, bottom: 0.08 },
+    frameRepeat: 'round', frameBreak: 'full', frameTint: false };
+  const files = await io.exportFiles(project);
+  const manifest = JSON.parse(strFromU8(files.get('manifest.json')));
+  assert.ok(manifest.requires.includes('bubble-frame-v1'));
+  const bubble = JSON.parse(strFromU8(files.get('theme.json'))).parts.bubble;
+  assert.deepEqual(bubble, { frame: 'assets/plaque.png', frameSlice: { left: 0.17, right: 0.17, top: 0.08, bottom: 0.08 },
+    frameRepeat: 'round' });
+  const again = await io.loadProject(io.readZip(await io.exportZip(project)));
+  assert.deepEqual(again.problems, []);
+  assert.equal(again.project.parts.bubble.frameSlice.left, 0.17);
+
+  // SVG 边框配端饰不用声明；去掉边框时拉伸设置也不写。
+  project.parts.bubble = { cap: 'assets/cap.svg', frame: 'assets/frame.svg', frameSlice: { left: 0.2, right: 0.2, top: 0, bottom: 0 } };
+  assert.ok(!JSON.parse(strFromU8((await io.exportFiles(project)).get('manifest.json'))).requires.includes('bubble-frame-v1'));
+  project.parts.bubble = { cap: 'assets/cap.svg', frame: '', frameSlice: { left: 0.2, right: 0.2, top: 0, bottom: 0 } };
+  assert.deepEqual(JSON.parse(strFromU8((await io.exportFiles(project)).get('theme.json'))).parts.bubble, { cap: 'assets/cap.svg' });
+});
+
+test('dark-mode bubble art, shelf frame, nav icons and comment bubbles round-trip', async () => {
+  const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
+  const add = (path, bytes, kind, ext, width, height) => project.assets.set(path, { path, bytes, kind, ext, width, height });
+  add('assets/cap-night.svg', svg('<circle cx="8" cy="8" r="6"/>', '0 0 16 16'), 'vector', 'svg', 16, 16);
+  add('assets/plaque-night.png', png(600, 160), 'image', 'png', 600, 160);
+  add('assets/frame-night.svg', svg('<rect x="4" y="4" width="442" height="652" fill="none" stroke="#fff"/>', '0 0 450 660'), 'vector', 'svg', 450, 660);
+  add('assets/n1-night.png', png(96, 96), 'image', 'png', 96, 96);
+  // 深色只换边框：端饰沿用浅色那张；和浅色同一张端饰时不重复写。
+  project.parts.bubble = { cap: 'assets/cap.svg', frame: 'assets/frame.svg' };
+  project.parts.bubbleDark = { cap: 'assets/cap.svg', frame: 'assets/plaque-night.png',
+    frameSlice: { left: 0.2, right: 0.2, top: 0, bottom: 0 }, frameTint: true };
+  project.parts.book.shelfFrameDark = 'assets/frame-night.svg';
+  project.parts.navigationDark = { bookshelf: 'assets/n1-night.png' };
+  project.parts.light.commentBubble = { shape: 'rounded', radius: 0.25, fill: '#FFB98546', text: '#FFFFF6E6', ornament: 'star' };
+  project.parts.dark.commentBubble = { shape: 'pill', radius: 0.4, fill: '#EBD3AE', ornament: 'bogus' };
+  const files = await io.exportFiles(project);
+  const parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.deepEqual(parts.bubble, { cap: 'assets/cap.svg', frame: 'assets/frame.svg' });
+  assert.deepEqual(parts.bubbleDark, { frame: 'assets/plaque-night.png', frameSlice: { left: 0.2, right: 0.2, top: 0, bottom: 0 }, frameTint: true });
+  assert.equal(parts.book.shelfFrameDark, 'assets/frame-night.svg');
+  assert.deepEqual(parts.navigationDark, { bookshelf: 'assets/n1-night.png' });
+  assert.deepEqual(parts.light.commentBubble, { shape: 'rounded', radius: 0.25, fill: '#FFB98546', text: '#FFFFF6E6', ornament: 'star' });
+  // 圆角只跟着圆角形状写；不认得的角标在读包时按沿用处理。
+  assert.deepEqual(parts.dark.commentBubble, { shape: 'pill', fill: '#EBD3AE', ornament: 'bogus' });
+  // 深色那套是位图边框，但写成 bubble 的浅色那套是 SVG 边框加端饰，老版本照常能导入，不用声明 bubble-frame-v1。
+  assert.ok(!JSON.parse(strFromU8(files.get('manifest.json'))).requires.includes('bubble-frame-v1'));
+  const again = await io.loadProject(io.readZip(await io.exportZip(project)));
+  assert.deepEqual(again.problems, []);
+  assert.equal(again.project.parts.bubbleDark.frame, 'assets/plaque-night.png');
+  assert.equal(again.project.parts.bubbleDark.cap || '', '');
+  assert.equal(again.project.parts.dark.commentBubble.shape, 'pill');
+  assert.equal(again.project.parts.dark.commentBubble.ornament || '', '');
+  assert.equal(again.project.parts.navigationDark.bookshelf, 'assets/n1-night.png');
+
+  // 只给了深色气泡和深色书架边框时，导出写成浅色字段（两种模式都用它，老版本也认）。
+  project.parts.bubble = {};
+  project.parts.bubbleDark = { cap: 'assets/cap-night.svg' };
+  project.parts.book.shelfFrame = '';
+  const only = JSON.parse(strFromU8((await io.exportFiles(project)).get('theme.json'))).parts;
+  assert.deepEqual(only.bubble, { cap: 'assets/cap-night.svg' });
+  assert.equal(only.bubbleDark, undefined);
+  assert.equal(only.book.shelfFrame, 'assets/frame-night.svg');
+  assert.equal(only.book.shelfFrameDark, undefined);
+});
+
+test('comment bubble image and custom ornament export cleanly and round-trip', async () => {
+  const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
+  project.assets.set('assets/talk.png', { path: 'assets/talk.png', bytes: png(300, 132), kind: 'image', ext: 'png', width: 300, height: 132 });
+  project.parts.light.commentBubble = {
+    shape: 'rounded', radius: 0.2, fill: '#B98546', text: '#4A3423',
+    image: 'assets/talk.png', imageSlice: { left: 0.28, right: 0.22, top: 0.3, bottom: 0.3 },
+    imageText: { left: 0.1, right: 0.1, top: 0.14, bottom: 0.3 }, imageRepeat: 'stretch', imageBreak: 'cut', imageTint: false,
+    ornament: 'custom', ornamentImage: 'assets/cap.svg', ornamentCorner: 'topLeft', ornamentSize: 1.2
+  };
+  // 深色没用自定义角标时，留下的角标图不写；没有气泡图时拉伸设置不写。
+  project.parts.dark.commentBubble = { text: '#F2DEAE', ornament: 'star', ornamentImage: 'assets/logo.svg', imageTint: true };
+  const files = await io.exportFiles(project);
+  const parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.deepEqual(parts.light.commentBubble, {
+    shape: 'rounded', radius: 0.2, fill: '#B98546', text: '#4A3423', image: 'assets/talk.png',
+    imageSlice: { left: 0.28, right: 0.22 }, imageText: { left: 0.1, right: 0.1, top: 0.14, bottom: 0.3 },
+    ornament: 'custom', ornamentImage: 'assets/cap.svg', ornamentCorner: 'topLeft', ornamentSize: 1.2
+  });
+  assert.deepEqual(parts.dark.commentBubble, { text: '#F2DEAE', ornament: 'star' });
+  assert.ok(files.has('assets/talk.png'));
+  // 不用声明新能力：旧版本应用照常导入，按形状画。
+  const manifest = JSON.parse(strFromU8(files.get('manifest.json')));
+  assert.ok(!manifest.requires.some((item) => item.includes('comment')));
+  const again = await io.loadProject(io.readZip(await io.exportZip(project)));
+  assert.deepEqual(again.problems, []);
+  assert.equal(again.project.parts.light.commentBubble.image, 'assets/talk.png');
+  assert.equal(again.project.parts.light.commentBubble.imageText.top, 0.14);
+  assert.equal(again.project.parts.light.commentBubble.ornamentCorner, 'topLeft');
+});
+
+test('title emphasis and title bubble export cleanly and round-trip', async () => {
+  const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
+  project.assets.set('assets/title-frame.png', { path: 'assets/title-frame.png', bytes: png(320, 64), kind: 'image', ext: 'png', width: 320, height: 64 });
+  project.parts.light.titleEmphasis = { mode: 'bubble', bubbleStyle: '', color: '#E9D3A8', textColor: '#5A3A1C' };
+  project.parts.dark.titleEmphasis = { mode: 'bubble', color: '#3A3226' };
+  // 位图端饰和边框都收，不用声明新能力；深色和浅色一样的项不重复写。
+  project.parts.titleBubble = { cap: 'assets/c2.png', frame: 'assets/title-frame.png',
+    frameSlice: { left: 0.16, right: 0.16, top: 0.12, bottom: 0.12 }, frameRepeat: 'stretch', frameTint: false };
+  project.parts.titleBubbleDark = { cap: 'assets/c2.png' };
+  const files = await io.exportFiles(project);
+  const parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.deepEqual(parts.light.titleEmphasis, { mode: 'bubble', color: '#E9D3A8', textColor: '#5A3A1C' });
+  assert.deepEqual(parts.dark.titleEmphasis, { mode: 'bubble', color: '#3A3226' });
+  assert.deepEqual(parts.titleBubble, { cap: 'assets/c2.png', frame: 'assets/title-frame.png',
+    frameSlice: { left: 0.16, right: 0.16, top: 0.12, bottom: 0.12 } });
+  assert.equal(parts.titleBubbleDark, undefined);
+  const manifest = JSON.parse(strFromU8(files.get('manifest.json')));
+  assert.ok(!manifest.requires.includes('bubble-frame-v1'));
+  assert.ok(!manifest.requires.includes('bitmap-cap-shelf-frame-v1'));
+  const again = await io.loadProject(io.readZip(await io.exportZip(project)));
+  assert.deepEqual(again.problems, []);
+  assert.equal(again.project.parts.titleBubble.frame, 'assets/title-frame.png');
+  assert.equal(again.project.parts.light.titleEmphasis.textColor, '#5A3A1C');
+});
+
+test('chapter head exports only what is set and round-trips', async () => {
+  const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
+  project.assets.set('assets/staff.png', { path: 'assets/staff.png', bytes: png(96, 320), kind: 'image', ext: 'png', width: 96, height: 320 });
+  // 标题左侧、1 倍是缺省值，不写；没有饰图的模式只留序号行颜色。
+  project.parts.light.chapterHead = { image: 'assets/staff.png', placement: '', scale: 1, numberColor: '#8D8478' };
+  project.parts.dark.chapterHead = { image: '', placement: 'top', scale: 1.5, numberColor: '#99FFFFFF' };
+  let files = await io.exportFiles(project);
+  let parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.deepEqual(parts.light.chapterHead, { image: 'assets/staff.png', numberColor: '#8D8478' });
+  assert.deepEqual(parts.dark.chapterHead, { numberColor: '#99FFFFFF' });
+  assert.ok(files.has('assets/staff.png'));
+  project.parts.light.chapterHead = { image: 'assets/staff.png', placement: 'bottom', scale: 1.4 };
+  project.parts.dark.chapterHead = {};
+  files = await io.exportFiles(project);
+  parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.deepEqual(parts.light.chapterHead, { image: 'assets/staff.png', placement: 'bottom', scale: 1.4 });
+  assert.equal(parts.dark && parts.dark.chapterHead, undefined);
+  const again = await io.loadProject(io.readZip(await io.exportZip(project)));
+  assert.deepEqual(again.problems, []);
+  assert.equal(again.project.parts.light.chapterHead.image, 'assets/staff.png');
+  assert.equal(again.project.parts.light.chapterHead.placement, 'bottom');
+  assert.equal(again.project.parts.light.chapterHead.scale, 1.4);
+  // 首字：行数在编辑器里是字符串，写进包是数字；不处理时印章图不写，字占比只跟着印章图、缺省值不写。
+  project.assets.set('assets/seal.png', { path: 'assets/seal.png', bytes: png(200, 200), kind: 'image', ext: 'png', width: 200, height: 200 });
+  project.parts.light.chapterHead = { dropCapLines: '3', dropCapImage: 'assets/seal.png', dropCapColor: '#B5402F', dropCapRatio: 0.7 };
+  project.parts.dark.chapterHead = { dropCapLines: '', dropCapImage: 'assets/seal.png', dropCapRatio: 0.5 };
+  files = await io.exportFiles(project);
+  parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.deepEqual(parts.light.chapterHead, { dropCapLines: 3, dropCapImage: 'assets/seal.png', dropCapRatio: 0.7, dropCapColor: '#B5402F' });
+  assert.equal(parts.dark && parts.dark.chapterHead, undefined);
+  project.parts.light.chapterHead = { dropCapLines: '2', dropCapRatio: 0.7 };
+  parts = JSON.parse(strFromU8((await io.exportFiles(project)).get('theme.json'))).parts;
+  assert.deepEqual(parts.light.chapterHead, { dropCapLines: 2 });
+  project.parts.light.chapterHead = { dropCapLines: '3', dropCapImage: 'assets/seal.png' };
+  const reopened = await io.loadProject(io.readZip(await io.exportZip(project)));
+  assert.deepEqual(reopened.problems, []);
+  assert.equal(reopened.project.parts.light.chapterHead.dropCapLines, '3');
+  assert.equal(reopened.project.parts.light.chapterHead.dropCapImage, 'assets/seal.png');
+});
+
+test('an empty comment-bubble override from the app does not count as a scheme override', async () => {
+  const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
+  const empty = { mode: '', bubbleStyle: '', color: '', textColor: '',
+    comment: { shape: '', radius: -1, fill: '', stroke: '', text: '', ornament: '', ornamentColor: '' } };
+  project.settings = { customLightEmphasis: empty, customDarkEmphasis: empty };
+  const requires = async () => JSON.parse(strFromU8((await io.exportFiles(project)).get('manifest.json'))).requires;
+  assert.ok(!(await requires()).includes('scheme-overrides-v1'));
+  project.settings.customDarkEmphasis = { ...empty, comment: { ...empty.comment, shape: 'pill' } };
+  assert.ok((await requires()).includes('scheme-overrides-v1'));
 });

@@ -1,6 +1,7 @@
 import { Context } from '@kit.AbilityKit';
 import preferences from '@ohos.data.preferences';
 import { SearchExploreSettingsStore } from './SearchExploreSettingsStore';
+import { SourceGroupName } from './SourceGroupName';
 
 export class BookSourceGroupStore {
   private static readonly STORE_NAME: string = 'book_source_groups';
@@ -98,7 +99,7 @@ export class BookSourceGroupStore {
   private static normalize(groups: string[]): string[] {
     const result: string[] = [];
     for (const item of groups) {
-      const group = (item || '').trim();
+      const group = SourceGroupName.clean(item);
       if (group && !result.includes(group)) {
         result.push(group);
       }

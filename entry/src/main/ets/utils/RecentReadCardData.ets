@@ -3,6 +3,7 @@ import fs from '@ohos.file.fs';
 import { Book } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { BookCoverCache } from './BookCoverCache';
+import { BookDisplayHelper } from './BookDisplayHelper';
 import { BookshelfSortHelper } from './BookshelfSortHelper';
 import { BookCoverResolver } from './BookCoverResolver';
 import { ThemeBookCoverSettings } from './ThemeBookCoverSettings';
@@ -12,6 +13,7 @@ import { CoverGallerySnapshot, CoverGalleryStore } from './CoverGalleryStore';
 import { SearchExplorePendingBook } from './SearchExplorePendingBook';
 import { PrivateShelfStore } from './PrivateShelfStore';
 import { AppThemeSettingsStore } from './AppThemeSettingsStore';
+import { ReaderReplaceRuleStore } from './ReaderReplaceRuleStore';
 
 export const RECENT_READ_FORM_NAME = 'RecentReadForm';
 /** 封面卡片与最近阅读卡片共用同一个 FormExtensionAbility 和同一份数据。 */
@@ -128,6 +130,12 @@ export class RecentReadCardDataProvider {
       console.warn('加载卡片封面图集设置失败:', e);
     }
     const accent = await RecentReadCardDataProvider.themeAccentColor(context, darkMode);
+    try {
+      // 章节名按替换净化规则显示，与阅读页、书架一致；每次重读，规则在别处改过也能跟上。
+      await ReaderReplaceRuleStore.load(context, true);
+    } catch (e) {
+      console.warn('加载卡片替换净化规则失败:', e);
+    }
     return await RecentReadCardDataProvider.fromBooks(context, books, dimension, darkMode, coverSettings, accent);
   }
 
@@ -181,7 +189,8 @@ export class RecentReadCardDataProvider {
     const item = new RecentReadCardBook();
     item.name = book.name || '未命名书籍';
     const started = Book.hasStartedReading(book);
-    item.chapter = started ? (book.durChapterTitle || '继续阅读') : '未读';
+    item.chapter = started ?
+      (ReaderReplaceRuleStore.displayTitle((book.durChapterTitle || '').trim(), book) || '继续阅读') : '未读';
     item.brief = started ? RecentReadCardDataProvider.chapterBrief(item.chapter) : '未读';
     item.progress = RecentReadCardDataProvider.progressText(book);
     item.percent = RecentReadCardDataProvider.progressPercent(book);
@@ -262,7 +271,9 @@ export class RecentReadCardDataProvider {
     // 卡片扩展可在主页面尚未初始化时运行，主题从持久化设置读取。
     try {
       const themeSettings = await AppThemeSettingsStore.load(context);
-      if (themeSettings.themeBookCoverEnabled) {
+      // 统一封面用主题封面，或这本书没有封面且选了用主题封面兜底。
+      const themeFallback = coverSettings.fallback === 'theme' && covers.length === 0;
+      if ((themeSettings.themeBookCoverEnabled || themeFallback) && !BookDisplayHelper.hasCustomCover(book)) {
         const theme = themeSettings.themeId === ThemeIds.CUSTOM ?
           AppThemeSettingsStore.customTheme(themeSettings, darkMode) : BuiltinThemeRegistry.findById(themeSettings.themeId);
         const themeCovers = ThemeBookCoverSettings.coversForAsset(book, theme.book.coverAssetId, darkMode,

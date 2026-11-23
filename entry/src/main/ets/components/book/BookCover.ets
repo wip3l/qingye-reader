@@ -39,10 +39,14 @@ export struct BookCover {
   @StorageProp('bookshelfDarkCoverAlbumId') @Watch('refreshCovers') darkAlbum: string = '';
   @StorageProp('bookshelfCoverApplyScope') @Watch('refreshCovers') applyScope: string = 'all';
   @StorageProp('bookshelfCoverTargetBooks') @Watch('refreshCovers') targetBooks: string = '';
-  @StorageProp('bookshelfIgnoreSourceCover') @Watch('refreshCovers') ignoreSource: boolean = false;
-  @StorageProp('bookshelfIgnoreEmptyCoverOnly') @Watch('refreshCovers') ignoreEmptyOnly: boolean = false;
+  @StorageProp('bookshelfCoverReplaceAlbum') @Watch('refreshCovers') replaceAlbum: boolean = false;
+  @StorageProp('bookshelfCoverAlbumMix') @Watch('refreshCovers') albumMix: boolean = false;
+  @StorageProp('bookshelfCoverFallback') @Watch('refreshCovers') fallback: string = 'text';
+  /** 有封面地址被确认取不到（或又取到了）：重新取图。 */
+  @StorageProp('coverFailureRevision') @Watch('refreshCovers') coverFailureRevision: number = 0;
   @StorageProp('bookshelfCoverMode') @Watch('refreshCovers') coverMode: string = 'sequence';
   @StorageProp('appThemeBookCoverEnabled') @Watch('refreshCovers') themeCoverEnabled: boolean = false;
+  @StorageProp('appThemeBookFrameEnabled') @Watch('refreshCovers') themeFrameEnabled: boolean = false;
   @StorageProp('themeRevision') @Watch('refreshCovers') themeRevision: number = 0;
   @StorageProp('shelfCoverSlotRevision') @Watch('refreshCovers') shelfCoverSlotRevision: number = 0;
   @StorageProp('shelfUpdateTime') @Watch('onBookChanged') shelfUpdateTime: number = 0;
@@ -68,6 +72,11 @@ export struct BookCover {
   private coverLoadSerial: number = 0;
   private retryCounts: Map<number, number> = new Map();
   private retryTimers: Map<number, number> = new Map();
+  /** 上次按哪份已准备封面刷新的，见 onPreparedSelectionChanged。 */
+  private preparedApplied: string = '';
+  private readyNotified: ResourceStr | null = null;
+  private readyPending: ResourceStr = '';
+  private readyTimer: number = -1;
   onReadyCover: (url: ResourceStr) => void = (_url: ResourceStr): void => {};
 
   aboutToAppear(): void {
@@ -80,6 +89,8 @@ export struct BookCover {
     this.requestSerial++;
     this.coverLoadSerial++;
     this.clearCoverRetries();
+    if (this.readyTimer >= 0) clearTimeout(this.readyTimer);
+    this.readyTimer = -1;
   }
 
   onBookChanged(): void {
@@ -134,7 +145,8 @@ export struct BookCover {
     }
     const book = this.coverBook();
     return CoverGallerySettings.getDisplayCoverList(book, this.appDarkMode, this.albums,
-      this.lightAlbum, this.darkAlbum, this.applyScope, this.targetBooks, this.ignoreSource, this.coverMode, this.ignoreEmptyOnly);
+      this.lightAlbum, this.darkAlbum, this.applyScope, this.targetBooks, this.coverMode, this.replaceAlbum,
+      this.albumMix, this.fallback);
   }
 
   refreshCovers(): void {
@@ -142,9 +154,11 @@ export struct BookCover {
       this.onPreparedSelectionChanged();
       return;
     }
-    const themeCover = this.useBookshelfCover && ThemeBookCoverSettings.enabled(this.appDarkMode, this.themeCoverEnabled);
+    this.preparedApplied = '';
+    const themeCover = this.useBookshelfCover &&
+      ThemeBookCoverSettings.enabledFor(this.coverBook(), this.appDarkMode, this.themeCoverEnabled);
     const covers: ResourceStr[] = themeCover ? ThemeBookCoverSettings.covers(this.coverBook(), this.appDarkMode, this.coverMode) : this.rawCoverList();
-    this.themeFrame = themeCover ? ThemeBookCoverSettings.frame(this.appDarkMode) : '';
+    this.themeFrame = this.useBookshelfCover ? ThemeBookCoverSettings.frameIf(this.appDarkMode, this.themeFrameEnabled) : '';
     this.themeCover = themeCover;
     this.interval = themeCover ? ThemeBookCoverSettings.interval(this.coverBook()) : 3500;
     if (JSON.stringify(covers) !== JSON.stringify(this.covers)) {
@@ -157,6 +171,11 @@ export struct BookCover {
   onPreparedSelectionChanged(): void {
     const prepared = this.preparedSelection;
     if (!prepared) return;
+    // 对象类型的 @Prop 每次父组件刷新都是一份新拷贝，内容没变也会走到这里。结果列表里任何一本的封面准备好，
+    // 在场的每个封面都会被刷新一遍；照做的话要重置封面列表（轮播随之重建）、取消并重启进行中的下载。
+    const applied = JSON.stringify([prepared.firstImage, prepared.covers, prepared.frame, prepared.interval, prepared.themeCover]);
+    if (applied === this.preparedApplied) return;
+    this.preparedApplied = applied;
     this.themeFrame = prepared.frame;
     this.themeCover = prepared.themeCover;
     this.interval = prepared.interval;
@@ -232,6 +251,10 @@ export struct BookCover {
     this.displayCovers = this.displayCovers.map((value: ResourceStr, position: number): ResourceStr =>
       position === index ? '' : value);
     this.notifyReadyCover();
+    const raw = this.covers[index];
+    if (typeof raw === 'string' && raw && !/^https?:\/\//i.test(raw)) {
+      BookCoverCache.checkLocalCover(getContext(this), raw).catch((): void => {});
+    }
     this.scheduleCoverRetry(index, this.coverLoadSerial, true);
   }
 
@@ -243,8 +266,21 @@ export struct BookCover {
     return this.loadedRevision >= 0 && this.loadedUrls.has(JSON.stringify(this.activeCover()));
   }
 
+  /**
+   * 回调一律延后到当前任务之后再发，且只在变化时发。这里常在父组件刷新本组件参数的过程中被调到（@Prop 变化 →
+   * @Watch），同步回调时父组件在自己的渲染里读写状态：读，会把这个封面节点记成那个状态的依赖；写，又把它标脏。
+   * 框架在一次重绘里循环处理到没有脏节点为止，两个封面对同一个键报出不同结果时就永远停不下来，主线程卡死被系统结束。
+   */
   notifyReadyCover(): void {
-    if (this.mounted) this.onReadyCover(this.isActiveCoverReady() ? this.activeCover() : '');
+    if (!this.mounted) return;
+    this.readyPending = this.isActiveCoverReady() ? this.activeCover() : '';
+    if (this.readyTimer >= 0) return;
+    this.readyTimer = setTimeout((): void => {
+      this.readyTimer = -1;
+      if (!this.mounted || this.readyPending === this.readyNotified) return;
+      this.readyNotified = this.readyPending;
+      this.onReadyCover(this.readyPending);
+    }, 0);
   }
 
   markLoaded(url: ResourceStr): void {
@@ -301,7 +337,7 @@ export struct BookCover {
         .syncLoad(this.preparedSync())
         .width('100%')
         .height('100%')
-        .objectFit(this.themeFrame ? ImageFit.Fill : ImageFit.Cover)
+        .objectFit(this.themeCover && this.themeFrame ? ImageFit.Fill : ImageFit.Cover)
         .sourceSize({ width: this.decodeWidth, height: this.decodeHeight })
         .borderRadius(this.cornerRadius)
         .onComplete(() => {
@@ -323,7 +359,7 @@ export struct BookCover {
           .width('100%')
           .height('100%')
           .sourceSize({ width: this.decodeWidth, height: this.decodeHeight })
-          .objectFit(this.themeFrame ? ImageFit.Fill : ImageFit.Cover)
+          .objectFit(this.themeCover && this.themeFrame ? ImageFit.Fill : ImageFit.Cover)
       } else if (!this.isActiveCoverReady()) {
         Column() {
           Text((this.name || '书').substring(0, 1))

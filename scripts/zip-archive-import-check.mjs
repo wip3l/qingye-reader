@@ -3,6 +3,7 @@
 // 数据描述符、加密、非常规压缩方式、ZIP64、带注释），校验 ZipArchiveIndex 的目录解析、书籍条目筛选，
 // 以及重新封装出的单条目 ZIP 能被 Python zipfile 正常解出且内容一致。
 // 文件读写与系统解压（LocalArchiveImport.ets）在真机上验证。
+// 另查纯图片包（CBZ）的图片筛选、自然排序与按文件夹分章。
 // Usage: node --experimental-strip-types scripts/zip-archive-import-check.mjs
 
 import { spawnSync } from 'node:child_process';
@@ -224,6 +225,38 @@ try {
   throwsWith(() => readEntries(zip.subarray(0, zip.length - 40)), /不是有效的 ZIP|结构不完整/,
     'truncated archive is rejected');
   throwsWith(() => ZipArchiveIndex.localDataOffset(new Uint8Array(30), 0), /损坏/, 'bad local header is rejected');
+
+  console.log('comic (image-only) archives');
+  const entry = (name) => ({ name });
+  const layoutOf = (names) => {
+    const layout = ZipArchiveIndex.comicLayout(names.map(entry));
+    return {
+      chapters: layout.chapters.map((chapter) => [chapter.title, chapter.entries.map((item) => item.name)]),
+      cover: layout.cover ? layout.cover.name : null
+    };
+  };
+  equal(ZipArchiveIndex.imageEntries(['a.jpg', 'b.PNG', 'c.webp', 'd.txt', 'dir/', '__MACOSX/x.jpg', '.hidden/y.jpg',
+    'z/._z.jpg', 'Thumbs.db', 'e.avif'].map(entry)).map((item) => item.name),
+  ['a.jpg', 'b.PNG', 'c.webp', 'e.avif'], 'image entries skip non-images, folders, __MACOSX and hidden paths');
+  equal(['10.jpg', '2.jpg', '1.jpg', '02a.jpg', 'page_100.png', 'page_9.png']
+    .sort((a, b) => ZipArchiveIndex.naturalCompare(a, b)),
+  ['1.jpg', '2.jpg', '02a.jpg', '10.jpg', 'page_9.png', 'page_100.png'], 'natural order compares digit runs numerically');
+  equal(['第十二话', '第二话', '第一百零五话', '第十话', '第三卷', '番外'].sort((a, b) => ZipArchiveIndex.naturalCompare(a, b)),
+    ['番外', '第二话', '第三卷', '第十话', '第十二话', '第一百零五话'], 'Chinese numerals after 第 compare by value');
+  equal(['01.jpg', '1.jpg'].sort((a, b) => ZipArchiveIndex.naturalCompare(a, b)), ['1.jpg', '01.jpg'],
+    'equal numbers fall back to a stable order');
+  equal(layoutOf(['漫画/10.jpg', '漫画/2.jpg', '漫画/1.jpg']),
+    { chapters: [['', ['漫画/1.jpg', '漫画/2.jpg', '漫画/10.jpg']]], cover: '漫画/1.jpg' },
+    'one folder becomes one untitled chapter, first image is the cover');
+  equal(layoutOf(['书/第十话/2.jpg', '书/第十话/1.jpg', '书/第二话/1.jpg', '书/cover.jpg', '书/第二话/cover.jpg']),
+    {
+      chapters: [['卷首', ['书/cover.jpg']], ['第二话', ['书/第二话/1.jpg', '书/第二话/cover.jpg']],
+        ['第十话', ['书/第十话/1.jpg', '书/第十话/2.jpg']]],
+      cover: '书/cover.jpg'
+    }, 'folders become chapters in natural order, root images come first, shallowest cover wins');
+  equal(layoutOf(['卷1/话1/a.jpg', '卷1/话2/a.jpg', '卷2/话1/a.jpg']).chapters.map((chapter) => chapter[0]),
+    ['卷1 / 话1', '卷1 / 话2', '卷2 / 话1'], 'nested folders keep their relative path as the title');
+  equal(layoutOf(['readme.txt', 'x.epub']), { chapters: [], cover: null }, 'no images gives an empty layout');
 } finally {
   fs.rmSync(workDir, { recursive: true, force: true });
   cleanup();

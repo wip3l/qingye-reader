@@ -6,6 +6,7 @@ import { AdaptiveColorPicker } from '../components/AdaptiveColorPicker';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import {
   ThemeBubbleStyleLabels,
+  ThemeTitleEmphasisTokens,
   ThemeColorOverrides,
   ThemeColorTokens,
   ThemeComponentSourceIds,
@@ -25,26 +26,81 @@ import { StartupCoverImageStore } from '../utils/StartupCoverImageStore';
 import { SchemeAssetResult, SchemeAssetService, SchemeFontOption } from '../utils/SchemeAssetService';
 import { SchemePreviewImageStore } from '../utils/SchemePreviewImageStore';
 import {
+  COMMENT_BUBBLE_ORNAMENT_NAMES,
+  COMMENT_BUBBLE_ORNAMENTS,
+  COMMENT_BUBBLE_SHAPE_NAMES,
+  COMMENT_BUBBLE_SHAPES,
+  COMMENT_IMAGE_NONE,
+  COMMENT_IMAGE_OVERHANG_BOTTOM,
+  COMMENT_IMAGE_OVERHANG_TOP,
+  COMMENT_ORNAMENT_CORNER_NAMES,
+  COMMENT_ORNAMENT_CORNERS,
+  commentBubbleFor,
+  commentBubbleHasImage,
+  commentBubbleIsEmpty,
+  commentImageOverhang,
+  CommentImageRepeat,
+  copyCommentImage,
+  normalizeCommentBubble,
+  ThemePackageBubbleSlice,
+  TITLE_BUBBLE_SAME_AS_EMPHASIS,
+  isPackTitleBubbleStyle,
+  packTitleBubbleStyleId,
   packReaderBackgroundId,
   SHELF_BACKDROP_LAYOUT_NAMES,
   SHELF_BACKDROP_LAYOUTS,
   ThemeImageCrop,
-  ThemePackageLimits
+  ThemePackageBubble,
+  ThemePackageCommentBubble,
+  ThemePackageLimits,
+  bookFolderOff,
+  bookShelfFrameOff
 } from '../theme/share/ThemePackageFormat';
+import {
+  CHAPTER_HEAD_NONE,
+  CHAPTER_HEAD_PLACEMENT_NAMES,
+  CHAPTER_HEAD_PLACEMENTS,
+  chapterHeadIsEmpty,
+  normalizeChapterHead,
+  normalizeDropCapRatio,
+  normalizeOrnamentInset,
+  normalizeOrnamentScale,
+  ThemePackageChapterHead
+} from '../theme/share/ThemePackageFormat';
+import {
+  ReaderCommentBubbleImage,
+  ReaderCommentBubblePainter,
+  ReaderCommentBubbleStyle,
+  ReaderCommentBubbleStyles
+} from '../core/reader/ReaderCommentBubble';
+import { ReaderRegexBubbleStyleResolver, ReaderRegexEmphasisContext } from '../model/reader/ReaderRegexFontRule';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { CloudThemeSync } from '../account/CloudThemeSync';
 import { ListDissolve } from '../utils/ListDissolve';
 import { DeleteParticleBurst, DeleteParticleLayer, DeleteParticles } from '../components/common/DeleteParticles';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
-import { SettingNavRow, SettingRow } from '../components/common/SettingRow';
+import { SettingNavRow, SettingRow, SettingSwitchRow } from '../components/common/SettingRow';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
+import { ThemeModeSwitch } from '../components/theme/ThemeModeSwitch';
 import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
 import { CustomThemePreview } from '../components/theme/CustomThemePreview';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
+import { ThemeTypographyDraft } from '../utils/ThemeTypographyDraft';
+import {
+  ReaderHeaderFooterEditor,
+  ReaderTypographyField,
+  ReaderTypographyStepper
+} from '../components/reader/ReaderLayoutSettings';
+import { ReaderInfoBarConfig } from '../core/reader/ReaderInfoBarModel';
+import { ReaderParagraphIndent } from '../core/reader/ReaderParagraphIndent';
 import { ThemeCropRequest, ThemeImageCropper } from '../components/theme/ThemeImageCropper';
+import { BubbleFrameStretchRequest, ThemeBubbleFrameStretcher } from '../components/theme/ThemeBubbleFrameStretcher';
+import { CommentImageStretchRequest, ThemeCommentImageStretcher } from '../components/theme/ThemeCommentImageStretcher';
+import { ThemeBubbleFramePreview } from '../components/theme/ThemeBubbleFramePreview';
 import { ThemeCroppedImage } from '../components/theme/ThemeCroppedImage';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
 import { TtsPanelThemeStyles } from '../theme/TtsPanelThemeStyles';
@@ -53,6 +109,8 @@ import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
 import { fileUri } from '../platform/FileUri';
+
+const DROP_CAP_LINE_NAMES: string[] = ['不处理', '占 2 行', '占 3 行'];
 
 interface ThemeEditorSectionTitleOptions {
   title: string;
@@ -82,9 +140,14 @@ interface AssetSlotOptions {
   onTap: () => void;
   rotation?: number;
   icon?: boolean;
+  // 书架边框这类中心透明的 SVG：不套 fillColor，否则透明的中心也会被填成一整块。
+  untinted?: boolean;
   // 动图取景记下的显示区域，按区域显示缩略图。
   crop?: ThemeImageCrop | null;
 }
+
+/** 顶栏浅色/深色开关的宽度：比排版页窄一些，给标题和“完成”留位置。 */
+const HEADER_MODE_SWITCH_WIDTH: number = 128;
 
 interface CoverTileOptions {
   index: number;
@@ -99,17 +162,21 @@ class ThemeEditorReaderColors {
   contentTone: string = 'light';
 }
 
-/** 编辑器顶部的建议：只提醒、不拦保存，点了跳到对应页签。 */
+/** 编辑器的建议：只提醒、不拦保存，点了跳到对应场景页签里的分组（mode 非空时一并切到那个模式）。 */
 class ThemeEditorIssue {
   text: string = '';
   detail: string = '';
   section: string = '';
+  group: string = '';
+  mode: string = '';
   swatch: string = '';
 }
 
 class ThemeEditorUndoEntry {
   settings: AppThemeSettings = new AppThemeSettings();
   mode: string = 'light';
+  // 排版页签的改动只记改动前的阅读排版，撤销时不动方案的其他设置。
+  typography: ReaderSettings | null = null;
 }
 
 @Component
@@ -164,13 +231,18 @@ struct ThemeColorOption {
 @Extend(Column)
 function editorCard(color: string) {
   .width('calc(100% - 24vp)')
-  .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+  .margin({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.MD })
   .backgroundColor(color)
   .borderRadius(ThemeRuntime.cardRadius())
   .clip(true)
 }
 
 /** 取景结果：要导入的文件，以及动图取景记下的显示区域（静图已经裁进文件，为 null）。 */
+class PickedArtwork {
+  uri: string = '';
+  fromFile: boolean = false;
+}
+
 class FramedImage {
   path: string = '';
   crop: ThemeImageCrop | null = null;
@@ -204,6 +276,9 @@ struct ThemeColorSettingsPage {
   @State darkPalette: ThemeColorOverrides = new ThemeColorOverrides();
   @State lightEmphasis: ThemeEmphasisOverrides = new ThemeEmphasisOverrides();
   @State darkEmphasis: ThemeEmphasisOverrides = new ThemeEmphasisOverrides();
+  // 段评气泡小样按外观缓存，不是状态。
+  private commentPreviewImages: Map<string, ReaderCommentBubbleImage | null> =
+    new Map<string, ReaderCommentBubbleImage | null>();
   // 方案自己上传的素材所在的包；空表示还没上传过。
   @State ownPackageId: string = '';
   @StorageLink('installedThemePacksRevision') installedPacksRevision: number = 0;
@@ -215,6 +290,11 @@ struct ThemeColorSettingsPage {
   // 拖动左上/右下“角饰大小”时的实时百分比；松手保存完回到 -1，改读主题包里的值。
   @State leadingScaleDrag: number = -1;
   @State trailingScaleDrag: number = -1;
+  // “角饰边距”同理。
+  @State leadingInsetDrag: number = -1;
+  @State trailingInsetDrag: number = -1;
+  @State chapterHeadScaleDrag: number = -1;
+  @State dropCapRatioDrag: number = -1;
   @State appFontFamily: string = '';
   @State fontLibrary: SchemeFontOption[] = [];
   @State radiusOverride: ThemeRadiusOverrides = new ThemeRadiusOverrides();
@@ -222,8 +302,16 @@ struct ThemeColorSettingsPage {
   @State darkStartupText: ThemeStartupTextStyle = new ThemeStartupTextStyle();
   @State previewImagePath: string = '';
   @State availableThemes: ThemePack[] = [];
-  @State editorSection: string = '';
-  @State previewScene: string = 'bookshelf';
+  // 页签按场景分（global / shelf / reader / typography / other），预览画面跟着页签走；
+  // “其他”里是朗读面板、启动页和方案信息，预览跟着展开的分组走。
+  @State editorSection: string = 'global';
+  // 每个场景下同一时间只展开一个分组；空串表示全部收起。
+  @State openGroup: string = 'palette';
+  // 展开了“更多”的分组。
+  @State moreGroups: string[] = [];
+  // 往下滚时预览收矮，给控件让地方。
+  @State previewShrunk: boolean = false;
+  @State previewScene: string = 'mine';
   @State fullPreview: boolean = false;
   @State undoAvailable: boolean = false;
   @State schemeName: string = '';
@@ -232,6 +320,14 @@ struct ThemeColorSettingsPage {
   @State saveFailed: boolean = false;
   @State readerProfile: ReaderSettings = new ReaderSettings();
   @State readerProfileBound: boolean = false;
+  // 排版页签编辑的就是 readerProfile；页眉页脚三项单独成状态，交给页眉页脚控件双向绑定。
+  @State typoHeaderEnabled: boolean = false;
+  @State typoFooterEnabled: boolean = true;
+  @State typoInfoBarConfig: string = '';
+  @State typoStepperKey: number = 0;
+  @State typoActiveScheme: boolean = false;
+  @State typoFollowsTheme: boolean = true;
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   @State viewportHeight: number = 0;
   @State viewportWidth: number = 360;
@@ -243,14 +339,19 @@ struct ThemeColorSettingsPage {
   @State schemeDescription: string = '';
   @State cropRequest: ThemeCropRequest = new ThemeCropRequest();
   @State cropVisible: boolean = false;
+  @State frameStretchRequest: BubbleFrameStretchRequest = new BubbleFrameStretchRequest();
+  @State frameStretchVisible: boolean = false;
+  @State commentStretchRequest: CommentImageStretchRequest = new CommentImageStretchRequest();
+  @State commentStretchVisible: boolean = false;
   @State checksExpanded: boolean = false;
   // 素材尺寸类建议要读图片，异步算好放这里；颜色类建议随状态即时算。
   @State assetIssues: ThemeEditorIssue[] = [];
   @State previewShelfLayout: string = 'companion';
-  @State showSceneMenu: boolean = false;
   @State showShelfLayoutMenu: boolean = false;
   private schemeId: string = '';
   private cropResolve: ((result: string) => void) | null = null;
+  private frameStretchResolve: ((settings: ThemePackageBubble | null) => void) | null = null;
+  private commentStretchResolve: ((settings: ThemePackageCommentBubble | null) => void) | null = null;
   // 动图取景交回的显示区域；frameImage 读走后清空。
   private cropArea: ThemeImageCrop | null = null;
   private draftSettings: AppThemeSettings = new AppThemeSettings();
@@ -262,8 +363,18 @@ struct ThemeColorSettingsPage {
   private obsoleteStartupPaths: string[] = [];
   private pendingSaves: number = 0;
   private returningFromTypography: boolean = false;
+  // 上一次已记入撤销的排版，下一次改动时作为“改动前”存进撤销记录。
+  private typoCommitted: ReaderSettings = new ReaderSettings();
+  private typoUndoAt: number = 0;
+  private typoDirty: boolean = false;
+  private typoSaveFailed: boolean = false;
+  private typoSaveTimer: number = -1;
+  private typoSaveQueue: Promise<void> = Promise.resolve();
+  private fontDraftRevision: number = -1;
 
   aboutToAppear(): void {
+    // 进来时编辑的那一套跟着应用当前的日夜模式：夜间看到的是深色，改的也应是深色
+    this.selectedMode = this.appDarkMode ? 'dark' : 'light';
     this.reloadSettings();
     this.syncBars();
   }
@@ -274,12 +385,25 @@ struct ThemeColorSettingsPage {
       this.returningFromTypography = false;
       this.reloadReaderProfile();
     }
+    this.pullFontDraft();
     this.syncBars();
+  }
+
+  onPageHide(): void {
+    this.flushTypography();
   }
 
   onBackPress(): boolean {
     if (this.cropVisible) {
       this.finishCrop('');
+      return true;
+    }
+    if (this.frameStretchVisible) {
+      this.finishFrameStretch(null);
+      return true;
+    }
+    if (this.commentStretchVisible) {
+      this.finishCommentStretch(null);
       return true;
     }
     this.handleBack();
@@ -288,7 +412,7 @@ struct ThemeColorSettingsPage {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      PageScaffold({ title: this.fullPreview ? '主题预览' : this.sectionName(),
+      PageScaffold({ title: this.fullPreview ? '主题预览' : (this.schemeName || '编辑主题'),
         scrollable: false, collapsible: false, onBack: () => this.handleBack(), content: () => {
         this.pageContent()
       }, actions: () => {
@@ -304,6 +428,20 @@ struct ThemeColorSettingsPage {
           },
           onOriginal: () => this.finishCrop(this.cropRequest.uri),
           onCancel: () => this.finishCrop('')
+        })
+      }
+      if (this.frameStretchVisible) {
+        ThemeBubbleFrameStretcher({
+          request: this.frameStretchRequest,
+          onDone: (settings: ThemePackageBubble) => this.finishFrameStretch(settings),
+          onCancel: () => this.finishFrameStretch(null)
+        })
+      }
+      if (this.commentStretchVisible) {
+        ThemeCommentImageStretcher({
+          request: this.commentStretchRequest,
+          onDone: (settings: ThemePackageCommentBubble) => this.finishCommentStretch(settings),
+          onCancel: () => this.finishCommentStretch(null)
         })
       }
       if (this.deleteParticleBursts.length > 0) {
@@ -324,7 +462,6 @@ struct ThemeColorSettingsPage {
   @Builder
   pageContent() {
     Column() {
-      this.modeOptions()
       if (this.fullPreview) {
         Column() {
           this.previewSurface(true)
@@ -334,38 +471,32 @@ struct ThemeColorSettingsPage {
         .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
         this.sceneGrid()
       } else {
-        if (this.editorSection) {
-          if (!this.compactEditor()) {
-            this.previewPanel()
-          }
-          this.sectionTabs()
+        if (!this.compactEditor()) {
+          this.previewPanel()
         }
+        this.sectionTabs()
         Scroll(this.editorScroller) {
           Column() {
-            if (this.editorSection && this.compactEditor()) {
+            if (this.compactEditor()) {
               this.previewPanel()
-            }
-            if (this.editorReady && this.advancedLocked()) {
-              this.advancedNotice()
-            }
-            if (this.editorReady && this.editorSection && this.editorSection !== 'typography') {
-              this.issuesBanner()
             }
             if (!this.editorReady) {
               this.sectionTitle({ title: '正在读取主题方案…' })
-            } else if (!this.editorSection) {
-              this.overviewContent()
-              this.previewPanel()
-            } else if (this.editorSection === 'colors') {
-              this.colorSection()
-            } else if (this.editorSection === 'reading') {
-              this.readingSection()
-            } else if (this.editorSection === 'home') {
-              this.homeSection()
-            } else if (this.editorSection === 'cover') {
-              this.coverSection()
             } else {
-              this.typographySection()
+              if (this.checksExpanded) {
+                this.issuesList()
+              }
+              if (this.editorSection === 'shelf') {
+                this.shelfSection()
+              } else if (this.editorSection === 'reader') {
+                this.readerSection()
+              } else if (this.editorSection === 'typography') {
+                this.typographySection()
+              } else if (this.editorSection === 'other') {
+                this.otherSection()
+              } else {
+                this.globalSection()
+              }
             }
             this.sectionTitle({ title: this.saveFailed ? '保存失败，请点击完成重试' :
               '修改自动保存到方案，返回主题页后手动启用' })
@@ -377,6 +508,7 @@ struct ThemeColorSettingsPage {
         .layoutWeight(1)
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+        .onDidScroll(() => this.syncPreviewShrink())
       }
     }
     .width('100%')
@@ -401,6 +533,15 @@ struct ThemeColorSettingsPage {
       }
       if (!scheme) {
         return;
+      }
+      // 素材包还在云端时先下载：在缺包的方案上改素材会建出一个残缺的包，再同步回去就覆盖了云端的完整版本。
+      if (CloudThemeSync.remotePacksOf(scheme).length > 0) {
+        HdsFeedback.showToast('正在下载云端的主题素材…');
+      }
+      try {
+        await CloudThemeSync.ensureSchemePacks(getContext(this), scheme);
+      } catch (e) {
+        HdsFeedback.showToast(`主题素材下载失败：${(e as Error).message}`);
       }
       this.schemeName = scheme.name;
       this.schemeAuthor = scheme.author;
@@ -488,6 +629,11 @@ struct ThemeColorSettingsPage {
         HdsFeedback.showToast('保存主题方案失败，请重试');
         return;
       }
+      await this.flushTypography();
+      if (this.typoSaveFailed) {
+        this.closing = false;
+        return;
+      }
       this.cleanupStartupImages();
       this.getUIContext().getRouter().back();
     } catch (e) {
@@ -532,7 +678,6 @@ struct ThemeColorSettingsPage {
       this.darkAccentColor = settings.customDarkAccentColor;
       this.lightButtonColor = settings.customLightButtonColor;
       this.darkButtonColor = settings.customDarkButtonColor;
-      this.previewScene = this.sceneForSource(category);
       await this.onSettingChanged();
     } catch (e) {
       console.warn('保存自定义主题方案部件失败:', e);
@@ -587,38 +732,223 @@ struct ThemeColorSettingsPage {
     return this.selectedMode === 'dark' ? this.darkSources : this.lightSources;
   }
 
-  sectionName(): string {
-    if (this.editorSection === 'colors') return '配色';
-    if (this.editorSection === 'reading') return '阅读与朗读';
-    if (this.editorSection === 'home') return '首页与书架';
-    if (this.editorSection === 'cover') return '封面与信息';
-    if (this.editorSection === 'typography') return '字体与排版';
-    return '编辑主题';
+  static readonly SOURCE_CATEGORIES: string[] = ['startup', 'palette', 'reader', 'ttsPanel', 'bubble', 'navigation',
+    'book', 'homeBackdrop', 'typography', 'layout', 'radius', 'glass'];
+
+  /** 每个场景页签能看的预览画面，第一个是切到这个页签时显示的。 */
+  sceneChoices(section: string = this.editorSection): string[] {
+    if (section === 'shelf') return ['bookshelf', 'explore', 'mine'];
+    if (section === 'reader' || section === 'typography') return ['reader'];
+    if (section === 'other') return ['tts', 'startup', 'card'];
+    return ['mine', 'explore', 'bookshelf'];
   }
 
-  openSection(section: string): void {
+  defaultGroup(section: string): string {
+    if (section === 'shelf') return 'navigation';
+    if (section === 'reader') return 'reader';
+    if (section === 'typography') return 'typoBody';
+    if (section === 'other') return 'ttsPanel';
+    return 'palette';
+  }
+
+  /** “其他”页签里各分组对应的预览画面。 */
+  otherSceneFor(group: string): string {
+    if (group === 'ttsPanel') return 'tts';
+    if (group === 'info' || group === 'card') return 'card';
+    return 'startup';
+  }
+
+  openSection(section: string, group: string = ''): void {
     this.editorSection = section;
-    this.previewScene = section === 'cover' ? 'startup' :
-      (section === 'reading' || section === 'typography' ? 'reader' : 'bookshelf');
+    this.openGroup = group || this.defaultGroup(section);
+    this.previewScene = section === 'other' ? this.otherSceneFor(this.openGroup) : this.sceneChoices(section)[0];
+    this.previewShrunk = false;
     this.editorScroller.scrollTo({ xOffset: 0, yOffset: 0 });
+  }
+
+  toggleGroup(key: string): void {
+    this.openGroup = this.openGroup === key ? '' : key;
+    if (this.editorSection === 'other' && this.openGroup) {
+      this.previewScene = this.otherSceneFor(this.openGroup);
+    }
+  }
+
+  moreOpen(key: string): boolean {
+    return this.moreGroups.includes(key);
+  }
+
+  toggleMore(key: string): void {
+    this.moreGroups = this.moreOpen(key) ? this.moreGroups.filter((item: string): boolean => item !== key) :
+      this.moreGroups.concat([key]);
+  }
+
+  /** 预览里左右滑：在这个页签能看的几个画面之间切换。 */
+  stepPreviewScene(forward: boolean): void {
+    const choices = this.sceneChoices();
+    if (choices.length < 2) return;
+    const index = Math.max(0, choices.indexOf(this.previewScene));
+    this.previewScene = choices[(index + (forward ? 1 : choices.length - 1)) % choices.length];
+  }
+
+  /** 预览固定在列表上方时，往下滚收矮、滚回顶部恢复；两个阈值错开，避免在临界处来回跳。 */
+  syncPreviewShrink(): void {
+    if (this.compactEditor()) return;
+    const offset = this.editorScroller.currentOffset().yOffset;
+    if (offset > 72 && !this.previewShrunk) {
+      this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+        this.previewShrunk = true;
+      });
+    } else if (offset < 4 && this.previewShrunk) {
+      this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+        this.previewShrunk = false;
+      });
+    }
   }
 
   handleBack(): void {
     if (this.fullPreview) {
       this.fullPreview = false;
-    } else if (this.editorSection) {
-      this.editorSection = '';
-      this.editorScroller.scrollTo({ xOffset: 0, yOffset: 0 });
     } else {
       this.closeEditor();
     }
   }
 
-  sceneForSource(category: string): string {
-    if (category === 'startup') return 'startup';
-    if (category === 'ttsPanel' || category === 'glass') return 'tts';
-    if (category === 'reader' || category === 'bubble' || category === 'layout') return 'reader';
-    return 'bookshelf';
+  /** 当前模式下所有部件都取自同一套主题时返回它，混搭时返回空串。 */
+  uniformSourceId(): string {
+    const first = this.sourceThemeId(ThemeColorSettingsPage.SOURCE_CATEGORIES[0]);
+    for (const category of ThemeColorSettingsPage.SOURCE_CATEGORIES) {
+      if (this.sourceThemeId(category) !== first) return '';
+    }
+    return first;
+  }
+
+  baseThemeLabel(): string {
+    const id = this.uniformSourceId();
+    return id ? BuiltinThemeRegistry.findById(id).name : '混搭';
+  }
+
+  baseThemeIndex(): number {
+    const id = this.uniformSourceId();
+    for (let index = 0; index < this.availableThemes.length; index++) {
+      if (this.availableThemes[index].id === id) return index;
+    }
+    return -1;
+  }
+
+  /** 基础主题：浅色、深色的全部部件来源一次换成同一套，逐项覆盖和上传的素材不删，之后可以再逐组改回去。 */
+  async applyBaseTheme(themeId: string): Promise<void> {
+    if (!themeId || (this.sourceUsesOnly(this.lightSources, themeId) &&
+      this.sourceUsesOnly(this.darkSources, themeId))) {
+      return;
+    }
+    if (SuperExclusiveThemes.has(themeId) && !AccountSessionStore.hasOwnedEntitlement(themeId)) {
+      this.refreshAvailableThemes();
+      return;
+    }
+    try {
+      this.rememberChange();
+      const settings = this.settingsFromState();
+      const theme = BuiltinThemeRegistry.findById(themeId);
+      for (const dark of [false, true]) {
+        const sources = AppThemeSettingsStore.cloneSources(
+          dark ? settings.customDarkSources : settings.customLightSources, settings.customBaseThemeId);
+        for (const category of ThemeColorSettingsPage.SOURCE_CATEGORIES) {
+          this.setSourceValue(sources, category, themeId);
+        }
+        if (dark) settings.customDarkSources = sources;
+        else settings.customLightSources = sources;
+        this.copyVariantOverrides(settings, theme, dark, 'palette');
+        this.copyVariantOverrides(settings, theme, dark, 'reader');
+      }
+      this.loadReaderColors(settings);
+      this.draftSettings = settings;
+      this.lightSources = AppThemeSettingsStore.cloneSources(
+        settings.customLightSources, settings.customBaseThemeId);
+      this.darkSources = AppThemeSettingsStore.cloneSources(
+        settings.customDarkSources, settings.customBaseThemeId);
+      this.lightAccentColor = settings.customLightAccentColor;
+      this.darkAccentColor = settings.customDarkAccentColor;
+      this.lightButtonColor = settings.customLightButtonColor;
+      this.darkButtonColor = settings.customDarkButtonColor;
+      this.assetRevision++;
+      await this.onSettingChanged();
+      HdsFeedback.showToast(`已全部换成「${theme.name}」，可以撤销`);
+    } catch (e) {
+      console.warn('更换基础主题失败:', e);
+    }
+  }
+
+  sourceUsesOnly(sources: ThemeComponentSourceIds, themeId: string): boolean {
+    return sources.startupThemeId === themeId && sources.paletteThemeId === themeId &&
+      sources.readerThemeId === themeId && sources.ttsPanelThemeId === themeId &&
+      sources.bubbleThemeId === themeId && sources.navigationThemeId === themeId &&
+      sources.bookThemeId === themeId && sources.homeBackdropThemeId === themeId &&
+      sources.typographyThemeId === themeId && sources.layoutThemeId === themeId &&
+      sources.radiusThemeId === themeId && sources.glassThemeId === themeId;
+  }
+
+  sourceName(category: string): string {
+    return BuiltinThemeRegistry.findById(this.sourceThemeId(category)).name;
+  }
+
+  /** 分组收起时标题右侧的一句当前状态。 */
+  groupSummary(key: string): string {
+    // 主题包记录不是状态变量：读 assetRevision，素材变了才会重新取值。
+    if (this.assetRevision < 0 || !this.editorReady) return '';
+    if (key === 'base') return this.baseThemeLabel();
+    if (key === 'radius') return `卡片 ${this.radiusValue('card')} · 按钮 ${this.radiusValue('button')}`;
+    if (key === 'font') return this.appFontIndex() > 0 ? this.appFontLabel() : this.sourceName('typography');
+    if (key === 'navigation') return this.ownNavigationActive() ? '已上传' : this.sourceName('navigation');
+    if (key === 'book') {
+      return this.ownCoverPaths().length > 0 ? `封面 ${this.ownCoverPaths().length} 张` : this.sourceName('book');
+    }
+    if (key === 'homeBackdrop') return this.ownHomeBackdrop() ? '已上传' : this.sourceName('homeBackdrop');
+    if (key === 'bubble') return this.bubbleStyleLabel(this.effectiveEmphasis().bubbleStyle) || this.sourceName('bubble');
+    if (key === 'comment') return this.commentShapeLabel();
+    if (key === 'title') {
+      return this.effectiveTitle().mode === 'bubble' ? this.titleStyleLabel(this.effectiveTitleStyle()) : this.titleModeLabel();
+    }
+    if (key === 'chapterHead') {
+      if (this.currentEmphasis().chapterHead === CHAPTER_HEAD_NONE) return '不显示';
+      const head = this.effectiveChapterHead();
+      const parts: string[] = [];
+      if (head.image) parts.push(CHAPTER_HEAD_PLACEMENT_NAMES[Math.max(0, CHAPTER_HEAD_PLACEMENTS.indexOf(head.placement || 'side'))]);
+      if (head.dropCapLines > 0) parts.push(head.dropCapImage ? '首字印章' : '首字放大');
+      if (parts.length > 0) return parts.join(' · ');
+      return head.numberColor ? '序号行颜色' : '未设置';
+    }
+    if (key === 'typoBody') return `字号 ${this.readerProfile.fontSize} · 行距 ${this.readerProfile.lineHeight}`;
+    if (key === 'typoBars') {
+      return `页眉 ${this.typoHeaderEnabled ? '开' : '关'} · 页脚 ${this.typoFooterEnabled ? '开' : '关'}`;
+    }
+    if (key === 'typoFont') return this.readerFontLabel(this.readerProfile.bodyFontMode);
+    if (key === 'typoMore') return `取自 ${this.sourceName('layout')}`;
+    if (key === 'ttsPanel') return this.ownTtsPanel() ? '已上传插画' : this.sourceName('ttsPanel');
+    if (key === 'startup') return this.currentStartupImagePath() ? '已上传' : this.sourceName('startup');
+    if (key === 'startupText') return this.currentStartupTitle() || '未填写';
+    if (key === 'startupStyle') {
+      return AppThemeSettingsStore.hasStartupTextStyle(this.currentStartupText()) ? '自定义' : '默认';
+    }
+    if (key === 'info') return this.schemeName;
+    if (key === 'card') return this.previewImagePath ? '有预览图' : '用启动封面';
+    return '';
+  }
+
+  /** 配色、阅读背景两组收起时用色块代替文字。 */
+  groupDots(key: string): string[] {
+    if (!this.editorReady) return [];
+    if (key === 'palette') {
+      const colors = this.effectiveColors();
+      return [this.currentAccentColor(), this.currentButtonColor(), colors.pageColor, colors.primaryTextColor];
+    }
+    if (key === 'reader') return [this.currentReader().backgroundColor, this.currentReader().textColor];
+    return [];
+  }
+
+  openIssue(issue: ThemeEditorIssue): void {
+    if (issue.mode) this.selectedMode = issue.mode;
+    this.checksExpanded = false;
+    this.openSection(issue.section, issue.group);
   }
 
   rememberChange(): void {
@@ -633,6 +963,14 @@ struct ThemeColorSettingsPage {
   undoChange(): void {
     const entry = this.undoEntries.pop();
     if (!entry) return;
+    if (entry.typography) {
+      this.applyTypography(entry.typography);
+      this.typoUndoAt = 0;
+      this.typoDirty = true;
+      this.scheduleTypographySave();
+      this.undoAvailable = this.undoEntries.length > 0;
+      return;
+    }
     this.trackObsoleteStartupPath(this.lightStartupImagePath);
     this.trackObsoleteStartupPath(this.darkStartupImagePath);
     const settings = entry.settings;
@@ -680,12 +1018,247 @@ struct ThemeColorSettingsPage {
     try {
       const profileId = ReaderSettingsStore.profileIdFor(ThemeIds.CUSTOM, this.schemeId);
       this.readerProfileBound = await ReaderSettingsStore.hasThemeTypography(getContext(this), profileId);
-      this.readerProfile = await ReaderSettingsStore.loadProfile(getContext(this), profileId);
+      this.typoActiveScheme = profileId === ReaderSettingsStore.activeProfileId();
+      this.typoFollowsTheme = await ReaderSettingsStore.typographyFollowsTheme(getContext(this));
+      this.applyTypography(await ReaderSettingsStore.loadProfile(getContext(this), profileId));
     } catch (e) {
       console.warn('读取主题排版预览失败:', e);
     }
   }
 
+  static copyReaderSettings(source: ReaderSettings): ReaderSettings {
+    return JSON.parse(JSON.stringify(source)) as ReaderSettings;
+  }
+
+  /** 把一份阅读排版放进编辑状态（读取、撤销、套用、恢复默认都走这里），步进控件随之重建。 */
+  applyTypography(settings: ReaderSettings): void {
+    const next = ThemeColorSettingsPage.copyReaderSettings(settings);
+    this.readerProfile = next;
+    this.typoHeaderEnabled = next.readerHeaderEnabled;
+    this.typoFooterEnabled = next.readerFooterEnabled;
+    this.typoInfoBarConfig = next.readerInfoBarConfig;
+    this.typoStepperKey++;
+    this.typoCommitted = this.typographySnapshot();
+  }
+
+  /** 把页眉页脚的三项状态合回去，得到完整的待保存排版。 */
+  typographySnapshot(): ReaderSettings {
+    const settings = ThemeColorSettingsPage.copyReaderSettings(this.readerProfile);
+    settings.readerHeaderEnabled = this.typoHeaderEnabled;
+    settings.readerFooterEnabled = this.typoFooterEnabled;
+    settings.readerInfoBarConfig = this.typoInfoBarConfig;
+    return settings;
+  }
+
+  /**
+   * 排版改动之后调用：记一步撤销（连续微调并成一步，免得点几下加减就占满撤销记录），
+   * 稍后一次写进这套方案的阅读档案。
+   */
+  onTypographyChanged(): void {
+    const now = Date.now();
+    const last = this.undoEntries.length > 0 ? this.undoEntries[this.undoEntries.length - 1] : null;
+    if (!last || !last.typography || now - this.typoUndoAt > 1500) {
+      const entry = new ThemeEditorUndoEntry();
+      entry.typography = this.typoCommitted;
+      entry.mode = this.selectedMode;
+      this.undoEntries.push(entry);
+      if (this.undoEntries.length > 20) this.undoEntries.shift();
+      this.undoAvailable = true;
+    }
+    this.typoUndoAt = now;
+    this.typoCommitted = this.typographySnapshot();
+    this.readerProfileBound = true;
+    this.typoDirty = true;
+    this.scheduleTypographySave();
+  }
+
+  scheduleTypographySave(): void {
+    if (this.typoSaveTimer >= 0) clearTimeout(this.typoSaveTimer);
+    this.typoSaveTimer = setTimeout(() => {
+      this.typoSaveTimer = -1;
+      this.flushTypography();
+    }, 400);
+  }
+
+  /** 把还没写入的排版立即保存；离开页面、进下级页面和点“完成”前都要等它。 */
+  flushTypography(): Promise<void> {
+    if (this.typoSaveTimer >= 0) {
+      clearTimeout(this.typoSaveTimer);
+      this.typoSaveTimer = -1;
+    }
+    if (!this.typoDirty || !this.schemeId) return this.typoSaveQueue;
+    this.typoDirty = false;
+    const snapshot = this.typographySnapshot();
+    const profileId = ReaderSettingsStore.profileIdFor(ThemeIds.CUSTOM, this.schemeId);
+    this.typoSaveQueue = this.typoSaveQueue.then(async () => {
+      try {
+        await ReaderSettingsStore.saveTypographyToProfile(getContext(this), profileId, snapshot);
+        this.typoSaveFailed = false;
+      } catch (e) {
+        this.typoSaveFailed = true;
+        this.typoDirty = true;
+        console.error('保存主题排版失败:', e);
+        HdsFeedback.showToast('保存排版失败，请重试');
+      }
+    });
+    return this.typoSaveQueue;
+  }
+
+  typographyValues(): number[] {
+    const values: number[] = new Array<number>(ReaderTypographyField.COUNT).fill(0);
+    values[ReaderTypographyField.FONT_SIZE] = this.readerProfile.fontSize;
+    values[ReaderTypographyField.FONT_WEIGHT] = this.readerProfile.fontWeight;
+    values[ReaderTypographyField.LETTER_SPACING] = this.readerProfile.letterSpacing;
+    values[ReaderTypographyField.LINE_HEIGHT] = this.readerProfile.lineHeight;
+    values[ReaderTypographyField.PARAGRAPH_SPACING] = this.readerProfile.paragraphSpacing;
+    values[ReaderTypographyField.MARGIN_LEFT] = this.readerProfile.marginLeft;
+    values[ReaderTypographyField.MARGIN_RIGHT] = this.readerProfile.marginRight;
+    values[ReaderTypographyField.MARGIN_TOP] = this.readerProfile.marginTop;
+    values[ReaderTypographyField.MARGIN_BOTTOM] = this.readerProfile.marginBottom;
+    values[ReaderTypographyField.COMMENT_BUBBLE_SIZE] = this.readerProfile.commentBubbleSize;
+    return values;
+  }
+
+  applyTypographyValues(values: number[]): void {
+    if (values.length < ReaderTypographyField.COUNT) return;
+    this.readerProfile.fontSize = values[ReaderTypographyField.FONT_SIZE];
+    this.readerProfile.fontWeight = values[ReaderTypographyField.FONT_WEIGHT];
+    this.readerProfile.letterSpacing = values[ReaderTypographyField.LETTER_SPACING];
+    this.readerProfile.lineHeight = values[ReaderTypographyField.LINE_HEIGHT];
+    this.readerProfile.paragraphSpacing = values[ReaderTypographyField.PARAGRAPH_SPACING];
+    this.readerProfile.marginLeft = values[ReaderTypographyField.MARGIN_LEFT];
+    this.readerProfile.marginRight = values[ReaderTypographyField.MARGIN_RIGHT];
+    this.readerProfile.marginTop = values[ReaderTypographyField.MARGIN_TOP];
+    this.readerProfile.marginBottom = values[ReaderTypographyField.MARGIN_BOTTOM];
+    this.readerProfile.commentBubbleSize = values[ReaderTypographyField.COMMENT_BUBBLE_SIZE];
+    this.onTypographyChanged();
+  }
+
+  typoAlignValues(): string[] {
+    return ['justify', 'start', 'end'];
+  }
+
+  typoAlignIndex(): number {
+    return Math.max(0, this.typoAlignValues().indexOf(this.readerProfile.textAlign));
+  }
+
+  readerFontLabel(mode: string): string {
+    if (mode === 'system') return '系统字体';
+    if (mode === 'custom') return '自定义字体';
+    return '跟随全局字体';
+  }
+
+  /** 阅读字体页带草稿参数打开：它改的是这份排版，不是正在使用的阅读设置。 */
+  openFontSettings(): void {
+    if (!this.editorReady || this.closing) return;
+    ThemeTypographyDraft.begin(this.typographySnapshot());
+    this.fontDraftRevision = ThemeTypographyDraft.revision();
+    const params: Record<string, Object> = {};
+    params[ThemeTypographyDraft.DRAFT_PARAM] = true;
+    router.pushUrl({ url: 'pages/ReaderFontSettings', params: params }).catch(() => {
+      ThemeTypographyDraft.end();
+      this.fontDraftRevision = -1;
+      HdsFeedback.showToast('打开阅读字体失败，请重试');
+    });
+  }
+
+  /** 从阅读字体页回来时，取回它在草稿里改过的字体与强调规则。 */
+  pullFontDraft(): void {
+    const fontDraft = ThemeTypographyDraft.current();
+    if (!fontDraft || this.fontDraftRevision < 0) return;
+    if (ThemeTypographyDraft.revision() !== this.fontDraftRevision) {
+      const next = this.typographySnapshot();
+      next.fontSize = fontDraft.fontSize;
+      next.fontWeight = fontDraft.fontWeight;
+      next.bodyFontMode = fontDraft.bodyFontMode;
+      next.bodyFontFamily = fontDraft.bodyFontFamily;
+      next.titleFontMode = fontDraft.titleFontMode;
+      next.titleFontFamily = fontDraft.titleFontFamily;
+      next.titleFontSize = fontDraft.titleFontSize;
+      next.titleFontWeight = fontDraft.titleFontWeight;
+      next.titleStyleRaw = fontDraft.titleStyleRaw || '';
+      next.regexFontEnabled = fontDraft.regexFontEnabled;
+      next.regexFontPattern = fontDraft.regexFontPattern;
+      next.regexFontMode = fontDraft.regexFontMode;
+      next.regexFontFamily = fontDraft.regexFontFamily;
+      next.regexFontSize = fontDraft.regexFontSize;
+      next.regexShadowColor = fontDraft.regexShadowColor;
+      next.regexFontRulesRaw = fontDraft.regexFontRulesRaw;
+      this.replaceTypography(next);
+    }
+    ThemeTypographyDraft.end();
+    this.fontDraftRevision = -1;
+  }
+
+  /** 整份换掉排版（字体页带回、套用、恢复默认）：单独记一步撤销。 */
+  replaceTypography(next: ReaderSettings): void {
+    const before = this.typoCommitted;
+    this.applyTypography(next);
+    this.typoCommitted = before;
+    this.typoUndoAt = 0;
+    this.onTypographyChanged();
+    this.typoUndoAt = 0;
+  }
+
+  async copyCurrentTypography(): Promise<void> {
+    try {
+      const current = await ReaderSettingsStore.load(getContext(this));
+      const next = this.typographySnapshot();
+      ReaderSettingsStore.copyTypography(current, next);
+      this.replaceTypography(next);
+      HdsFeedback.showToast('已套用当前阅读排版，可以撤销');
+    } catch (e) {
+      console.warn('读取当前阅读排版失败:', e);
+      HdsFeedback.showToast('读取当前阅读排版失败');
+    }
+  }
+
+  /** 恢复默认会一次清掉多项排版，容易误点，先确认。 */
+  async confirmResetTypography(): Promise<void> {
+    try {
+      const result = await promptAction.showDialog({
+        title: '恢复默认排版？',
+        message: '字号、间距、边距与页眉页脚会恢复默认，字体和强调规则保留。',
+        buttons: [{ text: '取消', color: this.subTextColor() },
+          { text: '恢复默认', color: ThemeRuntime.dangerColor(this.appDarkMode) }]
+      });
+      if (result.index !== 1) return;
+    } catch (e) {
+      console.warn('显示恢复默认排版确认失败:', e);
+      return;
+    }
+    const defaults = new ReaderSettings();
+    const next = this.typographySnapshot();
+    next.fontSize = defaults.fontSize;
+    next.fontWeight = defaults.fontWeight;
+    next.letterSpacing = defaults.letterSpacing;
+    next.textAlign = defaults.textAlign;
+    next.lineHeight = defaults.lineHeight;
+    next.paragraphSpacing = defaults.paragraphSpacing;
+    next.paragraphIndent = defaults.paragraphIndent;
+    next.marginLeft = defaults.marginLeft;
+    next.marginRight = defaults.marginRight;
+    next.marginTop = defaults.marginTop;
+    next.marginBottom = defaults.marginBottom;
+    next.commentBubbleSize = defaults.commentBubbleSize;
+    next.extendToStatusBar = defaults.extendToStatusBar;
+    next.titleFontSize = defaults.titleFontSize;
+    next.titleFontWeight = defaults.titleFontWeight;
+    next.titleStyleRaw = defaults.titleStyleRaw;
+    next.readerHeaderEnabled = defaults.readerHeaderEnabled;
+    next.readerFooterEnabled = defaults.readerFooterEnabled;
+    next.readerInfoBarConfig = new ReaderInfoBarConfig().serialize();
+    this.replaceTypography(next);
+    HdsFeedback.showToast('已恢复默认排版，可以撤销');
+  }
+
+  typographyNote(): string {
+    if (this.typoActiveScheme) return '这套主题正在使用，排版改动立即生效。';
+    if (!this.typoFollowsTheme) return '当前关闭了“排版跟随主题”，打开后切换到这套主题时这里的排版才会生效。';
+    return '排版与这套主题绑定，切换到它时一起生效；在阅读页里继续调整，也会记在这套主题上。';
+  }
+
+  /** 整页预览：按真实分页看一页正文，那一页有自己的保存。 */
   async openTypography(): Promise<void> {
     if (!this.editorReady || this.closing) return;
     await this.onSettingChanged();
@@ -693,6 +1266,8 @@ struct ThemeColorSettingsPage {
       HdsFeedback.showToast('保存主题方案失败，请重试');
       return;
     }
+    await this.flushTypography();
+    if (this.typoSaveFailed) return;
     this.returningFromTypography = true;
     await this.getUIContext().getRouter().pushUrl({
       url: 'pages/ThemeTypographySettings',
@@ -842,6 +1417,9 @@ struct ThemeColorSettingsPage {
   }
 
   customPreviewTheme(): ThemePack {
+    // 来源指向方案自己的素材包时，图片取自包注册表（不是状态变量）；读 assetRevision 让素材增删后跟着刷新。
+    const revision = this.assetRevision;
+    if (revision < 0) return BuiltinThemeRegistry.findById(this.customBaseThemeId);
     return AppThemeSettingsStore.customTheme(
       this.settingsFromState(),
       this.selectedMode === 'dark'
@@ -859,6 +1437,11 @@ struct ThemeColorSettingsPage {
         AccountSessionStore.hasValidEntitlement(theme.id)) {
         available.push(theme);
       }
+    }
+    // 原默认主题不在主题列表里，只在改版前的方案还在用它时列出来（排在素笺后面），换走之后还能换回。
+    if (this.customBaseThemeId === ThemeIds.PLAIN_BASE || this.isSourceInUse(ThemeIds.PLAIN_BASE)) {
+      const index = available.findIndex((theme: ThemePack): boolean => theme.id === ThemeIds.PLAIN_DEFAULT);
+      available.splice(index + 1, 0, BuiltinThemeRegistry.findById(ThemeIds.PLAIN_BASE));
     }
     // 已安装的主题包也能当部件来源，与内置主题混搭。
     for (const pack of ThemePackRegistry.all()) {
@@ -939,7 +1522,8 @@ struct ThemeColorSettingsPage {
 
   @Builder
   titleActions() {
-    Row({ space: AppSpacing.MD }) {
+    Row({ space: AppSpacing.SM }) {
+      this.modeToggle()
       if (this.undoAvailable && !this.fullPreview) {
         ImmersiveHeaderAction({ icon: $r('sys.symbol.arrow_counterclockwise'),
           accessibilityLabel: '撤销上一次主题修改', onTap: () => this.undoChange() })
@@ -957,36 +1541,39 @@ struct ThemeColorSettingsPage {
     .margin({ right: AppSpacing.XL })
   }
 
+  /** 顶栏里的浅色/深色开关：切的是正在编辑和预览的那一套，不改应用当前的显示模式。 */
   @Builder
-  overviewContent() {
-    this.sectionTitle({ title: this.schemeName })
-    Column() {
-      SettingNavRow({ title: '配色', description: '完整配色、强调色与按钮色',
-        onTap: () => this.openSection('colors') })
-      SettingNavRow({ title: '阅读与朗读', description: '阅读背景与颜色、强调气泡、朗读面板',
-        onTap: () => this.openSection('reading') })
-      SettingNavRow({ title: '首页与书架', description: '导航图标、封面与书架素材、首页背景、圆角',
-        onTap: () => this.openSection('home') })
-      SettingNavRow({ title: '封面与信息', description: '启动封面、主题标识与预览图、作者和说明',
-        onTap: () => this.openSection('cover') })
-      SettingNavRow({ title: '字体与排版', description: '应用字体、阅读排版与页面边距',
-        showDivider: false, onTap: () => this.openSection('typography') })
-    }
-    .width('calc(100% - 24vp)')
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .backgroundColor(this.cardColor())
-    .borderRadius(ThemeRuntime.cardRadius())
-    .clip(true)
+  modeToggle() {
+    ThemeModeSwitch({
+      selectedDark: this.selectedMode === 'dark',
+      darkMode: this.appDarkMode,
+      accentColor: ThemeRuntime.accentColor(this.appDarkMode),
+      subTextColor: this.subTextColor(),
+      fallbackColor: this.cardColor(),
+      switchWidth: HEADER_MODE_SWITCH_WIDTH,
+      switchHeight: ImmersiveHeaderAction.SIZE,
+      accessibilityPrefix: '编辑',
+      onChange: (dark: boolean) => {
+        this.selectedMode = dark ? 'dark' : 'light';
+      }
+    })
   }
 
   @Builder
   sectionTabs() {
-    Row({ space: AppSpacing.XS }) {
-      this.sectionTab('配色', 'colors')
-      this.sectionTab('阅读', 'reading')
-      this.sectionTab('首页', 'home')
-      this.sectionTab('封面', 'cover')
-      this.sectionTab('排版', 'typography')
+    // 五个页签放在一条底板里平分宽度；朗读、启动、方案信息内容少，合在“其他”里。
+    Row() {
+      Row() {
+        this.sectionTab('整体', 'global')
+        this.sectionTab('书架', 'shelf')
+        this.sectionTab('阅读', 'reader')
+        this.sectionTab('排版', 'typography')
+        this.sectionTab('其他', 'other')
+      }
+      .width('100%')
+      .padding(3)
+      .borderRadius(ThemeRuntime.mediumRadius() + 3)
+      .backgroundColor(this.cardColor())
     }
     .width('100%')
     .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.MD, bottom: AppSpacing.XS })
@@ -996,73 +1583,532 @@ struct ThemeColorSettingsPage {
   sectionTab(label: string, section: string) {
     Button(label, { type: ButtonType.Normal })
       .layoutWeight(1)
-      .height(40)
+      .height(36)
+      .padding(0)
       .fontSize(AppFontSize.BODY)
+      .fontWeight(this.editorSection === section ? FontWeight.Medium : FontWeight.Regular)
       .fontColor(this.editorSection === section ? ThemeRuntime.accentColor(this.appDarkMode) : this.subTextColor())
       .backgroundColor(this.editorSection === section ? ThemeRuntime.accentSurfaceColor(this.appDarkMode) : Color.Transparent)
       .borderRadius(ThemeRuntime.mediumRadius())
       .accessibilitySelected(this.editorSection === section)
-      .onClick(() => this.openSection(section))
+      .onClick(() => {
+        if (this.editorSection !== section) this.openSection(section);
+      })
+  }
+
+  /**
+   * 分组标题行：点按展开或收起，同一时间只展开一组。scope 为 split 标“分浅深”、shared 标“共用”、空串不标。
+   * 参数都是固定值，摘要和色块在里面读状态（按值传进来的不会刷新）。
+   */
+  @Builder
+  groupHeader(key: string, title: string, scope: string) {
+    Row({ space: AppSpacing.SM }) {
+      Text(title)
+        .fontSize(AppFontSize.BODY)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.primaryTextColor())
+      if (scope) {
+        Text(scope === 'split' ? '分浅深' : '共用')
+          .fontSize(AppFontSize.MICRO)
+          .fontColor(this.subTextColor())
+          .padding({ left: 5, right: 5, top: 1, bottom: 1 })
+          .borderRadius(5)
+          .border({ width: 1, color: ThemeRuntime.dividerColor(this.appDarkMode) })
+      }
+      Text(this.groupSummary(key))
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .textAlign(TextAlign.End)
+        .layoutWeight(1)
+      ForEach(this.groupDots(key), (color: string) => {
+        Row()
+          .width(14)
+          .height(14)
+          .borderRadius(7)
+          .backgroundColor(color)
+          .border({ width: 1, color: this.appDarkMode ? '#55FFFFFF' : '#22000000' })
+      }, (color: string, index: number) => `${key}_${index}_${color}`)
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(14)
+        .fontColor([this.subTextColor()])
+        .rotate({ angle: this.openGroup === key ? 90 : 0 })
+    }
+    .width('100%')
+    .height(52)
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
+    .accessibilityGroup(true)
+    .accessibilityText(`${title}，${this.openGroup === key ? '已展开，点按收起' : '已收起，点按展开'}`)
+    .onClick(() => this.toggleGroup(key))
+  }
+
+  /** 分组里不常改的项收在“更多”下面。 */
+  @Builder
+  moreRow(key: string, label: string) {
+    Row({ space: AppSpacing.XS }) {
+      Text(this.moreOpen(key) ? '收起' : label)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(ThemeRuntime.accentColor(this.appDarkMode))
+      SymbolGlyph(this.moreOpen(key) ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
+        .fontSize(12)
+        .fontColor([ThemeRuntime.accentColor(this.appDarkMode)])
+    }
+    .width('100%')
+    .height(40)
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
+    .accessibilityGroup(true)
+    .accessibilityText(this.moreOpen(key) ? '收起更多选项' : label)
+    .onClick(() => this.toggleMore(key))
+  }
+
+  // ---- 页签：整体 ----
+
+  @Builder
+  globalSection() {
+    Column() {
+      this.groupHeader('base', '基础主题', 'shared')
+      if (this.openGroup === 'base') {
+        this.baseThemeRow()
+      }
+    }
+    .editorCard(this.cardColor())
+    Column() {
+      this.groupHeader('palette', '配色', 'split')
+      if (this.openGroup === 'palette') {
+        this.componentSourceRow('palette')
+        this.colorOptions()
+        this.moreRow('palette', '逐项覆盖页面、卡片、文字等 7 种颜色')
+        if (this.moreOpen('palette')) {
+          Stack() {
+            Column() {
+              this.paletteOverrideRow('页面底色', 'pageColor')
+              this.paletteOverrideRow('卡片色', 'cardColor')
+              this.paletteOverrideRow('输入框色', 'inputColor')
+              this.paletteOverrideRow('正文字色', 'primaryTextColor')
+              this.paletteOverrideRow('辅助文字色', 'subTextColor')
+              this.paletteOverrideRow('分割线色', 'dividerColor')
+              this.paletteOverrideRow('危险色', 'dangerColor')
+            }
+            .width('100%')
+            .opacity(this.advancedOpacity())
+            this.advancedLockLayer()
+          }
+          .width('100%')
+          if (AppThemeSettingsStore.hasPaletteOverride(this.currentPalette())) {
+            this.resetRow('恢复为所选主题的配色', () => this.resetPalette())
+          }
+        }
+      }
+    }
+    .editorCard(this.cardColor())
+    Column() {
+      this.groupHeader('radius', '圆角', 'shared')
+      if (this.openGroup === 'radius') {
+        this.componentSourceRow('radius')
+        this.radiusRows()
+      }
+    }
+    .editorCard(this.cardColor())
+    Column() {
+      this.groupHeader('font', '应用字体', 'shared')
+      if (this.openGroup === 'font') {
+        this.componentSourceRow('typography')
+        this.appFontRow()
+      }
+    }
+    .editorCard(this.cardColor())
   }
 
   @Builder
-  colorSection() {
-    this.sectionTitle({ title: `${this.selectedMode === 'dark' ? '深色' : '浅色'}模式 · 配色` })
-    Column() {
-      this.componentSourceRow('完整配色', '页面、卡片、文字与基础颜色', 'palette', false)
+  baseThemeRow() {
+    SettingRow({ title: '整套取自', description: '配色、图标、封面等全部换成这套，之后再逐组微调',
+      showDivider: false }) {
+      Select(this.themeOptions())
+        .id('theme_editor_base_theme')
+        .width('44%')
+        .selected(this.baseThemeIndex())
+        .value(this.baseThemeLabel())
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+        .optionFont({ family: this.applicationFontFamily })
+        .selectedOptionFont({ family: this.applicationFontFamily })
+        .fontColor(this.subTextColor())
+        .backgroundColor(Color.Transparent)
+        .arrowPosition(ArrowPosition.END)
+        .padding({ left: 0, right: 0 })
+        .borderRadius(16)
+        .border({ width: 0 })
+        .optionBgColor(Color.Transparent)
+        .divider(null)
+        .optionFontColor(this.primaryTextColor())
+        .selectedOptionFontColor(ThemeRuntime.accentColor(this.appDarkMode))
+        .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+        .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+        .menuBackgroundBlurStyle(BlurStyle.NONE)
+        .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+        .onSelect((index: number) => {
+          if (index >= 0 && index < this.availableThemes.length) {
+            this.applyBaseTheme(this.availableThemes[index].id);
+          }
+        })
     }
-    .width('calc(100% - 24vp)')
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .backgroundColor(this.cardColor())
-    .borderRadius(ThemeRuntime.cardRadius())
+  }
+
+  // ---- 页签：书架 ----
+
+  @Builder
+  shelfSection() {
     Column() {
-      this.colorOptions()
-      Row({ space: AppSpacing.XL }) {
-        Text('主要按钮')
-          .fontSize(AppFontSize.BODY)
-          .fontColor(ThemeRuntime.onAccentColor())
-          .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.MD })
-          .backgroundColor(this.currentButtonColor())
-          .borderRadius(this.customPreviewTheme().radius.button)
-        Text('强调文字')
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.currentAccentColor())
+      this.groupHeader('navigation', '导航图标', 'split')
+      if (this.openGroup === 'navigation') {
+        this.componentSourceRow('navigation')
+        if (this.assetRevision >= 0) {
+          this.navigationSlots()
+        }
+      }
+    }
+    .editorCard(this.cardColor())
+    Column() {
+      this.groupHeader('book', '封面与书架素材', 'split')
+      if (this.openGroup === 'book') {
+        this.componentSourceRow('book')
+        if (this.assetRevision >= 0) {
+          this.bookSlots()
+        }
+      }
+    }
+    .editorCard(this.cardColor())
+    Column() {
+      this.groupHeader('homeBackdrop', '首页背景', 'split')
+      if (this.openGroup === 'homeBackdrop') {
+        this.componentSourceRow('homeBackdrop')
+        if (this.assetRevision >= 0) {
+          this.homeBackdropSlot()
+        }
+      }
+    }
+    .editorCard(this.cardColor())
+  }
+
+  // ---- 页签：阅读 ----
+
+  @Builder
+  readerSection() {
+    Column() {
+      this.groupHeader('reader', '阅读背景', 'split')
+      if (this.openGroup === 'reader') {
+        this.componentSourceRow('reader')
+        this.readerColorRows()
+        if (this.assetRevision >= 0) {
+          this.readerSlots()
+        }
+      }
+    }
+    .editorCard(this.cardColor())
+    Column() {
+      this.groupHeader('bubble', '强调气泡', 'split')
+      if (this.openGroup === 'bubble') {
+        this.componentSourceRow('bubble')
+        this.emphasisOverrideRows()
+        if (this.assetRevision >= 0) {
+          this.bubbleSlots()
+        }
+      }
+    }
+    .editorCard(this.cardColor())
+    Column() {
+      this.groupHeader('title', '标题强调', 'split')
+      if (this.openGroup === 'title') {
+        this.componentSourceRow('bubble', '跟强调气泡一起取自')
+        this.titleGroupRows()
+      }
+    }
+    .editorCard(this.cardColor())
+    Column() {
+      this.groupHeader('chapterHead', '章首装饰', 'split')
+      if (this.openGroup === 'chapterHead') {
+        this.componentSourceRow('bubble', '跟强调气泡一起取自')
+        this.chapterHeadGroupRows()
+      }
+    }
+    .editorCard(this.cardColor())
+    Column() {
+      this.groupHeader('comment', '段评气泡', 'split')
+      if (this.openGroup === 'comment') {
+        this.commentGroupRows()
+      }
+    }
+    .editorCard(this.cardColor())
+  }
+
+  // ---- 页签：排版 ----
+
+  @Builder
+  typographySection() {
+    Column() {
+      this.groupHeader('typoBody', '正文排版', 'shared')
+      if (this.openGroup === 'typoBody') {
+        ForEach([this.typoStepperKey], (key: number) => {
+          Row() {
+            ReaderTypographyStepper({
+              initialValues: this.typographyValues(),
+              dark: this.appDarkMode,
+              textColor: this.primaryTextColor(),
+              subTextColor: this.subTextColor(),
+              accentColor: ThemeRuntime.accentColor(this.appDarkMode),
+              inputColor: this.inputColor(),
+              menuColor: ThemeRuntime.dropdownPanelColor(this.appDarkMode),
+              onChange: (values: number[]): void => this.applyTypographyValues(values)
+            })
+          }
+          .width('calc(100% - 32vp)')
+          .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
+          .border({ width: { bottom: 0.5 }, color: ThemeRuntime.hairlineColor(this.appDarkMode) })
+        }, (key: number) => `theme_editor_typography_stepper_${key}`)
+        this.typoIndentRow()
+        this.typoAlignRow()
+        SettingSwitchRow({
+          title: '正文扩展至状态栏',
+          description: '隐藏状态栏，正文延伸到屏幕顶部',
+          isOn: this.readerProfile.extendToStatusBar,
+          showDivider: false,
+          onChange: (value: boolean) => {
+            if (this.readerProfile.extendToStatusBar === value) return;
+            this.readerProfile.extendToStatusBar = value;
+            this.onTypographyChanged();
+          }
+        })
+      }
+    }
+    .editorCard(this.cardColor())
+    Column() {
+      this.groupHeader('typoBars', '页眉页脚', '')
+      if (this.openGroup === 'typoBars') {
+        ReaderHeaderFooterEditor({
+          headerBaseInset: ReaderInfoBarConfig.headerBaseInset(this.readerProfile.extendToStatusBar,
+            this.statusBarHeight),
+          footerBaseInset: ReaderInfoBarConfig.footerBaseInset(this.navBarHeight),
+          dark: this.appDarkMode,
+          modeDark: this.selectedMode === 'dark',
+          textColor: this.primaryTextColor(),
+          subTextColor: this.subTextColor(),
+          accentColor: ThemeRuntime.accentColor(this.appDarkMode),
+          switchColor: ThemeRuntime.buttonColor(this.appDarkMode),
+          menuColor: ThemeRuntime.dropdownPanelColor(this.appDarkMode),
+          cardStyle: true,
+          dividerColor: ThemeRuntime.hairlineColor(this.appDarkMode),
+          readerHeaderEnabled: $typoHeaderEnabled,
+          readerFooterEnabled: $typoFooterEnabled,
+          readerInfoBarConfig: $typoInfoBarConfig,
+          onChanged: (_headerEnabled: boolean, _footerEnabled: boolean, _infoBarConfig: string): void => {
+            this.onTypographyChanged();
+          }
+        })
+      }
+    }
+    .editorCard(this.cardColor())
+    Column() {
+      this.groupHeader('typoFont', '阅读字体', 'shared')
+      if (this.openGroup === 'typoFont') {
+        SettingNavRow({
+          title: '正文与标题字体',
+          description: `正文 ${this.readerProfile.fontSize} · 标题 ${this.readerProfile.titleFontSize} · 正则强调与气泡`,
+          showDivider: false,
+          onTap: () => this.openFontSettings()
+        })
+      }
+    }
+    .editorCard(this.cardColor())
+    Column() {
+      this.groupHeader('typoMore', '更多', '')
+      if (this.openGroup === 'typoMore') {
+        this.componentSourceRow('layout', '推荐排版取自')
+        if (!this.typoActiveScheme) {
+          SettingNavRow({ title: '套用当前阅读排版', description: '把正在使用的排版和字体复制到这套主题',
+            onTap: () => this.copyCurrentTypography() })
+        }
+        SettingNavRow({ title: '恢复默认排版', description: '排版与页眉页脚恢复默认，字体和强调规则保留',
+          onTap: () => this.confirmResetTypography() })
+        SettingNavRow({ title: '整页预览', description: '按真实分页看一页正文，也可以在那里调整并保存',
+          showDivider: false, onTap: () => this.openTypography() })
+      }
+    }
+    .editorCard(this.cardColor())
+    Text(this.typographyNote())
+      .fontSize(AppFontSize.CAPTION)
+      .fontColor(this.subTextColor())
+      .lineHeight(18)
+      .width('100%')
+      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG })
+  }
+
+  /** 下拉的选中项在 builder 里读状态：按值传进来的不会刷新。 */
+  @Builder
+  typoIndentRow() {
+    SettingRow({ title: '段首缩进', description: '正文每段首行的缩进字符数' }) {
+      Select([{ value: '0字符' }, { value: '1字符' }, { value: '2字符' }, { value: '3字符' }, { value: '4字符' }])
+        .id('theme_editor_typography_indent')
+        .selected(ReaderParagraphIndent.normalize(this.readerProfile.paragraphIndent))
+        .value(`${ReaderParagraphIndent.normalize(this.readerProfile.paragraphIndent)}字符`)
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+        .optionFont({ family: this.applicationFontFamily })
+        .selectedOptionFont({ family: this.applicationFontFamily })
+        .fontColor(this.subTextColor())
+        .backgroundColor(Color.Transparent)
+        .arrowPosition(ArrowPosition.END)
+        .padding({ left: 0, right: 0 })
+        .borderRadius(16)
+        .border({ width: 0 })
+        .optionBgColor(Color.Transparent)
+        .divider(null)
+        .optionFontColor(this.primaryTextColor())
+        .selectedOptionFontColor(ThemeRuntime.accentColor(this.appDarkMode))
+        .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+        .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+        .menuBackgroundBlurStyle(BlurStyle.NONE)
+        .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+        .onSelect((index: number) => {
+          const indent = ReaderParagraphIndent.normalize(index);
+          if (indent === this.readerProfile.paragraphIndent) return;
+          this.readerProfile.paragraphIndent = indent;
+          this.onTypographyChanged();
+        })
+    }
+  }
+
+  @Builder
+  typoAlignRow() {
+    SettingRow({ title: '正文对齐方式', description: '正文段落的水平对齐' }) {
+      Select([{ value: '两端对齐' }, { value: '左对齐' }, { value: '右对齐' }])
+        .id('theme_editor_typography_align')
+        .selected(this.typoAlignIndex())
+        .value(['两端对齐', '左对齐', '右对齐'][this.typoAlignIndex()])
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+        .optionFont({ family: this.applicationFontFamily })
+        .selectedOptionFont({ family: this.applicationFontFamily })
+        .fontColor(this.subTextColor())
+        .backgroundColor(Color.Transparent)
+        .arrowPosition(ArrowPosition.END)
+        .padding({ left: 0, right: 0 })
+        .borderRadius(16)
+        .border({ width: 0 })
+        .optionBgColor(Color.Transparent)
+        .divider(null)
+        .optionFontColor(this.primaryTextColor())
+        .selectedOptionFontColor(ThemeRuntime.accentColor(this.appDarkMode))
+        .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+        .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+        .menuBackgroundBlurStyle(BlurStyle.NONE)
+        .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+        .onSelect((index: number) => {
+          const align = this.typoAlignValues()[Math.max(0, Math.min(index, 2))];
+          if (align === this.readerProfile.textAlign) return;
+          this.readerProfile.textAlign = align;
+          this.onTypographyChanged();
+        })
+    }
+  }
+
+  // ---- 页签：其他（朗读面板、启动页、方案信息）----
+
+  @Builder
+  otherSection() {
+    this.sectionTitle({ title: '朗读' })
+    this.ttsSection()
+    this.sectionTitle({ title: '启动页' })
+    this.startupSection()
+    this.sectionTitle({ title: '方案' })
+    this.infoSection()
+  }
+
+  @Builder
+  commentGroupRows() {
+    Stack() {
+      Column() {
+        this.commentBubbleControls()
       }
       .width('100%')
-      .padding(AppSpacing.XL)
+      .opacity(this.advancedOpacity())
+      this.advancedLockLayer()
     }
-    .width('calc(100% - 24vp)')
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.LG })
-    .backgroundColor(this.cardColor())
-    .borderRadius(ThemeRuntime.cardRadius())
-    .clip(true)
-    this.sectionTitle({ title: '逐项覆盖 · 没改过的颜色跟随上面所选的主题' })
+    .width('100%')
+  }
+
+  // ---- “其他”页签：朗读 ----
+
+  @Builder
+  ttsSection() {
     Column() {
-      Stack() {
-        Column() {
-          this.paletteOverrideRow('页面底色', 'pageColor')
-          this.paletteOverrideRow('卡片色', 'cardColor')
-          this.paletteOverrideRow('输入框色', 'inputColor')
-          this.paletteOverrideRow('正文字色', 'primaryTextColor')
-          this.paletteOverrideRow('辅助文字色', 'subTextColor')
-          this.paletteOverrideRow('分割线色', 'dividerColor')
-          this.paletteOverrideRow('危险色', 'dangerColor')
+      this.groupHeader('ttsPanel', '朗读 / 有声书面板', 'split')
+      if (this.openGroup === 'ttsPanel') {
+        this.componentSourceRow('ttsPanel')
+        if (this.assetRevision >= 0) {
+          this.ttsSlots()
+        }
+      }
+    }
+    .editorCard(this.cardColor())
+  }
+
+  // ---- “其他”页签：启动 ----
+
+  @Builder
+  startupSection() {
+    Column() {
+      this.groupHeader('startup', '启动图', 'split')
+      if (this.openGroup === 'startup') {
+        this.componentSourceRow('startup')
+        Row({ space: AppSpacing.XL }) {
+          this.assetSlot({ label: '竖图', image: this.startupSlotImage(),
+            state: this.currentStartupImagePath() ? 'own' : 'inherit', slotWidth: 48, slotHeight: 106,
+            onTap: () => this.tapStartupSlot() })
+          Text('上传后按 841 × 1870 取景；底部约五分之一叠文案，别放主体。只做一种模式时另一种沿用它')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+            .layoutWeight(1)
         }
         .width('100%')
-        .opacity(this.advancedOpacity())
-        this.advancedLockLayer()
-      }
-      .width('100%')
-      if (AppThemeSettingsStore.hasPaletteOverride(this.currentPalette())) {
-        this.resetRow('恢复为所选主题的配色', () => this.resetPalette())
+        .alignItems(VerticalAlign.Top)
+        .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
       }
     }
-    .width('calc(100% - 24vp)')
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .backgroundColor(this.cardColor())
-    .borderRadius(ThemeRuntime.cardRadius())
-    .clip(true)
-    this.sectionTitle({ title: '浅色与深色模式独立保存，可分别调整' })
+    .editorCard(this.cardColor())
+    Column() {
+      this.groupHeader('startupText', '文案', 'split')
+      if (this.openGroup === 'startupText') {
+        this.startupTextInputs()
+      }
+    }
+    .editorCard(this.cardColor())
+    Column() {
+      this.groupHeader('startupStyle', '文案样式', 'split')
+      if (this.openGroup === 'startupStyle') {
+        this.startupTextStyleOptions()
+      }
+    }
+    .editorCard(this.cardColor())
+  }
+
+  // ---- “其他”页签：方案信息 ----
+
+  @Builder
+  infoSection() {
+    Column() {
+      this.groupHeader('info', '方案信息', '')
+      if (this.openGroup === 'info') {
+        this.infoInputs()
+      }
+    }
+    .editorCard(this.cardColor())
+    Column() {
+      this.groupHeader('card', '主题卡片', '')
+      if (this.openGroup === 'card') {
+        if (this.assetRevision >= 0) {
+          this.brandSlots()
+        }
+      }
+    }
+    .editorCard(this.cardColor())
   }
 
   /** 当前模式下方案实际生效的界面配色（来源主题 + 覆盖）。 */
@@ -1387,7 +2433,6 @@ struct ThemeColorSettingsPage {
       description: this.currentEmphasis().textColor ? '自定义' : `跟随「${this.emphasisSourceName()}」`,
       color: this.effectiveEmphasis().emphasisTextColor,
       allowAlpha: true,
-      showDivider: AppThemeSettingsStore.hasEmphasisOverride(this.currentEmphasis()),
       appDarkMode: this.appDarkMode,
       cardColor: this.cardColor(),
       primaryTextColor: this.primaryTextColor(),
@@ -1398,23 +2443,1288 @@ struct ThemeColorSettingsPage {
     })
   }
 
+  // ---- 标题强调：浅色、深色各一套，覆盖存在强调覆盖的 title 里，标题气泡素材在方案素材包的 titleBubble ----
+
   @Builder
-  typographySection() {
-    this.sectionTitle({ title: '字体与排版' })
-    Column() {
-      this.componentSourceRow('应用字体', '主题自带的应用字体风格', 'typography')
-      this.appFontRow()
-      this.componentSourceRow('推荐阅读排版', '字号、行距、段距和页面边距，浅深共用', 'layout')
-      SettingNavRow({ title: '详细阅读排版', description: '正文与标题字体、间距、页眉页脚等',
-        showDivider: false, onTap: () => this.openTypography() })
+  titleGroupRows() {
+    Stack() {
+      Column() {
+        this.titleEmphasisControls()
+      }
+      .width('100%')
+      .opacity(this.advancedOpacity())
+      this.advancedLockLayer()
     }
-    .width('calc(100% - 24vp)')
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .backgroundColor(this.cardColor())
-    .borderRadius(ThemeRuntime.cardRadius())
-    .clip(true)
-    this.sectionTitle({ title: this.readerProfileBound ? '已保存这套主题的阅读排版，浅深色模式共用' :
-      '阅读排版在浅深色模式间共用，可进入详细阅读排版继续调整' })
+    .width('100%')
+    if (this.effectiveTitle().mode === 'bubble' && this.assetRevision >= 0) {
+      this.titleBubbleSlots()
+    }
+    this.resetRow('从强调气泡复制', () => this.copyTitleFromEmphasis())
+    if (AppThemeSettingsStore.titleEmphasisOverridden(this.currentEmphasis().title)) {
+      this.resetRow(`恢复${this.modeLabel()}标题强调为所选主题的设置`, () => this.resetTitleEmphasis())
+    }
+  }
+
+  @Builder
+  titleEmphasisControls() {
+    SettingRow({ title: '强调方式', description: this.titleDescription(this.currentEmphasis().title.mode) }) {
+      Select(this.titleModeOptions())
+        .id('theme_editor_title_mode')
+        .width('44%')
+        .selected(this.titleModeIndex())
+        .value(this.titleModeLabel())
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+        .optionFont({ family: this.applicationFontFamily })
+        .selectedOptionFont({ family: this.applicationFontFamily })
+        .fontColor(this.subTextColor())
+        .backgroundColor(Color.Transparent)
+        .arrowPosition(ArrowPosition.END)
+        .padding({ left: 0, right: 0 })
+        .borderRadius(16)
+        .border({ width: 0 })
+        .optionBgColor(Color.Transparent)
+        .divider(null)
+        .optionFontColor(this.primaryTextColor())
+        .selectedOptionFontColor(ThemeRuntime.accentColor(this.appDarkMode))
+        .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+        .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+        .menuBackgroundBlurStyle(BlurStyle.NONE)
+        .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+        .onSelect((index: number) => this.setTitleMode(index))
+    }
+    if (this.effectiveTitle().mode === 'bubble') {
+      SettingRow({ title: '气泡样式', description: this.titleDescription(this.currentEmphasis().title.bubbleStyle) }) {
+        Select(this.titleStyleOptions())
+          .id('theme_editor_title_style')
+          .width('44%')
+          .selected(this.titleStyleIndex())
+          .value(this.titleStyleLabel(this.effectiveTitleStyle()))
+          .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+          .optionFont({ family: this.applicationFontFamily })
+          .selectedOptionFont({ family: this.applicationFontFamily })
+          .fontColor(this.subTextColor())
+          .backgroundColor(Color.Transparent)
+          .arrowPosition(ArrowPosition.END)
+          .padding({ left: 0, right: 0 })
+          .borderRadius(16)
+          .border({ width: 0 })
+          .optionBgColor(Color.Transparent)
+          .divider(null)
+          .optionFontColor(this.primaryTextColor())
+          .selectedOptionFontColor(ThemeRuntime.accentColor(this.appDarkMode))
+          .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+          .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+          .menuBackgroundBlurStyle(BlurStyle.NONE)
+          .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+          .onSelect((index: number) => this.setTitleStyle(index))
+      }
+    }
+    // 仅文字色只用文字色，底色行藏起来免得误调。
+    if (this.titleHasColors() && this.effectiveTitle().mode !== 'text') {
+      ThemeColorOption({
+        title: '强调底色',
+        description: this.titleDescription(this.currentEmphasis().title.color),
+        color: this.effectiveTitleColor(false),
+        allowAlpha: true,
+        appDarkMode: this.appDarkMode,
+        cardColor: this.cardColor(),
+        primaryTextColor: this.primaryTextColor(),
+        accentColor: ThemeRuntime.accentColor(this.appDarkMode),
+        onColorChange: (color: string) => {
+          this.setTitleColor(false, color);
+        }
+      })
+    }
+    if (this.titleHasColors()) {
+      ThemeColorOption({
+        title: '强调文字色',
+        description: this.titleDescription(this.currentEmphasis().title.textColor),
+        color: this.effectiveTitleColor(true),
+        allowAlpha: true,
+        appDarkMode: this.appDarkMode,
+        cardColor: this.cardColor(),
+        primaryTextColor: this.primaryTextColor(),
+        accentColor: ThemeRuntime.accentColor(this.appDarkMode),
+        onColorChange: (color: string) => {
+          this.setTitleColor(true, color);
+        }
+      })
+    }
+  }
+
+  @Builder
+  titleBubbleSlots() {
+    Row({ space: AppSpacing.XL }) {
+      this.assetSlot({ label: '端饰', image: this.ownTitleBubbleItem(false),
+        state: this.ownTitleBubbleItem(false) ? 'own' : 'empty',
+        slotWidth: 56, slotHeight: 56, onTap: () => this.tapTitleBubbleSlot(false) })
+      this.assetSlot({ label: '边框', image: this.ownTitleBubbleItem(true),
+        state: this.ownTitleBubbleItem(true) ? 'own' : 'empty',
+        slotWidth: 56, slotHeight: 56, onTap: () => this.tapTitleBubbleSlot(true) })
+      Text(this.titleBubbleHint())
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+  }
+
+  // ---- 章首装饰：标题饰图、序号行颜色，浅色、深色各一套，素材和设置在方案素材包的 chapterHead，
+  // 强调覆盖的 chapterHead 指向素材包 ----
+
+  @Builder
+  chapterHeadGroupRows() {
+    Row({ space: AppSpacing.XL }) {
+      this.assetSlot({ label: '标题饰图', image: this.chapterHeadSlotImage(),
+        state: this.chapterHeadSlotState(),
+        slotWidth: 56, slotHeight: 56, onTap: () => this.tapChapterHeadSlot() })
+      Text(this.chapterHeadHint())
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+    if (this.chapterHeadAdjustable()) {
+      SettingRow({ title: '饰图位置', description: '左侧时贴版心左边并对齐标题；上方、下方时单独一行' }) {
+        Select(this.chapterHeadPlacementOptions())
+          .id('theme_editor_chapter_head_placement')
+          .width('44%')
+          .selected(this.chapterHeadPlacementIndex())
+          .value(CHAPTER_HEAD_PLACEMENT_NAMES[this.chapterHeadPlacementIndex()])
+          .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+          .optionFont({ family: this.applicationFontFamily })
+          .selectedOptionFont({ family: this.applicationFontFamily })
+          .fontColor(this.subTextColor())
+          .backgroundColor(Color.Transparent)
+          .arrowPosition(ArrowPosition.END)
+          .padding({ left: 0, right: 0 })
+          .borderRadius(16)
+          .border({ width: 0 })
+          .optionBgColor(Color.Transparent)
+          .divider(null)
+          .optionFontColor(this.primaryTextColor())
+          .selectedOptionFontColor(ThemeRuntime.accentColor(this.appDarkMode))
+          .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+          .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+          .menuBackgroundBlurStyle(BlurStyle.NONE)
+          .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+          .onSelect((index: number) => this.setChapterHeadPlacement(index))
+      }
+      Column({ space: AppSpacing.XS }) {
+        Row() {
+          Text('饰图大小')
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.primaryTextColor())
+            .layoutWeight(1)
+          Text(`${this.chapterHeadScalePercent()}%`)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+        }
+        .width('100%')
+        Slider({ value: this.chapterHeadScalePercent(), min: 50, max: 200, step: 10, style: SliderStyle.OutSet })
+          .id('theme_editor_chapter_head_scale')
+          .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+          .width('100%')
+          .selectedColor(ThemeRuntime.accentColor(this.appDarkMode))
+          .accessibilityText('标题饰图大小')
+          .onChange((value: number, mode: SliderChangeMode) => {
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.setChapterHeadScale(value);
+            } else {
+              this.chapterHeadScaleDrag = Math.round(value);
+            }
+          })
+      }
+      .width('100%')
+      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.SM })
+    }
+    ThemeColorOption({
+      title: '序号行颜色',
+      description: this.chapterHeadNumberDescription(),
+      color: this.chapterHeadNumberColor(),
+      allowAlpha: true,
+      appDarkMode: this.appDarkMode,
+      cardColor: this.cardColor(),
+      primaryTextColor: this.primaryTextColor(),
+      accentColor: ThemeRuntime.accentColor(this.appDarkMode),
+      onColorChange: (color: string) => {
+        this.setChapterHeadNumberColor(color);
+      }
+    })
+    if (this.ownChapterHeadNumberColor()) {
+      this.resetRow('序号行改回和标题同色', () => this.setChapterHeadNumberColor(''))
+    }
+    SettingRow({ title: '首字装饰', description: '每章首字放大、后文绕排；开头是引号、数字、字母时不处理' }) {
+      Select(this.dropCapLineOptions())
+        .id('theme_editor_drop_cap_lines')
+        .width('44%')
+        .selected(this.dropCapLineIndex())
+        .value(DROP_CAP_LINE_NAMES[this.dropCapLineIndex()])
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+        .optionFont({ family: this.applicationFontFamily })
+        .selectedOptionFont({ family: this.applicationFontFamily })
+        .fontColor(this.subTextColor())
+        .backgroundColor(Color.Transparent)
+        .arrowPosition(ArrowPosition.END)
+        .padding({ left: 0, right: 0 })
+        .borderRadius(16)
+        .border({ width: 0 })
+        .optionBgColor(Color.Transparent)
+        .divider(null)
+        .optionFontColor(this.primaryTextColor())
+        .selectedOptionFontColor(ThemeRuntime.accentColor(this.appDarkMode))
+        .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+        .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+        .menuBackgroundBlurStyle(BlurStyle.NONE)
+        .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+        .onSelect((index: number) => this.setDropCapLines(index))
+    }
+    if (this.effectiveChapterHead().dropCapLines > 0) {
+      Row({ space: AppSpacing.XL }) {
+        this.assetSlot({ label: '首字印章', image: this.dropCapSlotImage(),
+          state: this.dropCapSlotState(),
+          slotWidth: 56, slotHeight: 56, onTap: () => this.tapDropCapSlot() })
+        Text(this.dropCapHint())
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+      ThemeColorOption({
+        title: '首字颜色',
+        description: this.effectiveChapterHead().dropCapColor ? '自定义' : '和正文同色',
+        color: this.effectiveChapterHead().dropCapColor || this.commentPreviewTextColor(this.selectedMode === 'dark'),
+        allowAlpha: true,
+        appDarkMode: this.appDarkMode,
+        cardColor: this.cardColor(),
+        primaryTextColor: this.primaryTextColor(),
+        accentColor: ThemeRuntime.accentColor(this.appDarkMode),
+        onColorChange: (color: string) => {
+          this.setDropCapColor(color);
+        }
+      })
+      if (this.effectiveChapterHead().dropCapColor) {
+        this.resetRow('首字改回和正文同色', () => this.setDropCapColor(''))
+      }
+      if (this.effectiveChapterHead().dropCapImage) {
+        Column({ space: AppSpacing.XS }) {
+          Row() {
+            Text('字在印章里的大小')
+              .fontSize(AppFontSize.BODY)
+              .fontColor(this.primaryTextColor())
+              .layoutWeight(1)
+            Text(`${this.dropCapRatioPercent()}%`)
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.subTextColor())
+          }
+          .width('100%')
+          Slider({ value: this.dropCapRatioPercent(), min: 40, max: 90, step: 2, style: SliderStyle.OutSet })
+            .id('theme_editor_drop_cap_ratio')
+            .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+            .width('100%')
+            .selectedColor(ThemeRuntime.accentColor(this.appDarkMode))
+            .accessibilityText('字在印章里的大小')
+            .onChange((value: number, mode: SliderChangeMode) => {
+              if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                this.setDropCapRatio(value);
+              } else {
+                this.dropCapRatioDrag = Math.round(value);
+              }
+            })
+        }
+        .width('100%')
+        .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.SM })
+      }
+    }
+    if (this.currentEmphasis().chapterHead === CHAPTER_HEAD_NONE) {
+      this.resetRow('恢复为所选主题的章首装饰', () => this.setChapterHeadOverride(''))
+    } else if (!this.currentEmphasis().chapterHead && !this.chapterHeadFromOwnPack() &&
+      !chapterHeadIsEmpty(this.sourceChapterHead())) {
+      this.resetRow('不显示所选主题的章首装饰', () => this.setChapterHeadOverride(CHAPTER_HEAD_NONE))
+    }
+  }
+
+  // ---- 段评气泡（含本章说），浅色、深色各一套，存在强调覆盖的 comment 里 ----
+
+  @Builder
+  commentBubbleControls() {
+    this.commentBubblePreviewRow()
+    this.commentKindRow()
+    if (this.commentImageActive()) {
+      this.commentImageSlotRow()
+      SettingRow({ title: '中间部分', description: '文字变长时两条拉伸线之间怎么填满' }) {
+        Select(this.commentRepeatOptions())
+          .id('theme_editor_comment_repeat')
+          .width('44%')
+          .selected(this.commentRepeatIndex())
+          .value(this.commentRepeatIndex() === 1 ? '平铺' : '拉伸')
+          .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+          .optionFont({ family: this.applicationFontFamily })
+          .selectedOptionFont({ family: this.applicationFontFamily })
+          .fontColor(this.subTextColor())
+          .backgroundColor(Color.Transparent)
+          .arrowPosition(ArrowPosition.END)
+          .padding({ left: 0, right: 0 })
+          .borderRadius(16)
+          .border({ width: 0 })
+          .optionBgColor(Color.Transparent)
+          .divider(null)
+          .optionFontColor(this.primaryTextColor())
+          .selectedOptionFontColor(ThemeRuntime.accentColor(this.appDarkMode))
+          .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+          .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+          .menuBackgroundBlurStyle(BlurStyle.NONE)
+          .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+          .enabled(this.commentImageOwnActive(this.selectedMode === 'dark'))
+          .onSelect((index: number) => this.setCommentImageRepeat(index === 1))
+      }
+      SettingRow({ title: '染成底色', description: '单色剪影图适用，彩色图保持关闭' }) {
+        Toggle({ type: ToggleType.Switch, isOn: this.commentImageTint() })
+          .enabled(this.commentImageOwnActive(this.selectedMode === 'dark'))
+          .selectedColor(ThemeRuntime.accentColor(this.appDarkMode))
+          .onChange((isOn: boolean) => this.setCommentImageTint(isOn))
+      }
+    } else {
+      this.commentShapeRows()
+    }
+    if (!this.commentImageActive() ? this.effectiveComment().shape !== 'outline' : this.commentImageTint()) {
+      ThemeColorOption({
+        title: '底色',
+        description: this.commentDescription('fill'),
+        color: this.commentStyleColor('fill'),
+        allowAlpha: true,
+        appDarkMode: this.appDarkMode,
+        cardColor: this.cardColor(),
+        primaryTextColor: this.primaryTextColor(),
+        accentColor: ThemeRuntime.accentColor(this.appDarkMode),
+        onColorChange: (color: string) => {
+          this.setCommentColor('fill', color);
+        }
+      })
+    }
+    if (!this.commentImageActive()) {
+      ThemeColorOption({
+        title: '描边',
+        description: this.commentDescription('stroke'),
+        color: this.commentStyleColor('stroke'),
+        allowAlpha: true,
+        appDarkMode: this.appDarkMode,
+        cardColor: this.cardColor(),
+        primaryTextColor: this.primaryTextColor(),
+        accentColor: ThemeRuntime.accentColor(this.appDarkMode),
+        onColorChange: (color: string) => {
+          this.setCommentColor('stroke', color);
+        }
+      })
+    }
+    ThemeColorOption({
+      title: '文字色',
+      description: this.commentDescription('text'),
+      color: this.commentStyleColor('text'),
+      allowAlpha: true,
+      appDarkMode: this.appDarkMode,
+      cardColor: this.cardColor(),
+      primaryTextColor: this.primaryTextColor(),
+      accentColor: ThemeRuntime.accentColor(this.appDarkMode),
+      onColorChange: (color: string) => {
+        this.setCommentColor('text', color);
+      }
+    })
+    SettingRow({ title: '角标', description: this.commentDescription('ornament') }) {
+      Select(this.commentOrnamentOptions())
+        .id('theme_editor_comment_ornament')
+        .width('44%')
+        .selected(this.commentOrnamentIndex())
+        .value(this.commentOrnamentLabel())
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+        .optionFont({ family: this.applicationFontFamily })
+        .selectedOptionFont({ family: this.applicationFontFamily })
+        .fontColor(this.subTextColor())
+        .backgroundColor(Color.Transparent)
+        .arrowPosition(ArrowPosition.END)
+        .padding({ left: 0, right: 0 })
+        .borderRadius(16)
+        .border({ width: 0 })
+        .optionBgColor(Color.Transparent)
+        .divider(null)
+        .optionFontColor(this.primaryTextColor())
+        .selectedOptionFontColor(ThemeRuntime.accentColor(this.appDarkMode))
+        .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+        .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+        .menuBackgroundBlurStyle(BlurStyle.NONE)
+        .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+        .onSelect((index: number) => this.setCommentOrnament(index))
+    }
+    if (this.commentPreviewStyle(this.selectedMode === 'dark').ornamentImage) {
+      this.commentOrnamentRows()
+    }
+    if (this.commentPreviewStyle(this.selectedMode === 'dark').ornament) {
+      ThemeColorOption({
+        title: '角标颜色',
+        description: this.commentPreviewStyle(this.selectedMode === 'dark').ornamentImage ?
+          (this.currentEmphasis().comment.ornamentColor ? '自定义，整张角标图染成这个颜色' : '不设时角标图按原色') :
+          this.commentDescription('ornamentColor'),
+        color: this.commentStyleColor('ornamentColor'),
+        allowAlpha: true,
+        showDivider: false,
+        appDarkMode: this.appDarkMode,
+        cardColor: this.cardColor(),
+        primaryTextColor: this.primaryTextColor(),
+        accentColor: ThemeRuntime.accentColor(this.appDarkMode),
+        onColorChange: (color: string) => {
+          this.setCommentColor('ornamentColor', color);
+        }
+      })
+    }
+    if (this.selectedMode === 'dark' && !commentBubbleIsEmpty(this.lightEmphasis.comment)) {
+      this.resetRow('从浅色复制形状、图片和角标', () => this.copyCommentShapeFromLight())
+    }
+    if (!commentBubbleIsEmpty(this.currentEmphasis().comment)) {
+      this.resetRow(`恢复${this.modeLabel()}段评气泡跟随气泡样式`, () => this.resetComment())
+    }
+  }
+
+  @Builder
+  commentShapeRows() {
+    SettingRow({ title: '形状', description: this.commentDescription('shape') }) {
+      Select(this.commentShapeOptions())
+        .id('theme_editor_comment_shape')
+        .width('44%')
+        .selected(this.commentShapeIndex())
+        .value(this.commentShapeLabel())
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+        .optionFont({ family: this.applicationFontFamily })
+        .selectedOptionFont({ family: this.applicationFontFamily })
+        .fontColor(this.subTextColor())
+        .backgroundColor(Color.Transparent)
+        .arrowPosition(ArrowPosition.END)
+        .padding({ left: 0, right: 0 })
+        .borderRadius(16)
+        .border({ width: 0 })
+        .optionBgColor(Color.Transparent)
+        .divider(null)
+        .optionFontColor(this.primaryTextColor())
+        .selectedOptionFontColor(ThemeRuntime.accentColor(this.appDarkMode))
+        .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+        .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+        .menuBackgroundBlurStyle(BlurStyle.NONE)
+        .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+        .onSelect((index: number) => this.setCommentShape(index))
+    }
+    if (this.effectiveComment().shape === 'rounded') {
+      SettingRow({ title: '圆角', description: this.commentDescription('radius') }) {
+        Select(this.commentRadiusOptions())
+          .id('theme_editor_comment_radius')
+          .width('44%')
+          .selected(this.commentRadiusIndex())
+          .value(this.commentRadiusLabel())
+          .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+          .optionFont({ family: this.applicationFontFamily })
+          .selectedOptionFont({ family: this.applicationFontFamily })
+          .fontColor(this.subTextColor())
+          .backgroundColor(Color.Transparent)
+          .arrowPosition(ArrowPosition.END)
+          .padding({ left: 0, right: 0 })
+          .borderRadius(16)
+          .border({ width: 0 })
+          .optionBgColor(Color.Transparent)
+          .divider(null)
+          .optionFontColor(this.primaryTextColor())
+          .selectedOptionFontColor(ThemeRuntime.accentColor(this.appDarkMode))
+          .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+          .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+          .menuBackgroundBlurStyle(BlurStyle.NONE)
+          .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+          .onSelect((index: number) => this.setCommentRadius(index))
+      }
+    }
+  }
+
+  /** 外观：绘制（形状与颜色）或图片（上传的气泡图）。 */
+  @Builder
+  commentKindRow() {
+    Row({ space: AppSpacing.SM }) {
+      Text('外观')
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.primaryTextColor())
+        .layoutWeight(1)
+      Row({ space: 2 }) {
+        this.commentKindChip('绘制', !this.commentImageActive(), () => this.setCommentKind(false))
+        this.commentKindChip('图片', this.commentImageActive(), () => this.setCommentKind(true))
+      }
+      .padding(2)
+      .borderRadius(18)
+      .backgroundColor(this.inputColor())
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.SM })
+  }
+
+  @Builder
+  commentKindChip(label: string, selected: boolean, onTap: () => void) {
+    Text(label)
+      .fontSize(AppFontSize.CAPTION)
+      .fontColor(selected ? ThemeRuntime.accentColor(this.appDarkMode) : this.subTextColor())
+      .fontWeight(selected ? FontWeight.Medium : FontWeight.Normal)
+      .textAlign(TextAlign.Center)
+      .width(64)
+      .height(30)
+      .borderRadius(15)
+      .backgroundColor(selected ? ThemeRuntime.accentSurfaceColor(this.appDarkMode) : Color.Transparent)
+      .accessibilitySelected(selected)
+      .onClick(onTap)
+  }
+
+  @Builder
+  commentImageSlotRow() {
+    Row({ space: AppSpacing.XL }) {
+      this.assetSlot({ label: '气泡图', image: this.commentImageActive() ? this.effectiveComment().image : '',
+        state: this.commentImageOwnActive(this.selectedMode === 'dark') ? 'own' :
+          (this.commentImageActive() ? 'inherit' : 'empty'),
+        slotWidth: 92, slotHeight: 56, icon: false, onTap: () => this.tapCommentImageSlot() })
+      Column({ space: AppSpacing.XS }) {
+        Text(this.commentImageHint())
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+        if (this.commentImageOverhangWarning()) {
+          Text(this.commentImageOverhangWarning())
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(ThemeRuntime.dangerColor(this.appDarkMode))
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.LG })
+  }
+
+  @Builder
+  commentOrnamentRows() {
+    Row({ space: AppSpacing.XL }) {
+      this.assetSlot({ label: '角标图', image: this.effectiveComment().ornamentImage,
+        state: this.commentOrnamentOwnActive(this.selectedMode === 'dark') ? 'own' : 'inherit',
+        slotWidth: 56, slotHeight: 56, icon: true, onTap: () => this.tapCommentOrnamentSlot() })
+      Column({ space: AppSpacing.SM }) {
+        Row({ space: 2 }) {
+          ForEach(COMMENT_ORNAMENT_CORNERS, (corner: string, index: number) => {
+            this.commentKindChip(COMMENT_ORNAMENT_CORNER_NAMES[index], this.commentOrnamentCorner() === corner,
+              () => this.setCommentOrnamentCorner(corner))
+          }, (corner: string) => corner)
+        }
+        .padding(2)
+        .borderRadius(18)
+        .backgroundColor(this.inputColor())
+        Row() {
+          Text('大小')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+          Slider({ value: this.commentOrnamentSizePercent(), min: 50, max: 150, step: 5, style: SliderStyle.OutSet })
+            .id('theme_editor_comment_ornament_size')
+            .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+            .layoutWeight(1)
+            .selectedColor(ThemeRuntime.accentColor(this.appDarkMode))
+            .accessibilityText('角标大小')
+            .onChange((value: number, mode: SliderChangeMode) => {
+              if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                this.setCommentOrnamentSize(Math.round(value));
+              }
+            })
+          Text(`${this.commentOrnamentSizePercent()}%`)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+            .width(40)
+            .textAlign(TextAlign.End)
+        }
+        .width('100%')
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.MD })
+  }
+
+  /** 浅色、深色两个小样并排，各放在自己模式的阅读底色上。 */
+  @Builder
+  commentBubblePreviewRow() {
+    Row({ space: AppSpacing.MD }) {
+      this.commentBubblePreviewCell(false)
+      this.commentBubblePreviewCell(true)
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: AppSpacing.MD })
+  }
+
+  @Builder
+  commentBubblePreviewCell(dark: boolean) {
+    Column({ space: AppSpacing.XXS }) {
+      Text(dark ? '深色' : '浅色')
+        .fontSize(AppFontSize.MICRO)
+        .fontColor(this.commentPreviewTextColor(dark))
+        .opacity(0.6)
+      Row({ space: AppSpacing.XXS }) {
+        Text('他抬头道：走吧。')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.commentPreviewTextColor(dark))
+          .maxLines(1)
+        if (this.commentPreviewImage(dark)) {
+          Image((this.commentPreviewImage(dark) as ReaderCommentBubbleImage).pixelMap)
+            .width(this.getUIContext().px2vp((this.commentPreviewImage(dark) as ReaderCommentBubbleImage).width))
+            .height(this.getUIContext().px2vp((this.commentPreviewImage(dark) as ReaderCommentBubbleImage).height))
+            .objectFit(ImageFit.Contain)
+            .draggable(false)
+        }
+      }
+      .alignItems(VerticalAlign.Center)
+    }
+    .layoutWeight(1)
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: AppSpacing.MD, right: AppSpacing.SM, top: AppSpacing.SM, bottom: AppSpacing.SM })
+    .borderRadius(10)
+    .backgroundColor(this.commentPreviewPaper(dark))
+    .border({ width: this.selectedMode === (dark ? 'dark' : 'light') ? 1.5 : 0,
+      color: ThemeRuntime.accentColor(this.appDarkMode) })
+    .accessibilityText(`${dark ? '深色' : '浅色'}段评气泡预览`)
+  }
+
+  /** 合并了来源主题与方案覆盖之后、这个模式实际的段评设置。 */
+  effectiveComment(): ThemePackageCommentBubble {
+    return normalizeCommentBubble(this.effectiveEmphasis().commentBubble);
+  }
+
+  commentPreviewStyle(dark: boolean): ReaderCommentBubbleStyle {
+    const theme = this.customPreviewTheme();
+    const variant = dark ? theme.dark : theme.light;
+    const context = new ReaderRegexEmphasisContext();
+    context.inheritedMode = 'bubble';
+    context.inheritedBubbleStyleId = variant.regexEmphasis.bubbleStyle;
+    context.inheritedColor = variant.regexEmphasis.emphasisColor;
+    context.inheritedTextColor = variant.regexEmphasis.emphasisTextColor;
+    context.accentColor = variant.colors.accentColor;
+    context.surfaceColor = variant.reader.backgroundColor;
+    context.normalTextColor = variant.reader.textColor;
+    context.darkMode = dark;
+    const bubble = ReaderRegexBubbleStyleResolver.resolve(null, context, false);
+    return ReaderCommentBubbleStyles.resolveThemed(bubble.bubbleStyleId, dark, variant.reader.textColor,
+      variant.regexEmphasis.commentBubble, bubble.backgroundColor, bubble.textColor, bubble.emphasisColor);
+  }
+
+  commentPreviewImage(dark: boolean): ReaderCommentBubbleImage | null {
+    const style = this.commentPreviewStyle(dark);
+    const pxPerVp = this.getUIContext().vp2px(1);
+    const key = `${style.identity()}_${pxPerVp}`;
+    const cached = this.commentPreviewImages.get(key);
+    if (cached !== undefined) return cached;
+    if (this.commentPreviewImages.size > 24) this.commentPreviewImages.clear();
+    const rendered = ReaderCommentBubblePainter.renderLabel(style, '12', AppFontSize.CAPTION * 0.85 * pxPerVp);
+    this.commentPreviewImages.set(key, rendered);
+    return rendered;
+  }
+
+  commentPreviewPaper(dark: boolean): string {
+    const theme = this.customPreviewTheme();
+    return (dark ? theme.dark : theme.light).reader.backgroundColor;
+  }
+
+  commentPreviewTextColor(dark: boolean): string {
+    const theme = this.customPreviewTheme();
+    return (dark ? theme.dark : theme.light).reader.textColor;
+  }
+
+  commentStyleColor(key: string): string {
+    const style = this.commentPreviewStyle(this.selectedMode === 'dark');
+    let value = style.text;
+    if (key === 'fill') value = style.fill;
+    else if (key === 'stroke') value = style.stroke;
+    else if (key === 'ornamentColor') value = style.ornamentColor;
+    const hex = (value >>> 0).toString(16).toUpperCase();
+    return `#${'00000000'.substring(hex.length)}${hex}`;
+  }
+
+  /** 方案自己改过就写“自定义”，否则说明跟的是谁。 */
+  commentDescription(key: string): string {
+    const own = this.currentEmphasis().comment;
+    const values: Record<string, string> = {
+      'shape': own.shape, 'radius': own.radius >= 0 ? 'set' : '', 'fill': own.fill, 'stroke': own.stroke,
+      'text': own.text, 'ornament': own.ornament, 'ornamentColor': own.ornamentColor
+    };
+    if (values[key]) return '自定义';
+    if (key === 'stroke' && this.effectiveComment().shape === 'outline') return '跟随正文墨色';
+    if (key === 'text' && this.effectiveComment().shape === 'outline') return '跟随正文墨色';
+    return `跟随「${this.emphasisSourceName()}」`;
+  }
+
+  commentShapeIds(): string[] {
+    return [''].concat(COMMENT_BUBBLE_SHAPES);
+  }
+
+  commentShapeOptions(): SelectOption[] {
+    return ['跟随气泡样式'].concat(COMMENT_BUBBLE_SHAPE_NAMES).map((name: string): SelectOption => ({ value: name }));
+  }
+
+  commentShapeIndex(): number {
+    return Math.max(0, this.commentShapeIds().indexOf(this.currentEmphasis().comment.shape));
+  }
+
+  commentShapeLabel(): string {
+    return (['跟随气泡样式'].concat(COMMENT_BUBBLE_SHAPE_NAMES))[this.commentShapeIndex()];
+  }
+
+  commentRadiusValues(): number[] {
+    return [-1, 0.1, 0.2, 0.35, 0.5];
+  }
+
+  commentRadiusOptions(): SelectOption[] {
+    return ['默认', '小', '中', '大', '全圆'].map((name: string): SelectOption => ({ value: name }));
+  }
+
+  commentRadiusIndex(): number {
+    return Math.max(0, this.commentRadiusValues().indexOf(this.currentEmphasis().comment.radius));
+  }
+
+  commentRadiusLabel(): string {
+    return ['默认', '小', '中', '大', '全圆'][this.commentRadiusIndex()];
+  }
+
+  commentOrnamentIds(): string[] {
+    return [''].concat(COMMENT_BUBBLE_ORNAMENTS);
+  }
+
+  commentOrnamentOptions(): SelectOption[] {
+    return ['跟随气泡样式'].concat(COMMENT_BUBBLE_ORNAMENT_NAMES).map((name: string): SelectOption => ({ value: name }));
+  }
+
+  commentOrnamentIndex(): number {
+    return Math.max(0, this.commentOrnamentIds().indexOf(this.currentEmphasis().comment.ornament));
+  }
+
+  commentOrnamentLabel(): string {
+    return (['跟随气泡样式'].concat(COMMENT_BUBBLE_ORNAMENT_NAMES))[this.commentOrnamentIndex()];
+  }
+
+  updateComment(apply: (next: ThemePackageCommentBubble) => void): void {
+    this.updateEmphasis((next: ThemeEmphasisOverrides): void => {
+      const comment = normalizeCommentBubble(next.comment);
+      apply(comment);
+      next.comment = normalizeCommentBubble(comment);
+    });
+  }
+
+  setCommentShape(index: number): void {
+    const ids = this.commentShapeIds();
+    if (index < 0 || index >= ids.length || ids[index] === this.currentEmphasis().comment.shape) return;
+    this.updateComment((next: ThemePackageCommentBubble): void => {
+      next.shape = ids[index];
+    });
+  }
+
+  setCommentRadius(index: number): void {
+    const values = this.commentRadiusValues();
+    if (index < 0 || index >= values.length || values[index] === this.currentEmphasis().comment.radius) return;
+    this.updateComment((next: ThemePackageCommentBubble): void => {
+      next.radius = values[index];
+    });
+  }
+
+  setCommentOrnament(index: number): void {
+    const ids = this.commentOrnamentIds();
+    if (index < 0 || index >= ids.length) return;
+    if (ids[index] === 'custom') {
+      if (this.commentPreviewStyle(this.selectedMode === 'dark').ornamentImage) return;
+      this.useCustomOrnament();
+      return;
+    }
+    if (ids[index] === this.currentEmphasis().comment.ornament) return;
+    this.updateComment((next: ThemePackageCommentBubble): void => {
+      next.ornament = ids[index];
+      next.ornamentImage = '';
+    });
+  }
+
+  setCommentColor(key: string, color: string): void {
+    const normalized = HexColor.parseAlpha(color);
+    if (!normalized) return;
+    const own = this.currentEmphasis().comment;
+    const current = key === 'fill' ? own.fill : key === 'stroke' ? own.stroke :
+      key === 'text' ? own.text : own.ornamentColor;
+    // 取色器打开再关上会把显示中的颜色原样交回来：没改过的项不要因此变成“自定义”。6 位色按不透明比较。
+    const argb = (value: string): string => (value.length === 7 ? `#FF${value.substring(1)}` : value).toUpperCase();
+    if (!current && argb(normalized) === argb(this.commentStyleColor(key))) return;
+    if (current && argb(normalized) === argb(current)) return;
+    this.updateComment((next: ThemePackageCommentBubble): void => {
+      if (key === 'fill') next.fill = normalized;
+      else if (key === 'stroke') next.stroke = normalized;
+      else if (key === 'text') next.text = normalized;
+      else next.ornamentColor = normalized;
+    });
+  }
+
+  /** 深色的颜色多半和浅色不同，只搬形状、圆角、气泡图与角标（图片按“沿用浅色”处理）。 */
+  copyCommentShapeFromLight(): void {
+    const light = normalizeCommentBubble(this.lightEmphasis.comment);
+    this.updateComment((next: ThemePackageCommentBubble): void => {
+      next.shape = light.shape;
+      next.radius = light.radius;
+      next.ornament = light.ornament;
+      next.image = light.image;
+      next.ornamentImage = light.ornamentImage;
+      next.ornamentCorner = light.ornamentCorner;
+      next.ornamentSize = light.ornamentSize;
+    });
+    HdsFeedback.showToast('已按浅色设置形状、图片和角标');
+  }
+
+  resetComment(): void {
+    this.updateComment((next: ThemePackageCommentBubble): void => {
+      const empty = new ThemePackageCommentBubble();
+      next.shape = empty.shape;
+      next.radius = empty.radius;
+      next.fill = empty.fill;
+      next.stroke = empty.stroke;
+      next.text = empty.text;
+      next.ornament = empty.ornament;
+      next.ornamentColor = empty.ornamentColor;
+      next.image = empty.image;
+      next.ornamentImage = empty.ornamentImage;
+      next.ornamentCorner = empty.ornamentCorner;
+      next.ornamentSize = empty.ornamentSize;
+    });
+  }
+
+  // ---- 段评气泡图与角标图：素材在方案素材包这个模式的 commentBubble 里，覆盖用 pack:<id> 指过去 ----
+
+  /** 这个模式实际用的是气泡图（来源主题的或方案自己的）。 */
+  commentImageActive(): boolean {
+    return commentBubbleHasImage(this.effectiveComment());
+  }
+
+  /** 方案素材包里给这个模式用的段评设置（含另一模式沿用过来的图）。 */
+  ownCommentResolved(dark: boolean): ThemePackageCommentBubble | null {
+    const pack = this.ownPack();
+    if (!pack || this.assetRevision < 0) return null;
+    return commentBubbleFor(pack.record.parts, dark);
+  }
+
+  /** 这个模式自己上传的段评设置（不含沿用）。 */
+  ownCommentPart(dark: boolean): ThemePackageCommentBubble {
+    const pack = this.ownPack();
+    const variant = pack && this.assetRevision >= 0 ? (dark ? pack.record.parts.dark : pack.record.parts.light) : null;
+    return normalizeCommentBubble(variant ? variant.commentBubble : null);
+  }
+
+  ownCommentHasImage(dark: boolean): boolean {
+    return commentBubbleHasImage(this.ownCommentPart(dark));
+  }
+
+  emphasisFor(dark: boolean): ThemeEmphasisOverrides {
+    return dark ? this.darkEmphasis : this.lightEmphasis;
+  }
+
+  /** 这个模式正在用方案自己上传的气泡图。 */
+  commentImageOwnActive(dark: boolean): boolean {
+    const own = this.ownThemeId();
+    return !!own && normalizeCommentBubble(this.emphasisFor(dark).comment).image === own &&
+      commentBubbleHasImage(this.ownCommentResolved(dark));
+  }
+
+  commentOrnamentOwnActive(dark: boolean): boolean {
+    const own = this.ownThemeId();
+    const resolved = this.ownCommentResolved(dark);
+    return !!own && normalizeCommentBubble(this.emphasisFor(dark).comment).ornamentImage === own && !!resolved &&
+      !!resolved.ornamentImage;
+  }
+
+  /** 气泡样式来源主题自己带的段评设置（不含方案覆盖）。 */
+  commentSourceComment(dark: boolean): ThemePackageCommentBubble {
+    const sources = dark ? this.darkSources : this.lightSources;
+    const theme = BuiltinThemeRegistry.findById(sources.bubbleThemeId);
+    return normalizeCommentBubble((dark ? theme.dark : theme.light).regexEmphasis.commentBubble);
+  }
+
+  commentImageHint(): string {
+    const dark = this.selectedMode === 'dark';
+    if (!this.commentImageOwnActive(dark)) {
+      return this.commentImageActive() ? `取自「${this.emphasisSourceName()}」，点按可换成自己的` :
+        '整只气泡画成一张透明底图，尾巴画在下方；上传后可调拉伸线和文字区';
+    }
+    if (dark && !this.ownCommentHasImage(true)) {
+      return '深色沿用浅色那张。浅色图在深色纸面上看不清时，单独传一张或打开染色';
+    }
+    const mode = dark ? '深色' : '浅色';
+    return `${mode}用自己上传的气泡图。点按可调拉伸线和文字区、替换或移除`;
+  }
+
+  commentImageOverhangWarning(): string {
+    const style = this.commentPreviewStyle(this.selectedMode === 'dark');
+    if (!style.image) return '';
+    const box = new ThemePackageBubbleSlice();
+    box.top = style.textTop;
+    box.bottom = style.textBottom;
+    const reach = commentImageOverhang(box);
+    if (reach[0] <= COMMENT_IMAGE_OVERHANG_TOP && reach[1] <= COMMENT_IMAGE_OVERHANG_BOTTOM) return '';
+    return '图片上下超出文字区较多，正文行距小时可能压到上下行';
+  }
+
+  /** 这个模式用的那张图的拉伸设置（方案自己的）。 */
+  ownCommentImageSettings(dark: boolean): ThemePackageCommentBubble {
+    const resolved = this.ownCommentResolved(dark);
+    const settings = new ThemePackageCommentBubble();
+    if (!resolved) return settings;
+    copyCommentImage(settings, resolved);
+    return settings;
+  }
+
+  commentImageTint(): boolean {
+    return this.commentPreviewStyle(this.selectedMode === 'dark').imageTint;
+  }
+
+  commentRepeatOptions(): SelectOption[] {
+    return ['拉伸', '平铺'].map((name: string): SelectOption => ({ value: name }));
+  }
+
+  commentRepeatIndex(): number {
+    return this.commentPreviewStyle(this.selectedMode === 'dark').imageRound ? 1 : 0;
+  }
+
+  /** 只改这个模式的方案覆盖（不跟随 selectedMode）。 */
+  updateCommentFor(dark: boolean, apply: (next: ThemePackageCommentBubble) => void): void {
+    if (this.advancedLocked()) return;
+    this.rememberChange();
+    const next = AppThemeSettingsStore.normalizeEmphasis(this.emphasisFor(dark));
+    const comment = normalizeCommentBubble(next.comment);
+    apply(comment);
+    next.comment = normalizeCommentBubble(comment);
+    if (dark) this.darkEmphasis = next;
+    else this.lightEmphasis = next;
+    this.onSettingChanged();
+  }
+
+  async setCommentKind(useImage: boolean): Promise<void> {
+    if (useImage === this.commentImageActive()) return;
+    if (!(await this.ensureAdvanced())) return;
+    const dark = this.selectedMode === 'dark';
+    if (!useImage) {
+      this.updateCommentFor(dark, (next: ThemePackageCommentBubble): void => {
+        next.image = COMMENT_IMAGE_NONE;
+      });
+      return;
+    }
+    const own = this.ownThemeId();
+    if (own && commentBubbleHasImage(this.ownCommentResolved(dark))) {
+      this.updateCommentFor(dark, (next: ThemePackageCommentBubble): void => {
+        next.image = own;
+      });
+    } else if (commentBubbleHasImage(this.commentSourceComment(dark))) {
+      this.updateCommentFor(dark, (next: ThemePackageCommentBubble): void => {
+        next.image = '';
+      });
+    } else {
+      await this.uploadCommentImage(dark);
+    }
+  }
+
+  async uploadCommentImage(dark: boolean): Promise<void> {
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
+    if (uris.length === 0) return;
+    // 换图时沿用原来的平铺、换行和染色，文字区与拉伸线按新图给默认位置。
+    const previous = this.ownCommentImageSettings(dark);
+    previous.imageSlice = null;
+    previous.imageText = null;
+    const settings = await this.stretchCommentImage(uris[0], previous, dark);
+    if (!settings) return;
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setCommentImage(getContext(this), this.schemeId, uris[0], this.sourceThemeId('bubble'),
+        settings, dark), '', false, false, '');
+    const own = this.ownThemeId();
+    if (!own || !this.ownCommentHasImage(dark)) return;
+    this.updateCommentFor(dark, (next: ThemePackageCommentBubble): void => {
+      next.image = own;
+    });
+    // 另一种模式还没做选择、来源也没有图时一起指过来：它没有自己的图就沿用这张。
+    const other = normalizeCommentBubble(this.emphasisFor(!dark).comment);
+    if (!other.image && !commentBubbleHasImage(this.commentSourceComment(!dark))) {
+      this.updateCommentFor(!dark, (next: ThemePackageCommentBubble): void => {
+        next.image = own;
+      });
+    }
+    HdsFeedback.showToast(dark ? '深色段评气泡图已更新' : '段评气泡图已更新');
+  }
+
+  async tapCommentImageSlot(): Promise<void> {
+    // 菜单期间可能切换浅色/深色，操作的是点开时那个模式。
+    const dark = this.selectedMode === 'dark';
+    if (!(await this.ensureAdvanced())) return;
+    if (!this.commentImageOwnActive(dark)) {
+      await this.uploadCommentImage(dark);
+      return;
+    }
+    const mode = dark ? '深色' : '浅色';
+    const ownHere = this.ownCommentHasImage(dark);
+    const otherOwn = this.ownCommentHasImage(!dark);
+    const items: string[] = ['调整拉伸线与文字区', ownHere ? '替换图片' : `换一张${mode}专用的`];
+    if (ownHere) items.push(dark ? '浅色也用这张' : '深色也用这张');
+    items.push(dark && ownHere && otherOwn ? '移除，沿用浅色那张' : '移除气泡图');
+    const choice = await this.slotMenuItems(`${mode} · 段评气泡图`, items);
+    if (choice < 0) return;
+    const picked = items[choice];
+    if (picked.startsWith('调整')) {
+      await this.adjustCommentImage(dark);
+    } else if (picked.startsWith('替换') || picked.startsWith('换一张')) {
+      await this.uploadCommentImage(dark);
+    } else if (picked.endsWith('也用这张')) {
+      await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.copyCommentImageToOtherMode(getContext(this), this.schemeId, dark), '', false, false,
+        `${dark ? '浅色' : '深色'}也用这张气泡图了`);
+      const own = this.ownThemeId();
+      if (own) {
+        this.updateCommentFor(!dark, (next: ThemePackageCommentBubble): void => {
+          next.image = own;
+        });
+      }
+    } else {
+      await this.removeCommentImage(dark, picked.includes('沿用'));
+    }
+  }
+
+  async adjustCommentImage(dark: boolean): Promise<void> {
+    const resolved = this.ownCommentResolved(dark);
+    const pack = this.ownPack();
+    if (!resolved || !pack || !commentBubbleHasImage(resolved)) return;
+    const uri = this.ownAssetUri(resolved.image);
+    if (!uri) return;
+    const settings = await this.stretchCommentImage(uri, this.ownCommentImageSettings(dark), dark);
+    if (!settings) return;
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setCommentImageSettings(getContext(this), this.schemeId, settings, dark),
+      '', false, false, '拉伸线与文字区已更新');
+  }
+
+  /**
+   * 移除这个模式自己的气泡图。keepFallback 为 true（深色移除后沿用浅色那张）时覆盖不动；否则这个模式改回画形状：
+   * 另一模式还有图（会被沿用过来）时写 none，不然清掉覆盖。两种模式都没有图了，指向素材包的覆盖一起清掉。
+   */
+  async removeCommentImage(dark: boolean, keepFallback: boolean): Promise<void> {
+    const previous = this.ownThemeId();
+    if (this.ownCommentHasImage(dark)) {
+      await this.runAssetClear((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.clearCommentImage(getContext(this), this.schemeId, dark), '');
+    }
+    if (keepFallback) return;
+    const otherHasImage = this.ownCommentHasImage(!dark) || commentBubbleHasImage(this.commentSourceComment(dark));
+    this.updateCommentFor(dark, (next: ThemePackageCommentBubble): void => {
+      next.image = otherHasImage ? COMMENT_IMAGE_NONE : '';
+    });
+    if (!this.ownCommentHasImage(false) && !this.ownCommentHasImage(true)) {
+      for (const mode of [false, true]) {
+        if (normalizeCommentBubble(this.emphasisFor(mode).comment).image === previous && previous) {
+          this.updateCommentFor(mode, (next: ThemePackageCommentBubble): void => {
+            next.image = '';
+          });
+        }
+      }
+    }
+  }
+
+  async setCommentImageRepeat(round: boolean): Promise<void> {
+    const dark = this.selectedMode === 'dark';
+    if (!this.commentImageOwnActive(dark) || round === this.commentPreviewStyle(dark).imageRound) return;
+    const settings = this.ownCommentImageSettings(dark);
+    settings.imageRepeat = round ? CommentImageRepeat.ROUND : '';
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setCommentImageSettings(getContext(this), this.schemeId, settings, dark), '', false, false, '');
+  }
+
+  async setCommentImageTint(on: boolean): Promise<void> {
+    const dark = this.selectedMode === 'dark';
+    // 开关重建时可能原样回调一次（见 Toggle 重建触发 onChange），值没变就不动。
+    if (!this.commentImageOwnActive(dark) || on === this.commentPreviewStyle(dark).imageTint) return;
+    const settings = this.ownCommentImageSettings(dark);
+    settings.imageTint = on;
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setCommentImageSettings(getContext(this), this.schemeId, settings, dark), '', false, false, '');
+  }
+
+  /** 打开拉伸与文字区页；点“使用”交回设置，取消返回 null。 */
+  stretchCommentImage(uri: string, settings: ThemePackageCommentBubble,
+    dark: boolean): Promise<ThemePackageCommentBubble | null> {
+    return new Promise<ThemePackageCommentBubble | null>((resolve: (result: ThemePackageCommentBubble | null) => void) => {
+      const request = new CommentImageStretchRequest();
+      const style = this.commentPreviewStyle(dark);
+      const hex = (value: number): string => {
+        const text = (value >>> 0).toString(16).toUpperCase();
+        return `#${'00000000'.substring(text.length)}${text}`;
+      };
+      request.uri = uri;
+      request.settings = settings;
+      request.paperColor = this.commentPreviewPaper(dark);
+      request.inkColor = this.commentPreviewTextColor(dark);
+      request.textColor = hex(style.text);
+      request.fillColor = hex(style.fill);
+      request.modeLabel = dark ? '深色' : '浅色';
+      this.commentStretchResolve = resolve;
+      this.commentStretchRequest = request;
+      this.commentStretchVisible = true;
+    });
+  }
+
+  finishCommentStretch(settings: ThemePackageCommentBubble | null): void {
+    const resolve = this.commentStretchResolve;
+    this.commentStretchResolve = null;
+    this.commentStretchVisible = false;
+    if (resolve) resolve(settings);
+  }
+
+  // 角标图
+
+  commentOrnamentCorner(): string {
+    return this.commentPreviewStyle(this.selectedMode === 'dark').ornamentCorner || 'topRight';
+  }
+
+  commentOrnamentSizePercent(): number {
+    return Math.round(this.commentPreviewStyle(this.selectedMode === 'dark').ornamentSize * 100);
+  }
+
+  setCommentOrnamentCorner(corner: string): void {
+    const value = corner === 'topRight' ? '' : corner;
+    if (value === (this.commentPreviewStyle(this.selectedMode === 'dark').ornamentCorner || '')) return;
+    this.updateComment((next: ThemePackageCommentBubble): void => {
+      next.ornamentCorner = value;
+    });
+  }
+
+  setCommentOrnamentSize(percent: number): void {
+    const value = Math.max(50, Math.min(150, percent)) / 100;
+    if (Math.abs(value - this.commentPreviewStyle(this.selectedMode === 'dark').ornamentSize) < 0.001) return;
+    this.updateComment((next: ThemePackageCommentBubble): void => {
+      next.ornamentSize = value;
+    });
+  }
+
+  /** 选了“自定义图片”：方案已有角标图就指过去，来源主题自带就跟随，否则马上选一张。 */
+  async useCustomOrnament(): Promise<void> {
+    if (!(await this.ensureAdvanced())) return;
+    const dark = this.selectedMode === 'dark';
+    const own = this.ownThemeId();
+    const resolved = this.ownCommentResolved(dark);
+    if (own && resolved && resolved.ornamentImage) {
+      this.updateCommentFor(dark, (next: ThemePackageCommentBubble): void => {
+        next.ornament = 'custom';
+        next.ornamentImage = own;
+      });
+      return;
+    }
+    const source = this.commentSourceComment(dark);
+    if (source.ornament === 'custom' && source.ornamentImage) {
+      this.updateCommentFor(dark, (next: ThemePackageCommentBubble): void => {
+        next.ornament = 'custom';
+        next.ornamentImage = '';
+      });
+      return;
+    }
+    await this.uploadCommentOrnament(dark);
+    // 没选图时下拉退回原来的选项。
+    this.assetRevision++;
+  }
+
+  async uploadCommentOrnament(dark: boolean): Promise<void> {
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
+    if (uris.length === 0) return;
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setCommentOrnament(getContext(this), this.schemeId, uris[0], this.sourceThemeId('bubble'), dark),
+      '', false, false, '');
+    const own = this.ownThemeId();
+    if (!own || !this.ownCommentPart(dark).ornamentImage) return;
+    this.updateCommentFor(dark, (next: ThemePackageCommentBubble): void => {
+      next.ornament = 'custom';
+      next.ornamentImage = own;
+    });
+    const other = normalizeCommentBubble(this.emphasisFor(!dark).comment);
+    if (!other.ornament && !other.ornamentImage) {
+      this.updateCommentFor(!dark, (next: ThemePackageCommentBubble): void => {
+        next.ornament = 'custom';
+        next.ornamentImage = own;
+      });
+    }
+    HdsFeedback.showToast(dark ? '深色段评角标图已更新' : '段评角标图已更新');
+  }
+
+  async tapCommentOrnamentSlot(): Promise<void> {
+    const dark = this.selectedMode === 'dark';
+    if (!(await this.ensureAdvanced())) return;
+    if (!this.commentOrnamentOwnActive(dark)) {
+      await this.uploadCommentOrnament(dark);
+      return;
+    }
+    const mode = dark ? '深色' : '浅色';
+    const ownHere = !!this.ownCommentPart(dark).ornamentImage;
+    const items: string[] = [ownHere ? '替换角标图' : `换一张${mode}专用的`];
+    if (ownHere) items.push(dark ? '浅色也用这张' : '深色也用这张');
+    items.push('移除角标图');
+    const choice = await this.slotMenuItems(`${mode} · 段评角标图`, items);
+    if (choice < 0) return;
+    const picked = items[choice];
+    if (picked.startsWith('替换') || picked.startsWith('换一张')) {
+      await this.uploadCommentOrnament(dark);
+    } else if (picked.endsWith('也用这张')) {
+      await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.copyCommentOrnamentToOtherMode(getContext(this), this.schemeId, dark), '', false, false,
+        `${dark ? '浅色' : '深色'}也用这张角标图了`);
+      const own = this.ownThemeId();
+      if (own) {
+        this.updateCommentFor(!dark, (next: ThemePackageCommentBubble): void => {
+          next.ornament = 'custom';
+          next.ornamentImage = own;
+        });
+      }
+    } else {
+      const previous = this.ownThemeId();
+      if (ownHere) {
+        await this.runAssetClear((): Promise<SchemeAssetResult> =>
+          SchemeAssetService.clearCommentOrnament(getContext(this), this.schemeId, dark), '');
+      }
+      this.updateCommentFor(dark, (next: ThemePackageCommentBubble): void => {
+        next.ornament = '';
+        next.ornamentImage = '';
+      });
+      if (!this.ownCommentPart(false).ornamentImage && !this.ownCommentPart(true).ornamentImage && previous) {
+        const other = normalizeCommentBubble(this.emphasisFor(!dark).comment);
+        if (other.ornamentImage === previous) {
+          this.updateCommentFor(!dark, (next: ThemePackageCommentBubble): void => {
+            next.ornament = '';
+            next.ornamentImage = '';
+          });
+        }
+      }
+    }
+  }
+
+  /** 系统操作菜单，按给的顺序列出，返回序号；取消返回 -1。“移除”开头的用危险色。 */
+  async slotMenuItems(title: string, items: string[]): Promise<number> {
+    const b: promptAction.Button[] = items.map((item: string): promptAction.Button =>
+      ({ text: item, color: this.menuColor(item) }));
+    if (b.length === 0) return -1;
+    let buttons: [promptAction.Button, promptAction.Button?, promptAction.Button?, promptAction.Button?] = [b[0]];
+    if (b.length === 2) buttons = [b[0], b[1]];
+    else if (b.length === 3) buttons = [b[0], b[1], b[2]];
+    else if (b.length >= 4) buttons = [b[0], b[1], b[2], b[3]];
+    try {
+      const result: promptAction.ActionMenuSuccessResponse = await this.getUIContext().getPromptAction().showActionMenu({
+        title: title,
+        buttons: buttons
+      });
+      return result.index;
+    } catch (_) {
+      return -1;
+    }
   }
 
   @Builder
@@ -1424,77 +3734,6 @@ struct ThemeColorSettingsPage {
       .fontColor(this.subTextColor())
       .width('100%')
       .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.XXL, bottom: AppSpacing.MD })
-  }
-
-  @Builder
-  modeOptions() {
-    Row() {
-      ImmersiveMaterialSurface({
-        surfaceWidth: Math.max(40, this.viewportWidth - AppSpacing.LG * 2), surfaceHeight: 44, darkMode: this.appDarkMode,
-        fallbackColor: this.cardColor(), glowColor: `#40${ThemeRuntime.accentColor(this.appDarkMode).substring(1)}`
-      }) {
-        Row({ space: AppSpacing.XS }) {
-          this.modeButton('浅色模式', 'light')
-          this.modeButton('深色模式', 'dark')
-        }
-        .width('100%')
-        .height('100%')
-        .padding(AppSpacing.XS)
-      }
-    }
-    .width('calc(100% - 24vp)')
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.XS, bottom: AppSpacing.XS })
-  }
-
-  @Builder
-  modeButton(title: string, mode: string) {
-    Stack({ alignContent: Alignment.Center }) {
-      Text(title)
-        .fontSize(AppFontSize.BODY)
-          .fontColor(this.selectedMode === mode ? ThemeRuntime.accentColor(this.appDarkMode) : this.subTextColor())
-    }
-      .layoutWeight(1)
-      .height(36)
-      .borderRadius(19)
-      .backgroundColor(this.selectedMode === mode ? ThemeRuntime.accentSurfaceColor(this.appDarkMode) : Color.Transparent)
-      .accessibilityText(title)
-      .accessibilitySelected(this.selectedMode === mode)
-      .onClick(() => {
-        this.selectedMode = mode;
-      })
-  }
-
-  // ---- 页签：阅读与朗读 ----
-
-  @Builder
-  readingSection() {
-    this.sectionTitle({ title: `阅读背景 · ${this.modeLabel()}` })
-    Column() {
-      this.componentSourceRow('来源', '换来源时，阅读颜色和背景素材一起换成它的', 'reader')
-      this.readerColorRows()
-      if (this.assetRevision >= 0) {
-        this.readerSlots()
-      }
-    }
-    .editorCard(this.cardColor())
-    this.sectionTitle({ title: '强调气泡' })
-    Column() {
-      this.componentSourceRow('来源', '正文强调方式、气泡样式及气泡配色', 'bubble')
-      this.emphasisOverrideRows()
-      if (this.assetRevision >= 0) {
-        this.bubbleSlots()
-      }
-    }
-    .editorCard(this.cardColor())
-    this.sectionTitle({ title: `朗读 / 有声书面板 · ${this.modeLabel()}` })
-    Column() {
-      this.componentSourceRow('来源', '面板的背景插画与底色', 'ttsPanel')
-      if (this.assetRevision >= 0) {
-        this.ttsSlots()
-      }
-    }
-    .editorCard(this.cardColor())
-    this.sectionTitle({ title: '浅色与深色模式分别保存，切换顶部的模式分别调整' })
   }
 
   currentReader(): ThemeEditorReaderColors {
@@ -1729,6 +3968,74 @@ struct ThemeColorSettingsPage {
     .opacity(this.readerOrnamentScalable(trailing) ? 1 : 0.45)
   }
 
+  readerOrnamentInsetPercent(trailing: boolean): number {
+    const drag = trailing ? this.trailingInsetDrag : this.leadingInsetDrag;
+    if (drag >= 0) return drag;
+    if (this.assetRevision < 0) return 100;
+    const own = this.ownOrnamentReader();
+    if (!own) return 100;
+    // 旧记录里没有这两个字段，按默认边距。
+    return Math.round(normalizeOrnamentInset(trailing ? own.trailingInset : own.leadingInset) * 100);
+  }
+
+  setOrnamentInsetDrag(trailing: boolean, percent: number): void {
+    if (trailing) this.trailingInsetDrag = percent;
+    else this.leadingInsetDrag = percent;
+  }
+
+  async setReaderOrnamentInset(trailing: boolean, percent: number): Promise<void> {
+    this.setOrnamentInsetDrag(trailing, Math.round(percent));
+    try {
+      if (!(await this.ensureAdvanced())) return;
+      const dark = this.selectedMode === 'dark';
+      await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.setReaderOrnamentInset(getContext(this), this.schemeId, dark, trailing, percent / 100),
+        '', false, false, '');
+    } finally {
+      this.setOrnamentInsetDrag(trailing, -1);
+    }
+  }
+
+  ornamentInsetLabel(trailing: boolean): string {
+    if (!this.readerOrnamentScalable(trailing)) return trailing ? '上传右下角饰后可调' : '上传左上角饰后可调';
+    const percent = this.readerOrnamentInsetPercent(trailing);
+    return percent <= 0 ? '贴边' : `${percent}%`;
+  }
+
+  @Builder
+  ornamentInsetRow(trailing: boolean) {
+    Column({ space: AppSpacing.XS }) {
+      Row() {
+        Text(trailing ? '右下角饰边距' : '左上角饰边距')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.primaryTextColor())
+          .layoutWeight(1)
+        Text(this.ornamentInsetLabel(trailing))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+      }
+      .width('100%')
+      Slider({ value: this.readerOrnamentInsetPercent(trailing), min: 0, max: 300, step: 10,
+        style: SliderStyle.OutSet })
+        .id(trailing ? 'theme_editor_reader_trailing_inset' : 'theme_editor_reader_leading_inset')
+        .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+        .width('100%')
+        .enabled(this.readerOrnamentScalable(trailing))
+        .selectedColor(ThemeRuntime.accentColor(this.appDarkMode))
+        .accessibilityText(trailing ? '右下角饰边距' : '左上角饰边距')
+        .onChange((value: number, mode: SliderChangeMode) => {
+          if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+            this.setReaderOrnamentInset(trailing, value);
+          } else {
+            this.setOrnamentInsetDrag(trailing, Math.round(value));
+          }
+        })
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.SM })
+    .opacity(this.readerOrnamentScalable(trailing) ? 1 : 0.45)
+  }
+
   @Builder
   readerSlots() {
     Column({ space: AppSpacing.MD }) {
@@ -1757,8 +4064,21 @@ struct ThemeColorSettingsPage {
     }
     .width('100%')
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+    this.moreRow('reader', '角饰大小、边距与整图铺放')
+    if (this.moreOpen('reader')) {
+      this.readerMoreRows()
+    }
+    if (this.ownReaderMode()) {
+      this.resetRow(`恢复为所选主题的${this.modeLabel()}阅读背景`, () => this.clearReaderAssets())
+    }
+  }
+
+  @Builder
+  readerMoreRows() {
     this.ornamentScaleRow(false)
+    this.ornamentInsetRow(false)
     this.ornamentScaleRow(true)
+    this.ornamentInsetRow(true)
     Column() {
       SettingRow({ title: '整图铺放', description: this.ownReaderMode() === 'image' ? '整图背景在阅读页上的铺法' : '上传整图后可选',
         showDivider: !!this.ownReaderMode() }) {
@@ -1790,9 +4110,6 @@ struct ThemeColorSettingsPage {
     }
     .width('100%')
     .opacity(this.ownReaderMode() === 'image' ? 1 : 0.45)
-    if (this.ownReaderMode()) {
-      this.resetRow(`恢复为所选主题的${this.modeLabel()}阅读背景`, () => this.clearReaderAssets())
-    }
   }
 
   readerFitIndex(): number {
@@ -1889,13 +4206,14 @@ struct ThemeColorSettingsPage {
   bubbleSlots() {
     Row({ space: AppSpacing.XL }) {
       this.assetSlot({ label: '端饰', image: this.bubbleCapImage(),
-        state: this.ownBubbleActive() ? 'own' : (ThemeColorSettingsPage.hasImage(this.bubbleCapImage()) ? 'inherit' : 'empty'),
+        state: this.ownBubbleItem(false) ? 'own' :
+          (ThemeColorSettingsPage.hasImage(this.bubbleCapImage()) ? 'inherit' : 'empty'),
         slotWidth: 56, slotHeight: 56, onTap: () => this.tapBubbleSlot(false) })
       this.assetSlot({ label: '边框', image: this.bubbleFrameImage(),
-        state: this.ownBubbleActive() && !!this.ownPack()?.bubbleFrame ? 'own' :
+        state: this.ownBubbleItem(true) ? 'own' :
           (ThemeColorSettingsPage.hasImage(this.bubbleFrameImage()) ? 'inherit' : 'empty'),
         slotWidth: 56, slotHeight: 56, onTap: () => this.tapBubbleSlot(true) })
-      Text('正方形 SVG 端饰放在强调文字两端，右端自动旋转；边框可选')
+      Text(this.bubbleSlotHint())
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
         .layoutWeight(1)
@@ -1903,38 +4221,133 @@ struct ThemeColorSettingsPage {
     .width('100%')
     .alignItems(VerticalAlign.Top)
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+    if (this.ownBubbleFrameUri()) {
+      Column({ space: AppSpacing.XS }) {
+        Text('预览').fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+        ThemeBubbleFramePreview({
+          uri: this.ownBubbleFrameUri(),
+          capUri: this.ownBubbleCapUri(),
+          settings: this.ownBubbleFrameSettings(),
+          textColor: this.effectiveEmphasis().emphasisTextColor,
+          bubbleColor: this.effectiveEmphasis().emphasisColor,
+          paperColor: this.currentReader().backgroundColor,
+          normalTextColor: this.currentReader().textColor
+        })
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: AppSpacing.LG })
+    }
   }
 
   bubbleCapImage(): ResourceStr {
     const style = this.effectiveEmphasis().bubbleStyle;
-    return ThemeAssetRegistry.hasRegexBubbleCap(style) ? ThemeAssetRegistry.regexBubbleCap(style) : '';
+    const dark = this.selectedMode === 'dark';
+    return ThemeAssetRegistry.hasRegexBubbleCap(style, dark) ? ThemeAssetRegistry.regexBubbleCap(style, dark) : '';
   }
 
+  /** 只有主题包的边框会在正文里逐行画出；内置样式的横幅边框不画，这里也不显示。 */
   bubbleFrameImage(): ResourceStr {
     const style = this.effectiveEmphasis().bubbleStyle;
-    return ThemeAssetRegistry.hasRegexBubbleFrame(style) ? ThemeAssetRegistry.regexBubbleFrame(style) : '';
+    const dark = this.selectedMode === 'dark';
+    return ThemePackRegistry.isPackId(style) && ThemeAssetRegistry.hasRegexBubbleFrame(style, dark) ?
+      ThemeAssetRegistry.regexBubbleFrame(style, dark) : '';
+  }
+
+  /** 方案自己包里、属于这个模式的那一项（浅色看 parts.bubble，深色看 parts.bubbleDark）；没有时为空串。 */
+  ownBubbleItem(frame: boolean, dark: boolean = this.selectedMode === 'dark'): string {
+    const pack = this.ownPack();
+    if (!pack || this.assetRevision < 0 || !this.ownBubbleActive()) return '';
+    const bubble = dark ? pack.record.parts.bubbleDark : pack.record.parts.bubble;
+    if (!bubble) return '';
+    return (frame ? bubble.frame : bubble.cap) || '';
+  }
+
+  bubbleSlotHint(): string {
+    const base = '端饰是正方形 SVG 或透明底位图，放在强调文字两端，右端自动旋转。边框按行拉伸，上传后可调拉伸区域';
+    if (this.selectedMode !== 'dark') return `${base}。切到深色可以再传只在深色模式用的`;
+    if (!this.ownBubbleActive()) return base;
+    const cap = this.ownBubbleItem(false) ? '端饰用单独上传的' : '端饰沿用浅色的';
+    const frame = this.ownBubbleItem(true) ? '边框用单独上传的' : '边框沿用浅色的';
+    const tint = this.ownBubbleItem(true) ? '' : '。浅色素材在深色纸面上看不清时，单独上传一张或给边框打开染色';
+    return `深色模式${cap}，${frame}${tint}`;
+  }
+
+  /** 方案自己的边框（正在使用时），深色没有单独那张时是浅色的；卡片里的预览只看它。 */
+  ownBubbleFrameUri(): string {
+    const pack = this.ownPack();
+    return this.assetRevision >= 0 && this.ownBubbleActive() && pack ?
+      pack.bubble(this.selectedMode === 'dark').frame : '';
+  }
+
+  ownBubbleCapUri(): string {
+    const pack = this.ownPack();
+    return this.assetRevision >= 0 && this.ownBubbleActive() && pack ?
+      pack.bubble(this.selectedMode === 'dark').cap : '';
+  }
+
+  /** 这个模式实际用的那张边框的拉伸设置。 */
+  ownBubbleFrameSettings(dark: boolean = this.selectedMode === 'dark'): ThemePackageBubble {
+    const settings = new ThemePackageBubble();
+    const pack = this.ownPack();
+    if (!pack || this.assetRevision < 0) return settings;
+    const bubble = pack.bubble(dark);
+    settings.frameSlice = bubble.frameSlice;
+    settings.frameRepeat = bubble.frameRepeat;
+    settings.frameBreak = bubble.frameBreak;
+    settings.frameTint = bubble.frameTint;
+    return settings;
   }
 
   async tapBubbleSlot(frame: boolean): Promise<void> {
-    const pack = this.ownPack();
-    const own = this.ownBubbleActive() && (!frame || (!!pack && !!pack.bubbleFrame));
-    if (!own) {
+    // 菜单期间用户可能切换浅色/深色，操作的是点开时那个模式的那一项。
+    const dark = this.selectedMode === 'dark';
+    if (!this.ownBubbleItem(frame, dark)) {
       if (!(await this.ensureAdvanced())) return;
-      if (frame) await this.uploadBubbleFrame();
-      else await this.uploadBubbleCap();
+      if (frame) await this.uploadBubbleFrame(dark);
+      else await this.uploadBubbleCap(dark);
       return;
     }
-    const choice = await this.slotMenu(frame ? '气泡边框' : '气泡端饰', '替换', frame ? '移除边框' : '移除端饰和边框');
+    const title = `${dark ? '深色' : '浅色'} · ${frame ? '气泡边框' : '气泡端饰'}`;
+    if (frame) {
+      const choice = await this.slotMenu(title, '调整拉伸区域', '替换', dark ? '移除，沿用浅色的边框' : '移除边框');
+      if (choice === 0) {
+        await this.replaceGuarded(() => this.adjustBubbleFrame(dark));
+      } else if (choice === 1) {
+        await this.replaceGuarded(() => this.uploadBubbleFrame(dark));
+      } else if (choice === 2) {
+        await this.clearBubblePart(true, dark);
+      }
+      return;
+    }
+    const choice = await this.slotMenu(title, '替换', dark ? '移除，沿用浅色的端饰' : '移除端饰');
     if (choice === 0) {
-      await this.replaceGuarded(() => frame ? this.uploadBubbleFrame() : this.uploadBubbleCap());
+      await this.replaceGuarded(() => this.uploadBubbleCap(dark));
     } else if (choice === 1) {
-      if (frame) {
-        await this.runAssetClear((): Promise<SchemeAssetResult> =>
-          SchemeAssetService.clearBubbleFrame(getContext(this), this.schemeId), '');
-      } else {
-        await this.clearBubbleAssets();
+      await this.clearBubblePart(false, dark);
+    }
+  }
+
+  /** 移除某个模式的端饰或边框；两种模式的端饰、边框全没了时整个包内气泡清掉，强调样式退回所选主题。 */
+  async clearBubblePart(frame: boolean, dark: boolean): Promise<void> {
+    const pack = this.ownPack();
+    const parts = pack ? pack.record.parts : null;
+    const remaining: string[] = [];
+    if (parts) {
+      for (const mode of [false, true]) {
+        const bubble = mode ? parts.bubbleDark : parts.bubble;
+        if (!bubble) continue;
+        if (bubble.cap && !(mode === dark && !frame)) remaining.push(bubble.cap);
+        if (bubble.frame && !(mode === dark && frame)) remaining.push(bubble.frame);
       }
     }
+    if (remaining.length === 0) {
+      await this.clearBubbleAssets();
+      return;
+    }
+    await this.runAssetClear((): Promise<SchemeAssetResult> => frame ?
+      SchemeAssetService.clearBubbleFrame(getContext(this), this.schemeId, dark) :
+      SchemeAssetService.clearBubbleCap(getContext(this), this.schemeId, dark), '');
   }
 
   ownTtsPanel(): boolean {
@@ -2059,40 +4472,6 @@ struct ThemeColorSettingsPage {
 
   // ---- 页签：首页与书架 ----
 
-  @Builder
-  homeSection() {
-    this.sectionTitle({ title: '导航图标' })
-    Column() {
-      this.componentSourceRow('来源', '书架、发现和我的底部图标', 'navigation')
-      if (this.assetRevision >= 0) {
-        this.navigationSlots()
-      }
-    }
-    .editorCard(this.cardColor())
-    this.sectionTitle({ title: '书籍素材' })
-    Column() {
-      this.componentSourceRow('来源', '主题封面、书架边框和文件夹图案', 'book')
-      if (this.assetRevision >= 0) {
-        this.bookSlots()
-      }
-    }
-    .editorCard(this.cardColor())
-    this.sectionTitle({ title: `首页背景 · ${this.modeLabel()}` })
-    Column() {
-      this.componentSourceRow('来源', '选没有背景图的主题即不显示', 'homeBackdrop')
-      if (this.assetRevision >= 0) {
-        this.homeBackdropSlot()
-      }
-    }
-    .editorCard(this.cardColor())
-    this.sectionTitle({ title: '圆角 · 浅深共用' })
-    Column() {
-      this.componentSourceRow('来源', '卡片、按钮、气泡等圆角尺寸', 'radius')
-      this.radiusRows()
-    }
-    .editorCard(this.cardColor())
-  }
-
   ownNavigationActive(): boolean {
     const own = this.ownThemeId();
     const pack = this.ownPack();
@@ -2186,7 +4565,7 @@ struct ThemeColorSettingsPage {
     if (this.ownNavigationActive() && missing > 0) {
       return `还差 ${missing} 个普通图标：缺的先用基底主题的图标，传齐三个之前分享导出时不带导航图标`;
     }
-    return 'SVG 跟随主题色着色；PNG / WebP 保持原色。选中态没给的页签，选中时仍用普通图标。' +
+    return 'SVG 跟随主题色着色；位图（PNG、WebP、JPG、GIF）保持原色。选中态没给的页签，选中时仍用普通图标。' +
       '“听”“足迹”是可选的第四个页签，不传就用基底主题的图标';
   }
 
@@ -2227,7 +4606,7 @@ struct ThemeColorSettingsPage {
   }
 
   async uploadNavigationIcon(key: string): Promise<void> {
-    const uris = await SchemeAssetService.pickIconFiles(getContext(this), 1);
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
     if (uris.length === 0) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
       SchemeAssetService.setNavigationIcon(getContext(this), this.schemeId, key, uris[0], this.sourceThemeId('navigation')),
@@ -2332,7 +4711,7 @@ struct ThemeColorSettingsPage {
       }
       Row({ space: AppSpacing.XL }) {
         this.assetSlot({ label: '书架边框', image: this.shelfFrameImage(), state: this.shelfPartState(false),
-          slotWidth: 50, slotHeight: 74, onTap: () => this.tapShelfPart(false) })
+          slotWidth: 50, slotHeight: 74, untinted: true, onTap: () => this.tapShelfPart(false) })
         this.assetSlot({ label: '分组文件夹', image: this.shelfFolderImage(),
           state: this.shelfPartState(true), slotWidth: 50, slotHeight: 74, onTap: () => this.tapShelfPart(true),
           crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.FOLDER, this.shelfFolderImage(),
@@ -2393,9 +4772,18 @@ struct ThemeColorSettingsPage {
     .onClick(() => this.tapCover($$.index))
   }
 
+  /** 当前所选模式下的书架边框：深色没有自己那张时就是浅色的（反过来也一样）。 */
   shelfFrameImage(): ResourceStr {
     const id = this.customPreviewTheme().book.shelfFrameAssetId;
-    return id ? ThemeAssetRegistry.themeShelfFrame(id) : '';
+    return id ? ThemeAssetRegistry.themeShelfFrame(id, this.selectedMode === 'dark') : '';
+  }
+
+  /** 方案自己上传的、属于当前模式的那张书架边框（包内相对路径）。 */
+  ownShelfFramePath(): string {
+    const pack = this.ownPack();
+    const book = pack ? pack.record.parts.book : null;
+    if (!this.ownBookActive() || !book) return '';
+    return (this.selectedMode === 'dark' ? book.shelfFrameDark : book.shelfFrame) || '';
   }
 
   /** 当前所选模式下的文件夹插画：深色没有自己那张时就是浅色的（反过来也一样）。 */
@@ -2412,39 +4800,88 @@ struct ThemeColorSettingsPage {
     return (this.selectedMode === 'dark' ? book.shelfFolderDark : book.shelfFolder) || '';
   }
 
+  /**
+   * 书架边框 / 文件夹格子的状态：own 自己传的；off 这个模式选了“不用”；offInherited 深色没单独设、跟着浅色“不用”；
+   * inherit 跟随基底主题（深色是沿用浅色）；empty 什么都没有。
+   */
   shelfPartState(folder: boolean): string {
+    if (folder ? !!this.ownShelfFolderPath() : !!this.ownShelfFramePath()) return 'own';
     const pack = this.ownPack();
     const book = pack ? pack.record.parts.book : null;
-    if (folder ? !!this.ownShelfFolderPath() : (this.ownBookActive() && !!book && !!book.shelfFrame)) return 'own';
+    if (this.ownBookActive() && book) {
+      const dark = this.selectedMode === 'dark';
+      const chosen = folder ? (dark ? book.noShelfFolderDark : book.noShelfFolder) :
+        (dark ? book.noShelfFrameDark : book.noShelfFrame);
+      if (chosen) return 'off';
+      if (folder ? bookFolderOff(book, dark) : bookShelfFrameOff(book, dark)) return 'offInherited';
+    }
     return ThemeColorSettingsPage.hasImage(folder ? this.shelfFolderImage() : this.shelfFrameImage()) ? 'inherit' : 'empty';
   }
 
   shelfPartHint(): string {
-    const base = '边框是 SVG，与封面同比例、中心透明；文件夹是 450 × 660 位图';
+    const base = '边框是 SVG 或透明底位图，与封面同比例、中心透明；文件夹是 450 × 660 位图';
     // 格子很窄，放不下“浅色 / 深色”，哪种模式用哪张写在这段说明里。
-    if (this.selectedMode !== 'dark') return `${base}，切到深色可以再传一张只在深色模式用的`;
-    return this.ownShelfFolderPath() ? `${base}。深色模式用的是单独上传的这张` :
-      `${base}。深色模式还没有单独的文件夹图，沿用浅色那张`;
+    if (this.selectedMode !== 'dark') return `${base}，切到深色可以各再传一张只在深色模式用的；点格子可以选“不用”`;
+    return `${base}。深色模式${this.darkShelfPartText(false, '边框')}，${this.darkShelfPartText(true, '文件夹图')}`;
+  }
+
+  darkShelfPartText(folder: boolean, name: string): string {
+    const state = this.shelfPartState(folder);
+    if (state === 'own') return `${name}用单独上传的这张`;
+    if (state === 'off') return `${name}不用`;
+    if (state === 'offInherited') return `${name}跟着浅色不用`;
+    return `${name}沿用浅色那张`;
   }
 
   async tapShelfPart(folder: boolean): Promise<void> {
-    if (this.shelfPartState(folder) !== 'own') {
+    const state = this.shelfPartState(folder);
+    // 什么都没有时“不用”没有意义，直接去传。
+    if (state === 'empty') {
       if (!(await this.ensureAdvanced())) return;
       if (folder) await this.uploadShelfFolder();
       else await this.uploadShelfFrame();
       return;
     }
-    // 菜单期间用户可能切换浅色/深色，文件夹插画操作的是点开时那个模式的那张。
+    // 菜单期间用户可能切换浅色/深色，操作的是点开时那个模式的那张。
     const dark = this.selectedMode === 'dark';
-    const choice = await this.slotMenu(folder ? `${dark ? '深色' : '浅色'} · 分组文件夹` : '书架边框', '替换',
-      folder && dark ? '移除，沿用浅色那张' : '移除');
-    if (choice === 0) {
-      await this.replaceGuarded(() => folder ? this.uploadShelfFolder(dark) : this.uploadShelfFrame());
-    } else if (choice === 1) {
-      await this.runAssetClear((): Promise<SchemeAssetResult> => folder ?
-        SchemeAssetService.clearShelfFolder(getContext(this), this.schemeId, dark) :
-        SchemeAssetService.clearShelfFrame(getContext(this), this.schemeId), 'book');
+    const title = `${dark ? '深色' : '浅色'} · ${folder ? '分组文件夹' : '书架边框'}`;
+    const offLabel = dark ? '深色不用' : '不用';
+    if (state === 'own') {
+      const choice = await this.slotMenu(title, '替换', dark ? '移除，沿用浅色' : '移除，改回跟随', offLabel);
+      if (choice === 0) {
+        await this.uploadShelfPartGuarded(folder, dark);
+      } else if (choice === 1) {
+        await this.runAssetClear((): Promise<SchemeAssetResult> => folder ?
+          SchemeAssetService.clearShelfFolder(getContext(this), this.schemeId, dark) :
+          SchemeAssetService.clearShelfFrame(getContext(this), this.schemeId, dark), 'book');
+      } else if (choice === 2) {
+        await this.setShelfPartOff(folder, dark, true);
+      }
+    } else if (state === 'off') {
+      const choice = await this.slotMenu(title, '上传', dark ? '沿用浅色' : '恢复跟随');
+      if (choice === 0) await this.uploadShelfPartGuarded(folder, dark);
+      else if (choice === 1) await this.setShelfPartOff(folder, dark, false);
+    } else {
+      const choice = await this.slotMenu(title, dark ? '上传深色专用' : '上传', offLabel);
+      if (choice === 0) await this.uploadShelfPartGuarded(folder, dark);
+      else if (choice === 1) await this.setShelfPartOff(folder, dark, true);
     }
+  }
+
+  async uploadShelfPartGuarded(folder: boolean, dark: boolean): Promise<void> {
+    await this.replaceGuarded(() => folder ? this.uploadShelfFolder(dark) : this.uploadShelfFrame(dark));
+  }
+
+  /** 选“不用”或取消；选“不用”和上传一样会让书籍素材来源指向方案自己的素材包。 */
+  async setShelfPartOff(folder: boolean, dark: boolean, off: boolean): Promise<void> {
+    if (off && !(await this.ensureAdvanced())) return;
+    const name = `${dark ? '深色' : ''}${folder ? '文件夹插画' : '书架边框'}`;
+    const notice = off ? `${name}不用了` : (dark ? `${name}改回沿用浅色` : `${name}恢复跟随`);
+    const action = (): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setShelfPartOff(getContext(this), this.schemeId, folder, dark, off, this.sourceThemeId('book'));
+    // 取消后书籍素材可能一样都不剩：和移除素材一样，来源退回基底主题。
+    if (off) await this.runAssetUpload(action, 'book', true, true, notice);
+    else await this.runAssetClear(action, 'book', '', notice);
   }
 
   async tapCover(index: number): Promise<void> {
@@ -2633,42 +5070,6 @@ struct ThemeColorSettingsPage {
 
   // ---- 页签：封面与信息 ----
 
-  @Builder
-  coverSection() {
-    this.sectionTitle({ title: `启动封面 · ${this.modeLabel()}` })
-    Column() {
-      this.componentSourceRow('来源', '插画与应用标识', 'startup')
-      Row({ space: AppSpacing.XL }) {
-        this.assetSlot({ label: '竖图', image: this.startupSlotImage(),
-          state: this.currentStartupImagePath() ? 'own' : 'inherit', slotWidth: 48, slotHeight: 106,
-          onTap: () => this.tapStartupSlot() })
-        Text('上传后按 841 × 1870 取景；底部约五分之一叠文案，别放主体。只做一种模式时另一种沿用它')
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.subTextColor())
-          .layoutWeight(1)
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
-      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.SM })
-      this.startupTextInputs()
-    }
-    .editorCard(this.cardColor())
-    this.sectionTitle({ title: '文案样式 · 不改时跟随默认（白字）' })
-    this.startupTextStyleOptions()
-    this.sectionTitle({ title: '主题卡片' })
-    Column() {
-      if (this.assetRevision >= 0) {
-        this.brandSlots()
-      }
-    }
-    .editorCard(this.cardColor())
-    this.sectionTitle({ title: '方案信息' })
-    Column() {
-      this.infoInputs()
-    }
-    .editorCard(this.cardColor())
-  }
-
   startupSlotImage(): ResourceStr {
     const path = this.currentStartupImagePath();
     if (path) return path;
@@ -2735,7 +5136,7 @@ struct ThemeColorSettingsPage {
       this.assetSlot({ label: '预览图 3 : 4', image: this.previewImagePath,
         state: this.previewImagePath ? 'own' : 'empty', slotWidth: 54, slotHeight: 72,
         onTap: () => this.tapPreviewImage() })
-      Text('标识是卡片右上角和详情页名字旁的小图（正方形 SVG 或透明 PNG）。没有预览图时卡片显示启动封面')
+      Text('标识是卡片右上角和详情页名字旁的小图（正方形 SVG 或透明底位图）。没有预览图时卡片显示启动封面')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
         .layoutWeight(1)
@@ -2760,7 +5161,7 @@ struct ThemeColorSettingsPage {
   }
 
   async uploadLogo(): Promise<void> {
-    const uris = await SchemeAssetService.pickIconFiles(getContext(this), 1);
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
     if (uris.length === 0) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
       SchemeAssetService.setLogo(getContext(this), this.schemeId, uris[0], this.sourceThemeId('startup')),
@@ -2876,6 +5277,8 @@ struct ThemeColorSettingsPage {
   // ---- 素材槽 ----
 
   ownPack(): InstalledThemePack | null {
+    // 主题包记录不是状态变量：读 assetRevision，只移掉包里某一项（包和来源都没变）时格子也会重新取值。
+    if (this.assetRevision < 0) return null;
     return this.ownPackageId ? ThemePackRegistry.getByPackageId(this.ownPackageId) : null;
   }
 
@@ -2889,17 +5292,30 @@ struct ThemeColorSettingsPage {
     return typeof value !== 'string' || value.length > 0;
   }
 
+  /** 素材格子显示缩略图：有图，且不是空着或选了“不用”。 */
+  static slotShowsImage(state: string, value: ResourceStr): boolean {
+    return state !== 'empty' && state !== 'off' && state !== 'offInherited' && ThemeColorSettingsPage.hasImage(value);
+  }
+
   /** 按引用传参（对象字面量），上传后的状态才会刷新（见“按值 @Builder 的下拉不刷新”）。 */
   @Builder
   assetSlot($$: AssetSlotOptions) {
     Column({ space: AppSpacing.XS }) {
       Stack({ alignContent: Alignment.BottomStart }) {
-        if ($$.state !== 'empty' && ThemeColorSettingsPage.hasImage($$.image) && $$.crop) {
+        if (ThemeColorSettingsPage.slotShowsImage($$.state, $$.image) && $$.crop) {
           ThemeCroppedImage({ src: $$.image, crop: $$.crop as ThemeImageCrop })
             .width('100%')
             .height('100%')
             .opacity($$.state === 'own' ? 1 : 0.5)
-        } else if ($$.state !== 'empty' && ThemeColorSettingsPage.hasImage($$.image)) {
+        } else if (ThemeColorSettingsPage.slotShowsImage($$.state, $$.image) && $$.untinted) {
+          Image($$.image)
+            .width('100%')
+            .height('100%')
+            .objectFit(ImageFit.Cover)
+            .rotate({ angle: $$.rotation || 0 })
+            .opacity($$.state === 'own' ? 1 : 0.5)
+            .draggable(false)
+        } else if (ThemeColorSettingsPage.slotShowsImage($$.state, $$.image)) {
           Image($$.image)
             .width($$.icon ? '60%' : '100%')
             .height($$.icon ? '60%' : '100%')
@@ -2908,12 +5324,24 @@ struct ThemeColorSettingsPage {
             .rotate({ angle: $$.rotation || 0 })
             .opacity($$.state === 'own' ? 1 : 0.5)
             .draggable(false)
+        } else if ($$.state === 'off' || $$.state === 'offInherited') {
+          SymbolGlyph($r('sys.symbol.minus_circle'))
+            .fontSize(22)
+            .fontColor([this.subTextColor()])
         } else {
           SymbolGlyph($r('sys.symbol.plus'))
             .fontSize(20)
             .fontColor([this.subTextColor()])
         }
-        if ($$.state === 'own') {
+        if ($$.state === 'off' || $$.state === 'offInherited') {
+          Text($$.state === 'off' ? '不用' : '沿用')
+            .fontSize(9)
+            .fontColor(this.primaryTextColor())
+            .padding({ left: AppSpacing.XS, right: AppSpacing.XS })
+            .borderRadius(5)
+            .backgroundColor(this.cardColor())
+            .margin(AppSpacing.XXS)
+        } else if ($$.state === 'own') {
           Text('自传')
             .fontSize(9)
             .fontColor(ThemeRuntime.onAccentColor())
@@ -2937,14 +5365,15 @@ struct ThemeColorSettingsPage {
       .borderRadius(12)
       .clip(true)
       .backgroundColor(this.inputColor())
-      .border($$.state === 'empty' || !ThemeColorSettingsPage.hasImage($$.image) ?
+      .border(!ThemeColorSettingsPage.slotShowsImage($$.state, $$.image) ?
         { width: 1.5, color: this.subTextColor(), style: BorderStyle.Dashed } : { width: 0 })
       Text($$.label)
         .fontSize(AppFontSize.MICRO)
         .fontColor(this.subTextColor())
         .maxLines(1)
     }
-    .accessibilityText(`${$$.label}，${$$.state === 'own' ? '已上传，点按替换或移除' : '点按上传'}`)
+    .accessibilityText(`${$$.label}，${$$.state === 'own' ? '已上传，点按替换或移除' :
+      ($$.state === 'off' || $$.state === 'offInherited' ? '不用，点按上传或恢复' : '点按上传')}`)
     .onClick(() => $$.onTap())
   }
 
@@ -3080,22 +5509,24 @@ struct ThemeColorSettingsPage {
       const theme = AppThemeSettingsStore.customTheme(settings, dark);
       const colors = dark ? theme.dark.colors : theme.light.colors;
       const reader = dark ? this.darkReader : this.lightReader;
-      const add = (text: string, detail: string, section: string, swatch: string): void => {
+      const add = (text: string, detail: string, section: string, group: string, swatch: string): void => {
         const issue = new ThemeEditorIssue();
         issue.text = `${label} · ${text}`;
         issue.detail = detail;
         issue.section = section;
+        issue.group = group;
+        issue.mode = dark ? 'dark' : 'light';
         issue.swatch = swatch;
         issues.push(issue);
       };
       const body = ThemeColorSettingsPage.contrast(reader.textColor, reader.backgroundColor);
-      if (body < 4.5) add(`正文与阅读底色对比 ${body.toFixed(1)}`, '低于 4.5，长时间读会累', 'reading', reader.textColor);
+      if (body < 4.5) add(`正文与阅读底色对比 ${body.toFixed(1)}`, '低于 4.5，长时间读会累', 'reader', 'reader', reader.textColor);
       const header = ThemeColorSettingsPage.contrast(reader.subTextColor, reader.backgroundColor);
-      if (header < 3) add(`页眉页脚与阅读底色对比 ${header.toFixed(1)}`, '低于 3，页码和时间可能看不清', 'reading', reader.subTextColor);
+      if (header < 3) add(`页眉页脚与阅读底色对比 ${header.toFixed(1)}`, '低于 3，页码和时间可能看不清', 'reader', 'reader', reader.subTextColor);
       const primary = ThemeColorSettingsPage.contrast(colors.primaryTextColor, colors.pageColor);
-      if (primary < 4.5) add(`主文字与页面对比 ${primary.toFixed(1)}`, '低于 4.5，列表文字不够清楚', 'colors', colors.primaryTextColor);
+      if (primary < 4.5) add(`主文字与页面对比 ${primary.toFixed(1)}`, '低于 4.5，列表文字不够清楚', 'global', 'palette', colors.primaryTextColor);
       const sub = ThemeColorSettingsPage.contrast(colors.subTextColor, colors.pageColor);
-      if (sub < 3) add(`辅助文字与页面对比 ${sub.toFixed(1)}`, '低于 3，说明文字可能看不清', 'colors', colors.subTextColor);
+      if (sub < 3) add(`辅助文字与页面对比 ${sub.toFixed(1)}`, '低于 3，说明文字可能看不清', 'global', 'palette', colors.subTextColor);
     }
     if (this.ownNavigationActive()) {
       const missing = ['bookshelf', 'explore', 'mine'].filter((key: string): boolean => !this.navSlotValue(key));
@@ -3103,7 +5534,8 @@ struct ThemeColorSettingsPage {
         const issue = new ThemeEditorIssue();
         issue.text = `导航图标还差 ${missing.length} 个`;
         issue.detail = '缺的先用基底主题的图标，传齐之前分享导出时不带导航图标';
-        issue.section = 'home';
+        issue.section = 'shelf';
+        issue.group = 'navigation';
         issues.push(issue);
       }
     }
@@ -3118,7 +5550,7 @@ struct ThemeColorSettingsPage {
     if (pack) {
       const parts = pack.record.parts;
       const check = async (relativePath: string, label: string, minWidth: number, minHeight: number,
-        section: string): Promise<void> => {
+        section: string, group: string): Promise<void> => {
         if (!relativePath || relativePath.endsWith('.svg')) return;
         const size = await ThemeColorSettingsPage.imageSize(`${pack.dir}/${relativePath}`);
         if (size.length < 2 || (size[0] >= minWidth * 0.75 && size[1] >= minHeight * 0.75)) return;
@@ -3126,28 +5558,29 @@ struct ThemeColorSettingsPage {
         issue.text = `${label}只有 ${size[0]} × ${size[1]}`;
         issue.detail = `小于 ${minWidth} × ${minHeight}，屏幕上会发虚`;
         issue.section = section;
+        issue.group = group;
         issues.push(issue);
       };
       if (parts.book) {
         for (let index = 0; index < parts.book.covers.length; index++) {
-          await check(parts.book.covers[index], `第 ${index + 1} 张封面`, 450, 660, 'home');
+          await check(parts.book.covers[index], `第 ${index + 1} 张封面`, 450, 660, 'shelf', 'book');
         }
         const darkCovers = parts.book.coversDark || [];
         for (let index = 0; index < darkCovers.length; index++) {
-          await check(darkCovers[index], `深色第 ${index + 1} 张封面`, 450, 660, 'home');
+          await check(darkCovers[index], `深色第 ${index + 1} 张封面`, 450, 660, 'shelf', 'book');
         }
-        await check(parts.book.shelfFolder, '文件夹插画', 450, 660, 'home');
-        await check(parts.book.shelfFolderDark || '', '深色文件夹插画', 450, 660, 'home');
+        await check(parts.book.shelfFolder, '文件夹插画', 450, 660, 'shelf', 'book');
+        await check(parts.book.shelfFolderDark || '', '深色文件夹插画', 450, 660, 'shelf', 'book');
       }
-      await check(parts.homeBackdropLight, '浅色首页背景', 1080, 1350, 'home');
-      await check(parts.homeBackdropDark, '深色首页背景', 1080, 1350, 'home');
+      await check(parts.homeBackdropLight, '浅色首页背景', 1080, 1350, 'shelf', 'homeBackdrop');
+      await check(parts.homeBackdropDark, '深色首页背景', 1080, 1350, 'shelf', 'homeBackdrop');
       for (const item of parts.shelfBackdrops || []) {
         const name = this.shelfLayoutName(item.layout);
-        await check(item.light, `浅色${name}布局书架背景`, 1080, 1350, 'home');
-        await check(item.dark, `深色${name}布局书架背景`, 1080, 1350, 'home');
+        await check(item.light, `浅色${name}布局书架背景`, 1080, 1350, 'shelf', 'homeBackdrop');
+        await check(item.dark, `深色${name}布局书架背景`, 1080, 1350, 'shelf', 'homeBackdrop');
       }
-      if (parts.ttsPanelLight) await check(parts.ttsPanelLight.artwork, '浅色面板插画', 720, 520, 'reading');
-      if (parts.ttsPanelDark) await check(parts.ttsPanelDark.artwork, '深色面板插画', 720, 520, 'reading');
+      if (parts.ttsPanelLight) await check(parts.ttsPanelLight.artwork, '浅色面板插画', 720, 520, 'other', 'ttsPanel');
+      if (parts.ttsPanelDark) await check(parts.ttsPanelDark.artwork, '深色面板插画', 720, 520, 'other', 'ttsPanel');
     }
     this.assetIssues = issues;
   }
@@ -3178,88 +5611,92 @@ struct ThemeColorSettingsPage {
     return this.appDarkMode ? '#FFC67A' : '#7A4300';
   }
 
+  /** 建议清单：点预览标题行的角标后出现在列表顶部，点某条跳到对应页签并展开那一组。 */
   @Builder
-  issuesBanner() {
+  issuesList() {
     if (this.editorIssues().length > 0) {
       Column() {
         Row({ space: AppSpacing.MD }) {
           SymbolGlyph($r('sys.symbol.exclamationmark_circle'))
             .fontSize(16)
             .fontColor([this.warnText()])
-          Text(this.checksExpanded ? `${this.editorIssues().length} 项建议` :
-            `${this.editorIssues().length} 项建议 · ${this.editorIssues()[0].text}`)
+          Text(`${this.editorIssues().length} 项建议 · 只做提醒，不影响保存`)
             .fontSize(AppFontSize.CAPTION)
             .fontColor(this.warnText())
             .layoutWeight(1)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-          if (this.checksExpanded) {
-            SymbolGlyph($r('sys.symbol.chevron_up'))
-              .fontSize(14)
-              .fontColor([this.warnText()])
-          } else {
-            SymbolGlyph($r('sys.symbol.chevron_down'))
-              .fontSize(14)
-              .fontColor([this.warnText()])
-          }
+          SymbolGlyph($r('sys.symbol.chevron_up'))
+            .fontSize(14)
+            .fontColor([this.warnText()])
         }
         .width('100%')
         .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.MD, bottom: AppSpacing.MD })
-        .accessibilityText(this.checksExpanded ? '收起建议' : '展开建议')
+        .accessibilityText('收起建议')
         .onClick(() => {
-          this.checksExpanded = !this.checksExpanded;
+          this.checksExpanded = false;
         })
-        if (this.checksExpanded) {
-          ForEach(this.editorIssues(), (issue: ThemeEditorIssue) => {
-            Row({ space: AppSpacing.MD }) {
-              if (issue.swatch) {
-                Column()
-                  .width(18)
-                  .height(18)
-                  .borderRadius(5)
-                  .backgroundColor(issue.swatch)
-                  .border({ width: 1, color: '#22000000' })
-              }
-              Column({ space: AppSpacing.XXS }) {
-                Text(issue.text)
-                  .fontSize(AppFontSize.CAPTION)
-                  .fontColor(this.primaryTextColor())
-                Text(issue.detail)
-                  .fontSize(AppFontSize.MICRO)
-                  .fontColor(this.warnText())
-              }
-              .layoutWeight(1)
-              .alignItems(HorizontalAlign.Start)
-              if (issue.section !== this.editorSection) {
-                Text('去看看')
-                  .fontSize(AppFontSize.CAPTION)
-                  .fontColor(ThemeRuntime.accentColor(this.appDarkMode))
-              }
+        ForEach(this.editorIssues(), (issue: ThemeEditorIssue) => {
+          Row({ space: AppSpacing.MD }) {
+            if (issue.swatch) {
+              Column()
+                .width(18)
+                .height(18)
+                .borderRadius(5)
+                .backgroundColor(issue.swatch)
+                .border({ width: 1, color: '#22000000' })
             }
-            .width('100%')
-            .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.SM, bottom: AppSpacing.SM })
-            .onClick(() => {
-              if (issue.section !== this.editorSection) this.openSection(issue.section);
-            })
-          }, (issue: ThemeEditorIssue) => issue.text)
-          Text('只做提醒，不影响保存')
-            .fontSize(AppFontSize.MICRO)
-            .fontColor(this.warnText())
-            .width('100%')
-            .padding({ left: AppSpacing.LG, right: AppSpacing.LG, bottom: AppSpacing.MD })
-        }
+            Column({ space: AppSpacing.XXS }) {
+              Text(issue.text)
+                .fontSize(AppFontSize.CAPTION)
+                .fontColor(this.primaryTextColor())
+              Text(issue.detail)
+                .fontSize(AppFontSize.MICRO)
+                .fontColor(this.warnText())
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+            Text('去看看')
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(ThemeRuntime.accentColor(this.appDarkMode))
+          }
+          .width('100%')
+          .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.SM, bottom: AppSpacing.SM })
+          .onClick(() => this.openIssue(issue))
+        }, (issue: ThemeEditorIssue) => issue.text)
       }
       .width('calc(100% - 24vp)')
       .margin({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.MD })
+      .padding({ bottom: AppSpacing.SM })
       .borderRadius(ThemeRuntime.cardRadius())
       .backgroundColor(this.warnSurface())
       .clip(true)
     }
   }
 
+  /** 预览标题行里的建议角标。 */
   @Builder
-  componentSourceRow(title: string, desc: string, category: string, divider: boolean = true) {
-    SettingRow({ title: title, description: desc, showDivider: divider }) {
+  issuesBadge() {
+    if (this.editorReady && this.editorIssues().length > 0) {
+      Text(`${this.editorIssues().length} 项建议`)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.warnText())
+        .height(28)
+        .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
+        .borderRadius(14)
+        .backgroundColor(this.warnSurface())
+        .margin({ right: AppSpacing.SM })
+        .accessibilityText(`${this.editorIssues().length} 项建议，点按${this.checksExpanded ? '收起' : '查看'}`)
+        .onClick(() => {
+          this.checksExpanded = !this.checksExpanded;
+          if (this.checksExpanded) this.editorScroller.scrollTo({ xOffset: 0, yOffset: 0 });
+        })
+    }
+  }
+
+  @Builder
+  componentSourceRow(category: string, title: string = '取自') {
+    SettingRow({ title: title }) {
       Select(this.themeOptions())
         .id(`theme_editor_source_${category}`)
         .width('44%')
@@ -3388,18 +5825,6 @@ struct ThemeColorSettingsPage {
     }
   }
 
-  @Builder
-  advancedNotice() {
-    Text('浅色显示的高级选项为会员专享，点开可了解会员')
-      .fontSize(AppFontSize.CAPTION)
-      .fontColor(ThemeRuntime.accentColor(this.appDarkMode))
-      .width('100%')
-      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD })
-      .onClick(() => {
-        this.ensureAdvanced();
-      })
-  }
-
   // ---- 方案自己上传的素材 ----
 
   ownThemeId(): string {
@@ -3476,7 +5901,7 @@ struct ThemeColorSettingsPage {
   }
 
   async runAssetClear(action: () => Promise<SchemeAssetResult>, category: string,
-    fallbackThemeId: string = ''): Promise<void> {
+    fallbackThemeId: string = '', notice: string = '已移除上传的素材'): Promise<void> {
     const previous = this.ownThemeId();
     const fallback = fallbackThemeId || SchemeAssetService.baseThemeOf(this.ownPackageId);
     try {
@@ -3494,7 +5919,7 @@ struct ThemeColorSettingsPage {
           this.detachPackSource(item, previous, fallback);
         }
       }
-      HdsFeedback.showToast('已移除上传的素材');
+      HdsFeedback.showToast(notice);
       this.refreshAssetIssues();
     } catch (e) {
       console.error('移除方案素材失败:', e);
@@ -3528,12 +5953,13 @@ struct ThemeColorSettingsPage {
     for (let index = 0; index < uris.length; index++) this.discardCropFile(uris[index], '');
   }
 
-  async uploadShelfFrame(): Promise<void> {
-    const uris = await SchemeAssetService.pickSvgFiles(getContext(this), 1);
+  /** 上传到当前所选模式的那张；选图期间切换了模式也以开始时为准。 */
+  async uploadShelfFrame(dark: boolean = this.selectedMode === 'dark'): Promise<void> {
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
     if (uris.length === 0) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
-      SchemeAssetService.setShelfFrame(getContext(this), this.schemeId, uris[0], this.sourceThemeId('book')),
-      'book', true, true, '书架边框已更新');
+      SchemeAssetService.setShelfFrame(getContext(this), this.schemeId, uris[0], this.sourceThemeId('book'), dark),
+      'book', true, true, dark ? '深色书架边框已更新' : '书架边框已更新');
   }
 
   /** 上传到当前所选模式的那张；选图、取景期间切换了模式也以开始时为准。 */
@@ -3571,10 +5997,29 @@ struct ThemeColorSettingsPage {
     this.onSettingChanged();
   }
 
+  /**
+   * “SVG 或位图”又常从相册取图的素材位（阅读角饰、朗读面板插画）：先问从图库选还是选文件，SVG 只能走文件。
+   * 返回选中的地址和是否来自文件选择器；取消时地址为空。
+   */
+  async pickGalleryOrFile(title: string): Promise<PickedArtwork> {
+    const picked = new PickedArtwork();
+    const choice = await this.slotMenu(title, '从图库选', '选文件（可选 SVG）');
+    if (choice === 0) {
+      const uris = await SchemeAssetService.pickImages(getContext(this), 1);
+      picked.uri = uris.length > 0 ? uris[0] : '';
+    } else if (choice === 1) {
+      const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
+      picked.uri = uris.length > 0 ? uris[0] : '';
+      picked.fromFile = true;
+    }
+    return picked;
+  }
+
   async uploadReaderOrnament(trailing: boolean): Promise<void> {
     const dark = this.selectedMode === 'dark';
-    const uris = await SchemeAssetService.pickImages(getContext(this), 1);
-    if (uris.length === 0) return;
+    const chosen = await this.pickGalleryOrFile(trailing ? '右下角饰' : '左上角饰');
+    if (!chosen.uri) return;
+    const uris = [chosen.uri];
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
       SchemeAssetService.setReaderOrnament(getContext(this), this.schemeId, uris[0], trailing, dark,
         this.sourceThemeId('reader')), '', false, false, '');
@@ -3610,7 +6055,7 @@ struct ThemeColorSettingsPage {
   }
 
   async uploadNavigation(): Promise<void> {
-    const uris = await SchemeAssetService.pickIconFiles(getContext(this), SchemeAssetService.NAVIGATION_TABS.length);
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), SchemeAssetService.NAVIGATION_TABS.length);
     if (uris.length === 0) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
       SchemeAssetService.setNavigation(getContext(this), this.schemeId, uris, this.sourceThemeId('navigation')),
@@ -3619,9 +6064,11 @@ struct ThemeColorSettingsPage {
 
   async uploadTtsArtwork(): Promise<void> {
     const dark = this.selectedMode === 'dark';
-    const picked = await SchemeAssetService.pickImages(getContext(this), 1);
-    if (picked.length === 0) return;
-    const path = await this.cropImage(picked[0], '面板插画取景', 720, 520, 720, true);
+    const chosen = await this.pickGalleryOrFile('面板插画');
+    if (!chosen.uri) return;
+    const picked = [chosen.uri];
+    // 选文件来的（多半是 SVG）按原样收，不过取景；图库来的照旧裁成 720 × 520。
+    const path = chosen.fromFile ? chosen.uri : await this.cropImage(picked[0], '面板插画取景', 720, 520, 720, true);
     if (!path) return;
     const scheme = new CustomThemeScheme();
     scheme.id = this.schemeId;
@@ -3657,26 +6104,63 @@ struct ThemeColorSettingsPage {
       fallback);
   }
 
-  async uploadBubbleCap(): Promise<void> {
-    const uris = await SchemeAssetService.pickSvgFiles(getContext(this), 1);
+  /** dark 为 true 时传的是深色模式单独的那张；选图期间切换了模式也以开始时为准。 */
+  async uploadBubbleCap(dark: boolean = this.selectedMode === 'dark'): Promise<void> {
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
     if (uris.length === 0) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
-      SchemeAssetService.setBubbleCap(getContext(this), this.schemeId, uris[0], this.sourceThemeId('bubble')),
+      SchemeAssetService.setBubbleCap(getContext(this), this.schemeId, uris[0], this.sourceThemeId('bubble'), dark),
       '', false, false, '');
     if (this.ownThemeId()) this.applyPackBubbleStyle(this.ownThemeId());
-    HdsFeedback.showToast('气泡端饰已更新');
+    HdsFeedback.showToast(dark ? '深色气泡端饰已更新' : '气泡端饰已更新');
   }
 
-  async uploadBubbleFrame(): Promise<void> {
-    if (!SchemeAssetService.hasBubble(this.ownPackageId)) {
-      HdsFeedback.showToast('请先上传气泡端饰');
-      return;
-    }
-    const uris = await SchemeAssetService.pickSvgFiles(getContext(this), 1);
+  async uploadBubbleFrame(dark: boolean = this.selectedMode === 'dark'): Promise<void> {
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
     if (uris.length === 0) return;
+    // 换图时沿用原来的拉伸方式和颜色，拉伸线按新图重新给默认位置。深色第一次传时沿用浅色那张的设置。
+    const previous = this.ownBubbleFrameSettings(dark);
+    previous.frameSlice = null;
+    const settings = await this.stretchBubbleFrame(uris[0], previous);
+    if (!settings) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
-      SchemeAssetService.setBubbleFrame(getContext(this), this.schemeId, uris[0], this.sourceThemeId('bubble')),
-      '', false, false, '气泡边框已更新');
+      SchemeAssetService.setBubbleFrame(getContext(this), this.schemeId, uris[0], this.sourceThemeId('bubble'),
+        settings, dark), '', false, false, '');
+    if (this.ownThemeId()) this.applyPackBubbleStyle(this.ownThemeId());
+    HdsFeedback.showToast(dark ? '深色气泡边框已更新' : '气泡边框已更新');
+  }
+
+  async adjustBubbleFrame(dark: boolean = this.selectedMode === 'dark'): Promise<void> {
+    const pack = this.ownPack();
+    const uri = pack && this.ownBubbleItem(true, dark) ? pack.bubble(dark).frame : '';
+    if (!uri) return;
+    const settings = await this.stretchBubbleFrame(uri, this.ownBubbleFrameSettings(dark));
+    if (!settings) return;
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setBubbleFrameSettings(getContext(this), this.schemeId, settings, dark),
+      '', false, false, '拉伸区域已更新');
+  }
+
+  /** 打开拉伸区域页；点“使用”交回设置，取消返回 null。 */
+  stretchBubbleFrame(uri: string, settings: ThemePackageBubble): Promise<ThemePackageBubble | null> {
+    return new Promise<ThemePackageBubble | null>((resolve: (result: ThemePackageBubble | null) => void) => {
+      const request = new BubbleFrameStretchRequest();
+      const emphasis = this.effectiveEmphasis();
+      request.uri = uri;
+      request.settings = settings;
+      request.textColor = emphasis.emphasisTextColor;
+      request.bubbleColor = emphasis.emphasisColor;
+      this.frameStretchResolve = resolve;
+      this.frameStretchRequest = request;
+      this.frameStretchVisible = true;
+    });
+  }
+
+  finishFrameStretch(settings: ThemePackageBubble | null): void {
+    const resolve = this.frameStretchResolve;
+    this.frameStretchResolve = null;
+    this.frameStretchVisible = false;
+    if (resolve) resolve(settings);
   }
 
   /** 包内气泡通过方案的强调覆盖生效，浅深两种模式一起指过去，颜色仍跟来源主题。 */
@@ -3720,6 +6204,563 @@ struct ThemeColorSettingsPage {
       this.darkEmphasis = dark;
       this.onSettingChanged();
     }
+  }
+
+  // ---- 标题强调 ----
+
+  effectiveTitle(): ThemeTitleEmphasisTokens {
+    return this.effectiveEmphasis().title || new ThemeTitleEmphasisTokens();
+  }
+
+  /** 来源主题自己的标题强调（不含方案覆盖）。 */
+  sourceTitle(dark: boolean = this.selectedMode === 'dark'): ThemeTitleEmphasisTokens {
+    const sources = dark ? this.darkSources : this.lightSources;
+    const theme = BuiltinThemeRegistry.findById(sources.bubbleThemeId);
+    return (dark ? theme.dark : theme.light).regexEmphasis.title || new ThemeTitleEmphasisTokens();
+  }
+
+  titleDescription(own: string): string {
+    if (own) return '自定义';
+    return this.sourceTitle().mode ? `跟随「${this.emphasisSourceName()}」` : '所选主题没有设置';
+  }
+
+  titleModeIds(): string[] {
+    return ['', 'none', 'text', 'highlight', 'bubble'];
+  }
+
+  titleModeOptions(): SelectOption[] {
+    return ['不设置', '无', '仅文字色', '高亮底色', '气泡'].map((name: string): SelectOption => ({ value: name }));
+  }
+
+  titleModeIndex(): number {
+    return Math.max(0, this.titleModeIds().indexOf(this.effectiveTitle().mode));
+  }
+
+  titleModeLabel(): string {
+    return ['不设置', '无', '仅文字色', '高亮底色', '气泡'][this.titleModeIndex()];
+  }
+
+  titleHasColors(): boolean {
+    const mode = this.effectiveTitle().mode;
+    return mode === 'text' || mode === 'highlight' || mode === 'bubble';
+  }
+
+  /** 同强调气泡、能用的内置气泡、已安装主题包的气泡，以及方案自己的标题气泡。 */
+  titleStyleIds(): string[] {
+    const ids: string[] = [TITLE_BUBBLE_SAME_AS_EMPHASIS];
+    const own = this.ownThemeId();
+    if (own && SchemeAssetService.hasTitleBubble(this.ownPackageId)) ids.push(packTitleBubbleStyleId(own));
+    for (const id of ThemeBubbleStyleLabels.BUILTIN_IDS) {
+      if (ThemeAccessPolicy.canUseBubbleStyle(id)) ids.push(id);
+    }
+    for (const pack of ThemePackRegistry.all()) {
+      if (pack.hasTitleBubble() && pack.themeId !== own) ids.push(packTitleBubbleStyleId(pack.themeId));
+      if (pack.hasBubble()) ids.push(pack.themeId);
+    }
+    const current = this.effectiveTitleStyle();
+    if (current && !ids.includes(current)) ids.push(current);
+    return ids;
+  }
+
+  /** 空串（没指定样式）按同强调气泡算。 */
+  effectiveTitleStyle(): string {
+    return this.effectiveTitle().bubbleStyle || TITLE_BUBBLE_SAME_AS_EMPHASIS;
+  }
+
+  titleStyleLabel(id: string): string {
+    if (!id || id === TITLE_BUBBLE_SAME_AS_EMPHASIS) return '同强调气泡';
+    if (isPackTitleBubbleStyle(id)) {
+      const pack = ThemePackRegistry.get(id);
+      return pack && pack.themeId === this.ownThemeId() ? '本主题标题气泡' : `${pack ? pack.name : '主题包'}（标题气泡）`;
+    }
+    return this.bubbleStyleLabel(id);
+  }
+
+  titleStyleOptions(): SelectOption[] {
+    return this.titleStyleIds().map((id: string): SelectOption => ({ value: this.titleStyleLabel(id) }));
+  }
+
+  titleStyleIndex(): number {
+    return Math.max(0, this.titleStyleIds().indexOf(this.effectiveTitleStyle()));
+  }
+
+  effectiveTitleColor(textColor: boolean): string {
+    const title = this.effectiveTitle();
+    const emphasis = this.effectiveEmphasis();
+    return textColor ? (title.textColor || emphasis.emphasisTextColor) : (title.color || emphasis.emphasisColor);
+  }
+
+  updateTitle(apply: (next: ThemeTitleEmphasisTokens) => void, dark: boolean = this.selectedMode === 'dark'): void {
+    if (this.advancedLocked()) return;
+    this.rememberChange();
+    const next = AppThemeSettingsStore.normalizeEmphasis(dark ? this.darkEmphasis : this.lightEmphasis);
+    const title = AppThemeSettingsStore.normalizeTitleEmphasis(next.title);
+    apply(title);
+    next.title = AppThemeSettingsStore.normalizeTitleEmphasis(title);
+    if (dark) this.darkEmphasis = next;
+    else this.lightEmphasis = next;
+    this.onSettingChanged();
+  }
+
+  setTitleMode(index: number): void {
+    const ids = this.titleModeIds();
+    if (index < 0 || index >= ids.length || ids[index] === this.effectiveTitle().mode) return;
+    const sourceMode = this.sourceTitle().mode;
+    this.updateTitle((next: ThemeTitleEmphasisTokens): void => {
+      // 选“不设置”时，来源主题自己设了标题强调就写 off 强制不设置，否则清空覆盖。
+      if (!ids[index]) {
+        next.mode = sourceMode ? 'off' : '';
+        next.bubbleStyle = '';
+        next.color = '';
+        next.textColor = '';
+        return;
+      }
+      next.mode = ids[index] === sourceMode ? '' : ids[index];
+    });
+  }
+
+  setTitleStyle(index: number): void {
+    const ids = this.titleStyleIds();
+    if (index < 0 || index >= ids.length || ids[index] === this.effectiveTitleStyle()) return;
+    this.updateTitle((next: ThemeTitleEmphasisTokens): void => {
+      next.bubbleStyle = ids[index];
+      if (!next.mode) next.mode = 'bubble';
+    });
+  }
+
+  setTitleColor(textColor: boolean, color: string): void {
+    const current = this.effectiveTitleColor(textColor);
+    const normalized = HexColor.normalizeAlpha(color, current);
+    if (normalized === current) return;
+    this.updateTitle((next: ThemeTitleEmphasisTokens): void => {
+      if (!next.mode) next.mode = this.effectiveTitle().mode || 'bubble';
+      if (textColor) next.textColor = normalized;
+      else next.color = normalized;
+    });
+  }
+
+  /** 把这个模式正文强调的方式、底色和文字色搬到标题强调，气泡样式用“同强调气泡”。 */
+  copyTitleFromEmphasis(): void {
+    const emphasis = this.effectiveEmphasis();
+    const mode = emphasis.emphasisMode === 'none' || emphasis.emphasisMode === 'text' ||
+      emphasis.emphasisMode === 'highlight' ? emphasis.emphasisMode : 'bubble';
+    this.updateTitle((next: ThemeTitleEmphasisTokens): void => {
+      next.mode = mode;
+      next.bubbleStyle = TITLE_BUBBLE_SAME_AS_EMPHASIS;
+      next.color = emphasis.emphasisColor;
+      next.textColor = emphasis.emphasisTextColor;
+    });
+    HdsFeedback.showToast('已按强调气泡设置标题强调');
+  }
+
+  resetTitleEmphasis(): void {
+    this.updateTitle((next: ThemeTitleEmphasisTokens): void => {
+      next.mode = '';
+      next.bubbleStyle = '';
+      next.color = '';
+      next.textColor = '';
+    });
+  }
+
+  // 标题气泡素材
+
+  ownTitleBubbleItem(frame: boolean, dark: boolean = this.selectedMode === 'dark'): string {
+    const pack = this.ownPack();
+    if (!pack || this.assetRevision < 0) return '';
+    const bubble = dark ? pack.record.parts.titleBubbleDark : pack.record.parts.titleBubble;
+    if (!bubble) return '';
+    const value = (frame ? bubble.frame : bubble.cap) || '';
+    return value ? this.ownAssetUri(value) || value : '';
+  }
+
+  titleBubbleHint(): string {
+    const base = '只在章节标题上用的端饰和边框：端饰是正方形 SVG 或透明底位图，边框按行拉伸，上传后可调拉伸区域';
+    if (this.selectedMode !== 'dark') return `${base}。切到深色可以再传只在深色模式用的`;
+    return '深色模式没传的那一项沿用浅色的。浅色素材在深色纸面上看不清时，单独上传一张或给边框打开染色';
+  }
+
+  titleBubbleFrameSettings(dark: boolean): ThemePackageBubble {
+    const settings = new ThemePackageBubble();
+    const pack = this.ownPack();
+    if (!pack || this.assetRevision < 0) return settings;
+    const bubble = pack.titleBubble(dark);
+    settings.frameSlice = bubble.frameSlice;
+    settings.frameRepeat = bubble.frameRepeat;
+    settings.frameBreak = bubble.frameBreak;
+    settings.frameTint = bubble.frameTint;
+    return settings;
+  }
+
+  async tapTitleBubbleSlot(frame: boolean): Promise<void> {
+    const dark = this.selectedMode === 'dark';
+    if (!(await this.ensureAdvanced())) return;
+    if (!this.ownTitleBubbleItem(frame, dark)) {
+      await this.uploadTitleBubble(frame, dark);
+      return;
+    }
+    const title = `${dark ? '深色' : '浅色'} · ${frame ? '标题气泡边框' : '标题气泡端饰'}`;
+    const items: string[] = frame ? ['调整拉伸区域', '替换', dark ? '移除，沿用浅色的边框' : '移除边框'] :
+      ['替换', dark ? '移除，沿用浅色的端饰' : '移除端饰'];
+    const choice = await this.slotMenuItems(title, items);
+    if (choice < 0) return;
+    const picked = items[choice];
+    if (picked.startsWith('调整')) {
+      const pack = this.ownPack();
+      const uri = pack ? pack.titleBubble(dark).frame : '';
+      if (!uri) return;
+      const settings = await this.stretchBubbleFrame(uri, this.titleBubbleFrameSettings(dark));
+      if (!settings) return;
+      await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.setBubbleFrameSettings(getContext(this), this.schemeId, settings, dark, true),
+        '', false, false, '拉伸区域已更新');
+    } else if (picked.startsWith('替换')) {
+      await this.uploadTitleBubble(frame, dark);
+    } else {
+      await this.clearTitleBubblePart(frame, dark);
+    }
+  }
+
+  async uploadTitleBubble(frame: boolean, dark: boolean): Promise<void> {
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
+    if (uris.length === 0) return;
+    if (frame) {
+      const previous = this.titleBubbleFrameSettings(dark);
+      previous.frameSlice = null;
+      const settings = await this.stretchBubbleFrame(uris[0], previous);
+      if (!settings) return;
+      await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.setBubbleFrame(getContext(this), this.schemeId, uris[0], this.sourceThemeId('bubble'),
+          settings, dark, true), '', false, false, '');
+    } else {
+      await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.setBubbleCap(getContext(this), this.schemeId, uris[0], this.sourceThemeId('bubble'), dark,
+          true), '', false, false, '');
+    }
+    const own = this.ownThemeId();
+    if (!own || !SchemeAssetService.hasTitleBubble(this.ownPackageId)) return;
+    this.applyTitlePackStyle(packTitleBubbleStyleId(own));
+    HdsFeedback.showToast(`${dark ? '深色' : ''}标题气泡${frame ? '边框' : '端饰'}已更新`);
+  }
+
+  /** 传了标题气泡后两种模式的标题强调都指过去（没设方式的补成气泡），颜色仍按原来的。 */
+  applyTitlePackStyle(styleId: string): void {
+    for (const dark of [false, true]) {
+      this.updateTitle((next: ThemeTitleEmphasisTokens): void => {
+        next.bubbleStyle = styleId;
+        if (!next.mode || next.mode === 'off') next.mode = 'bubble';
+      }, dark);
+    }
+  }
+
+  /** 移除某个模式的标题端饰或边框；两种模式都没有了时，指向它的标题样式改回同强调气泡。 */
+  async clearTitleBubblePart(frame: boolean, dark: boolean): Promise<void> {
+    const previous = this.ownThemeId();
+    await this.runAssetClear((): Promise<SchemeAssetResult> => frame ?
+      SchemeAssetService.clearBubbleFrame(getContext(this), this.schemeId, dark, true) :
+      SchemeAssetService.clearBubbleCap(getContext(this), this.schemeId, dark, true), '');
+    if (!previous || SchemeAssetService.hasTitleBubble(this.ownPackageId)) return;
+    const styleId = packTitleBubbleStyleId(previous);
+    for (const mode of [false, true]) {
+      const current = AppThemeSettingsStore.normalizeTitleEmphasis((mode ? this.darkEmphasis : this.lightEmphasis).title);
+      if (current.bubbleStyle === styleId) {
+        this.updateTitle((next: ThemeTitleEmphasisTokens): void => {
+          next.bubbleStyle = TITLE_BUBBLE_SAME_AS_EMPHASIS;
+        }, mode);
+      }
+    }
+  }
+
+  // ---- 章首装饰 ----
+
+  /** 来源主题自己的章首装饰（不含方案覆盖）。 */
+  sourceChapterHead(dark: boolean = this.selectedMode === 'dark'): ThemePackageChapterHead {
+    const sources = dark ? this.darkSources : this.lightSources;
+    const theme = BuiltinThemeRegistry.findById(sources.bubbleThemeId);
+    return normalizeChapterHead((dark ? theme.dark : theme.light).regexEmphasis.chapterHead);
+  }
+
+  /** 方案素材包这个模式实际用的章首装饰（素材是包内相对路径）；主题包记录不是状态变量，读 assetRevision 刷新。 */
+  ownChapterHead(dark: boolean = this.selectedMode === 'dark'): ThemePackageChapterHead {
+    if (this.assetRevision < 0) return new ThemePackageChapterHead();
+    return SchemeAssetService.chapterHead(this.ownPackageId, dark) || new ThemePackageChapterHead();
+  }
+
+  /** 当前模式生效的章首装饰（来源主题 + 方案覆盖），饰图是本机地址。 */
+  effectiveChapterHead(): ThemePackageChapterHead {
+    return normalizeChapterHead(this.effectiveEmphasis().chapterHead);
+  }
+
+  chapterHeadSlotImage(): ResourceStr {
+    const own = this.ownChapterHead().image;
+    if (own) return this.ownAssetUri(own) || own;
+    return ThemeAssetRegistry.chapterArtwork(this.effectiveChapterHead().image);
+  }
+
+  chapterHeadSlotState(): string {
+    if (this.assetRevision >= 0 && SchemeAssetService.hasOwnChapterHeadImage(this.ownPackageId,
+      this.selectedMode === 'dark')) return 'own';
+    return this.effectiveChapterHead().image || this.ownChapterHead().image ? 'inherit' : 'empty';
+  }
+
+  /**
+   * 当前模式生效的章首装饰取自方案自己的素材包：覆盖明确指向它，或者没覆盖而强调气泡来源就是它。
+   * 后一种常见于导入的主题包、桌面编辑器做的包（章首装饰只写在包里，覆盖是空的）。
+   */
+  chapterHeadFromOwnPack(): boolean {
+    const own = this.ownThemeId();
+    if (!own) return false;
+    const override = this.currentEmphasis().chapterHead;
+    return override === own || (!override && this.currentSources().bubbleThemeId === own);
+  }
+
+  /** 饰图来自方案自己的素材包时才能调位置和大小。 */
+  chapterHeadAdjustable(): boolean {
+    return !!this.ownChapterHead().image && this.chapterHeadFromOwnPack();
+  }
+
+  chapterHeadHint(): string {
+    if (this.currentEmphasis().chapterHead === CHAPTER_HEAD_NONE) return '已设为不显示所选主题的章首装饰。上传一张图会改用你自己的';
+    const base = '画在每章标题旁的一张图：SVG 或透明底位图。放左侧适合竖长的图，放上方、下方适合横长的花纹';
+    if (this.selectedMode !== 'dark') return `${base}。切到深色可以再传只在深色模式用的`;
+    return '深色模式没传时沿用浅色那张。浅色的图在深色纸面上看不清时，单独上传一张';
+  }
+
+  chapterHeadPlacementOptions(): SelectOption[] {
+    return CHAPTER_HEAD_PLACEMENT_NAMES.map((name: string): SelectOption => ({ value: name }));
+  }
+
+  chapterHeadPlacementIndex(): number {
+    return Math.max(0, CHAPTER_HEAD_PLACEMENTS.indexOf(this.ownChapterHead().placement || 'side'));
+  }
+
+  chapterHeadScalePercent(): number {
+    if (this.chapterHeadScaleDrag >= 0) return this.chapterHeadScaleDrag;
+    return Math.round(this.ownChapterHead().scale * 100);
+  }
+
+  ownChapterHeadNumberColor(): string {
+    return this.chapterHeadFromOwnPack() ? this.ownChapterHead().numberColor : '';
+  }
+
+  /** 色块上显示的颜色：没设时是标题本来的颜色。 */
+  chapterHeadNumberColor(): string {
+    return this.effectiveChapterHead().numberColor || this.commentPreviewTextColor(this.selectedMode === 'dark');
+  }
+
+  chapterHeadNumberDescription(): string {
+    const hint = '分段标题第一段（“第十二章”那一行）的颜色，读者开了标题分段才看得出';
+    return this.effectiveChapterHead().numberColor ? hint : `${hint}。现在和标题同色`;
+  }
+
+  /** 只改这个模式的覆盖：空串跟随所选主题，none 不显示。 */
+  setChapterHeadOverride(value: string): void {
+    if (this.advancedLocked()) return;
+    const dark = this.selectedMode === 'dark';
+    const next = AppThemeSettingsStore.normalizeEmphasis(dark ? this.darkEmphasis : this.lightEmphasis);
+    if (next.chapterHead === value) return;
+    this.rememberChange();
+    next.chapterHead = value;
+    if (dark) this.darkEmphasis = next;
+    else this.lightEmphasis = next;
+    this.onSettingChanged();
+  }
+
+  /**
+   * 素材包里的章首装饰变了之后，两种模式的覆盖跟着对齐：包里这个模式有就指向素材包，
+   * 没有了而覆盖还指着素材包的改回跟随所选主题。
+   */
+  syncChapterHeadOverride(previousThemeId: string): void {
+    const own = this.ownThemeId();
+    let changed = false;
+    for (const dark of [false, true]) {
+      const next = AppThemeSettingsStore.normalizeEmphasis(dark ? this.darkEmphasis : this.lightEmphasis);
+      const has = !!own && !!SchemeAssetService.chapterHead(this.ownPackageId, dark);
+      const pointsAtPack = !!next.chapterHead && (next.chapterHead === own || next.chapterHead === previousThemeId);
+      const target = has ? own : (pointsAtPack ? '' : next.chapterHead);
+      if (next.chapterHead === target) continue;
+      if (!changed) this.rememberChange();
+      changed = true;
+      next.chapterHead = target;
+      if (dark) this.darkEmphasis = next;
+      else this.lightEmphasis = next;
+    }
+    if (changed) this.onSettingChanged();
+  }
+
+  // 首字装饰：行数、颜色、字占比和印章图都写在方案素材包这个模式的 chapterHead 里。
+
+  dropCapLineOptions(): SelectOption[] {
+    return DROP_CAP_LINE_NAMES.map((name: string): SelectOption => ({ value: name }));
+  }
+
+  dropCapLineIndex(): number {
+    const lines = this.effectiveChapterHead().dropCapLines;
+    return lines === 3 ? 2 : (lines === 2 ? 1 : 0);
+  }
+
+  dropCapRatioPercent(): number {
+    if (this.dropCapRatioDrag >= 0) return this.dropCapRatioDrag;
+    return Math.round(this.effectiveChapterHead().dropCapRatio * 100);
+  }
+
+  dropCapSlotImage(): ResourceStr {
+    const own = this.ownChapterHead().dropCapImage;
+    if (own && this.chapterHeadFromOwnPack()) return this.ownAssetUri(own) || own;
+    return ThemeAssetRegistry.chapterArtwork(this.effectiveChapterHead().dropCapImage);
+  }
+
+  dropCapSlotState(): string {
+    if (this.assetRevision >= 0 && SchemeAssetService.hasOwnDropCapImage(this.ownPackageId,
+      this.selectedMode === 'dark')) return 'own';
+    return this.effectiveChapterHead().dropCapImage ? 'inherit' : 'empty';
+  }
+
+  dropCapHint(): string {
+    const base = '垫在首字底下的一张图，字画在正中：正方形、中间留空的 SVG 或透明底位图。不传就只把字放大';
+    if (this.selectedMode !== 'dark') return base;
+    return '深色模式没单独设首字时沿用浅色那套。浅色的印章在深色纸面上看不清时，单独上传一张';
+  }
+
+  /** 首字的三项设置一起存；没改的项沿用当前生效的值。 */
+  async saveDropCap(lines: number, color: string, ratio: number): Promise<void> {
+    if (!(await this.ensureAdvanced())) return;
+    const dark = this.selectedMode === 'dark';
+    const previous = this.ownThemeId();
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setChapterHeadDropCap(getContext(this), this.schemeId, this.sourceThemeId('bubble'), dark,
+        lines, color, ratio), '', false, false, '');
+    this.syncChapterHeadOverride(previous);
+  }
+
+  async setDropCapLines(index: number): Promise<void> {
+    if (index < 0 || index > 2 || index === this.dropCapLineIndex()) return;
+    const head = this.effectiveChapterHead();
+    await this.saveDropCap(index === 0 ? 0 : index + 1, head.dropCapColor, head.dropCapRatio);
+  }
+
+  async setDropCapColor(color: string): Promise<void> {
+    const head = this.effectiveChapterHead();
+    const normalized = color ? HexColor.normalizeAlpha(color, '') : '';
+    if ((color && !normalized) || normalized === head.dropCapColor || head.dropCapLines === 0) return;
+    await this.saveDropCap(head.dropCapLines, normalized, head.dropCapRatio);
+  }
+
+  async setDropCapRatio(percent: number): Promise<void> {
+    this.dropCapRatioDrag = Math.round(percent);
+    try {
+      const head = this.effectiveChapterHead();
+      if (head.dropCapLines === 0) return;
+      await this.saveDropCap(head.dropCapLines, head.dropCapColor, normalizeDropCapRatio(percent / 100));
+    } finally {
+      this.dropCapRatioDrag = -1;
+    }
+  }
+
+  async tapDropCapSlot(): Promise<void> {
+    const dark = this.selectedMode === 'dark';
+    if (!(await this.ensureAdvanced())) return;
+    if (!SchemeAssetService.hasOwnDropCapImage(this.ownPackageId, dark)) {
+      await this.uploadDropCapImage(dark);
+      return;
+    }
+    const items: string[] = ['替换', '移除印章，只放大首字'];
+    const choice = await this.slotMenuItems(`${dark ? '深色' : '浅色'} · 首字印章`, items);
+    if (choice === 0) {
+      await this.uploadDropCapImage(dark);
+    } else if (choice === 1) {
+      const previous = this.ownThemeId();
+      await this.runAssetClear((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.clearChapterHeadDropCapImage(getContext(this), this.schemeId, dark), '');
+      this.syncChapterHeadOverride(previous);
+    }
+  }
+
+  async uploadDropCapImage(dark: boolean): Promise<void> {
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
+    if (uris.length === 0) return;
+    const previous = this.ownThemeId();
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setChapterHeadDropCapImage(getContext(this), this.schemeId, uris[0],
+        this.sourceThemeId('bubble'), dark), '', false, false, `${dark ? '深色' : ''}首字印章已更新`);
+    this.syncChapterHeadOverride(previous);
+  }
+
+  async tapChapterHeadSlot(): Promise<void> {
+    const dark = this.selectedMode === 'dark';
+    if (!(await this.ensureAdvanced())) return;
+    if (!SchemeAssetService.hasOwnChapterHeadImage(this.ownPackageId, dark)) {
+      await this.uploadChapterHeadImage(dark);
+      return;
+    }
+    const items: string[] = ['替换', dark ? '移除，沿用浅色的饰图' : '移除饰图'];
+    const choice = await this.slotMenuItems(`${dark ? '深色' : '浅色'} · 标题饰图`, items);
+    if (choice === 0) {
+      await this.uploadChapterHeadImage(dark);
+    } else if (choice === 1) {
+      const previous = this.ownThemeId();
+      await this.runAssetClear((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.clearChapterHeadImage(getContext(this), this.schemeId, dark), '');
+      this.syncChapterHeadOverride(previous);
+    }
+  }
+
+  async uploadChapterHeadImage(dark: boolean): Promise<void> {
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
+    if (uris.length === 0) return;
+    const previous = this.ownThemeId();
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setChapterHeadImage(getContext(this), this.schemeId, uris[0], this.sourceThemeId('bubble'),
+        dark), '', false, false, `${dark ? '深色' : ''}标题饰图已更新`);
+    this.syncChapterHeadOverride(previous);
+  }
+
+  async setChapterHeadPlacement(index: number): Promise<void> {
+    if (index < 0 || index >= CHAPTER_HEAD_PLACEMENTS.length || index === this.chapterHeadPlacementIndex()) return;
+    if (!(await this.ensureAdvanced())) return;
+    const dark = this.selectedMode === 'dark';
+    const placement = index === 0 ? '' : CHAPTER_HEAD_PLACEMENTS[index];
+    const scale = this.ownChapterHead(dark).scale;
+    const previous = this.ownThemeId();
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setChapterHeadLayout(getContext(this), this.schemeId, dark, placement, scale),
+      '', false, false, '');
+    this.syncChapterHeadOverride(previous);
+  }
+
+  async setChapterHeadScale(percent: number): Promise<void> {
+    this.chapterHeadScaleDrag = Math.round(percent);
+    try {
+      if (!(await this.ensureAdvanced())) return;
+      const dark = this.selectedMode === 'dark';
+      const placement = this.ownChapterHead(dark).placement;
+      const previous = this.ownThemeId();
+      await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.setChapterHeadLayout(getContext(this), this.schemeId, dark, placement,
+          normalizeOrnamentScale(percent / 100)), '', false, false, '');
+      this.syncChapterHeadOverride(previous);
+    } finally {
+      this.chapterHeadScaleDrag = -1;
+    }
+  }
+
+  /** 空串改回和标题同色。来源主题带的章首装饰不会被带进素材包：设了自己的颜色后整套改用素材包的。 */
+  async setChapterHeadNumberColor(color: string): Promise<void> {
+    const dark = this.selectedMode === 'dark';
+    const normalized = color ? HexColor.normalizeAlpha(color, '') : '';
+    if (color && !normalized) return;
+    if (normalized === this.ownChapterHeadNumberColor()) return;
+    if (!(await this.ensureAdvanced())) return;
+    const previous = this.ownThemeId();
+    if (normalized) {
+      await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.setChapterHeadNumberColor(getContext(this), this.schemeId, this.sourceThemeId('bubble'),
+          dark, normalized), '', false, false, '');
+    } else {
+      await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.setChapterHeadNumberColor(getContext(this), this.schemeId, '', dark, ''),
+        '', false, false, '');
+    }
+    this.syncChapterHeadOverride(previous);
   }
 
   // ---- 界面字体 ----
@@ -3925,11 +6966,7 @@ struct ThemeColorSettingsPage {
         this.resetRow(`恢复${this.modeLabel()}文案默认样式`, () => this.resetStartupText())
       }
     }
-    .width('calc(100% - 24vp)')
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .backgroundColor(this.cardColor())
-    .borderRadius(ThemeRuntime.cardRadius())
-    .clip(true)
+    .width('100%')
   }
 
   @Builder
@@ -4042,12 +7079,18 @@ struct ThemeColorSettingsPage {
   previewPanel() {
     Column({ space: AppSpacing.MD }) {
       Row() {
-        Text(`预览 · ${this.selectedMode === 'dark' ? '深色' : '浅色'}`)
+        Text(`${this.sceneLabel(this.previewScene)} · ${this.selectedMode === 'dark' ? '深色' : '浅色'}` +
+          (this.sceneChoices().length > 1 ? ' · 左右滑动换画面' : ''))
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
-        this.sceneMenuButton()
-        ImmersiveHeaderAction({ label: '放大预览', accessibilityLabel: '放大主题预览',
+        if (this.previewScene === 'bookshelf') {
+          this.shelfLayoutButton(false)
+        }
+        this.issuesBadge()
+        ImmersiveHeaderAction({ label: '放大', accessibilityLabel: '放大主题预览',
           onTap: () => { this.fullPreview = true; } })
       }
       .width('100%')
@@ -4069,16 +7112,6 @@ struct ThemeColorSettingsPage {
     return '书架';
   }
 
-  sceneIcon(scene: string): Resource {
-    if (scene === 'explore') return $r('sys.symbol.square_grid_2x2');
-    if (scene === 'mine') return $r('sys.symbol.person');
-    if (scene === 'reader') return $r('sys.symbol.book_pages');
-    if (scene === 'tts') return $r('sys.symbol.earphone');
-    if (scene === 'startup') return $r('sys.symbol.picture');
-    if (scene === 'card') return $r('sys.symbol.rectangle_3_group');
-    return $r('sys.symbol.bookshelf');
-  }
-
   /** 沉浸光感胶囊的宽度：悬浮材质只接受具体宽度，中文按字号估算。 */
   capsuleWidth(label: string, fontSize: number, extra: number): number {
     let textWidth = 0;
@@ -4086,62 +7119,6 @@ struct ThemeColorSettingsPage {
       textWidth += char.charCodeAt(0) > 0xFF ? fontSize : fontSize * 0.6;
     }
     return Math.ceil(textWidth) + extra;
-  }
-
-  /** 小预览的画面切换：标题行里的沉浸光感下拉按钮，窄屏也不挤。 */
-  @Builder
-  sceneMenuButton() {
-    Column() {
-      ImmersiveMaterialSurface({
-        surfaceWidth: this.capsuleWidth(this.sceneLabel(this.previewScene), AppFontSize.BODY, 14 + AppSpacing.XS + 26),
-        surfaceHeight: ImmersiveHeaderAction.SIZE, darkMode: this.appDarkMode,
-        fallbackColor: this.cardColor(), glowColor: `#40${ThemeRuntime.accentColor(this.appDarkMode).substring(1)}`
-      }) {
-        Row({ space: AppSpacing.XS }) {
-          Text(this.sceneLabel(this.previewScene))
-            .fontSize(AppFontSize.BODY)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.primaryTextColor())
-          SymbolGlyph($r('sys.symbol.chevron_down'))
-            .fontSize(14)
-            .fontColor([this.subTextColor()])
-        }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.Center)
-        .accessibilityGroup(true)
-        .accessibilityText(`预览画面：${this.sceneLabel(this.previewScene)}，点按切换`)
-        .onClick(() => {
-          this.showSceneMenu = true;
-        })
-      }
-    }
-    .margin({ right: AppSpacing.SM })
-    .bindPopup(this.showSceneMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
-      this.sceneMenuContent()
-    }, Placement.BottomRight, this.appDarkMode, ThemeRuntime.accentColor(this.appDarkMode), () => {
-      this.showSceneMenu = false;
-    }))
-  }
-
-  @Builder
-  sceneMenuContent() {
-    Scroll() {
-      Column() {
-        ForEach(ThemeColorSettingsPage.SCENES, (scene: string) => {
-          PopupMenuAction(this.sceneIcon(scene), this.sceneLabel(scene), scene === this.previewScene ?
-            ThemeRuntime.accentColor(this.appDarkMode) : this.primaryTextColor(), () => {
-            this.showSceneMenu = false;
-            this.previewScene = scene;
-          }, true, scene === this.previewScene ? '当前' : '')
-        }, (scene: string) => `scene_menu_${scene}_${this.previewScene}`)
-      }
-      .width('100%')
-    }
-    .width(160)
-    .constraintSize({ maxHeight: ImmersiveMaterialRuntime.popupMenuMaxHeight() })
-    .scrollBar(BarState.Off)
-    .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
   }
 
   /** 放大预览底部的画面格：两行，首页三个页签在上，阅读相关在下，图标加文字，拇指够得着。 */
@@ -4159,10 +7136,14 @@ struct ThemeColorSettingsPage {
         this.sceneCell('朗读', 'tts', $r('sys.symbol.earphone'))
         this.sceneCell('启动', 'startup', $r('sys.symbol.picture'))
         this.sceneCell('卡片', 'card', $r('sys.symbol.rectangle_3_group'))
-        // 补一个空格位，两行格子等宽对齐。
-        Blank()
-          .layoutWeight(1)
-          .height(52)
+        // 最后一格：看书架时是布局切换，其他画面留空，两行格子等宽对齐。
+        if (this.previewScene === 'bookshelf') {
+          this.shelfLayoutCell()
+        } else {
+          Blank()
+            .layoutWeight(1)
+            .height(52)
+        }
       }
       .width('100%')
     }
@@ -4201,7 +7182,40 @@ struct ThemeColorSettingsPage {
     return '陪伴';
   }
 
-  /** 书架画面右上角的布局按钮：沉浸光感胶囊，点开弹出菜单选四种书架布局。 */
+  /** 放大预览底部画面格里的布局切换：点开弹出菜单选四种书架布局。 */
+  @Builder
+  shelfLayoutCell() {
+    Column({ space: AppSpacing.XXS }) {
+      SymbolGlyph($r('sys.symbol.square_grid_2x2'))
+        .fontSize(20)
+        .fontColor([this.primaryTextColor()])
+      Row({ space: 2 }) {
+        Text(this.shelfLayoutLabel(this.previewShelfLayout))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.primaryTextColor())
+        SymbolGlyph($r('sys.symbol.chevron_down'))
+          .fontSize(10)
+          .fontColor([this.subTextColor()])
+      }
+    }
+    .layoutWeight(1)
+    .height(52)
+    .justifyContent(FlexAlign.Center)
+    .borderRadius(ThemeRuntime.mediumRadius())
+    .border({ width: 1, color: ThemeRuntime.dividerColor(this.appDarkMode) })
+    .accessibilityGroup(true)
+    .accessibilityText(`书架布局：${this.shelfLayoutLabel(this.previewShelfLayout)}，点按切换`)
+    .onClick(() => {
+      this.showShelfLayoutMenu = true;
+    })
+    .bindPopup(this.showShelfLayoutMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
+      this.shelfLayoutMenuContent()
+    }, Placement.TopRight, this.appDarkMode, ThemeRuntime.accentColor(this.appDarkMode), () => {
+      this.showShelfLayoutMenu = false;
+    }))
+  }
+
+  /** 预览标题行里的布局按钮（不盖在画面上）：沉浸光感胶囊，点开弹出菜单选四种书架布局。 */
   @Builder
   shelfLayoutButton(expanded: boolean) {
     Column() {
@@ -4232,7 +7246,7 @@ struct ThemeColorSettingsPage {
         })
       }
     }
-    .margin(AppSpacing.SM)
+    .margin({ right: AppSpacing.SM })
     .bindPopup(this.showShelfLayoutMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
       this.shelfLayoutMenuContent()
     }, Placement.BottomRight, this.appDarkMode, ThemeRuntime.accentColor(this.appDarkMode), () => {
@@ -4261,12 +7275,14 @@ struct ThemeColorSettingsPage {
       if (this.assetRevision >= 0) {
         this.previewSurfaceContent(expanded)
       }
-      if (this.previewScene === 'bookshelf') {
-        this.shelfLayoutButton(expanded)
-      }
     }
     .width('100%')
-    .height(expanded ? '100%' : this.compactPreviewHeight())
+    .height(expanded ? '100%' : (this.previewShrunk ? 112 : this.compactPreviewHeight()))
+    // 只认横向滑动，竖向留给列表滚动。
+    .gesture(PanGesture({ direction: PanDirection.Horizontal, distance: 24 })
+      .onActionEnd((event: GestureEvent) => {
+        if (!expanded && Math.abs(event.offsetX) > 24) this.stepPreviewScene(event.offsetX < 0);
+      }))
   }
 
   @Builder

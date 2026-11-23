@@ -9,13 +9,14 @@ const source = fs.readFileSync(new URL('../entry/src/main/ets/utils/SystemTtsRea
 const names = [
   'splitText', 'splitCustomText', 'appendCustomTextRange', 'splitSystemText',
   'splitSystemChunksAtPageBreaks', 'appendAbsoluteTextChunk', 'splitCloudText',
-  'findLastCloudBreak', 'findFirstCloudBreak', 'isCloudBreak', 'extendTtsBreak',
+  'findLastCloudBreak', 'findFirstCloudBreak', 'isCloudBreakAt', 'isEllipsisInsideSentence',
+  'isCloudBreak', 'extendTtsBreak',
   'isClosingPunctuationAt', 'isClosingPunctuation', 'findSentenceBreak',
   'isStrongSentenceEnd', 'isWeakSentenceEnd', 'isSentenceEnd', 'isNumericDecimalPoint',
-  'isTrimChar', 'isHighSurrogate', 'safeHardCutIndex', 'snapPageBreakOffset',
+  'isTrimChar', 'isHighSurrogate', 'safeHardCutIndex', 'backOffHardCut', 'snapPageBreakOffset',
   'splitCloudFocusChunks', 'appendFocusChunk', 'cloudFocusChunkForSpeechRange',
   'buildProsodyCloudCues', 'normalizeChunkForSpeechWithMap', 'normalizeChunkForSpeech',
-  'normalizeMathNotationForSpeech', 'replaceUnsafeSpeechCharacters'
+  'normalizeMathNotationForSpeech', 'replaceUnsafeSpeechCharacters', 'stripDecorativeSpeechSymbols'
 ];
 const methods = names.map(name => {
   const start = source.indexOf(`  private ${name}(`);
@@ -47,6 +48,28 @@ const second = '云果儿也没睡呢，坐在自己床上玩七巧板呢，见�
 const third = '云桃捏了下云果儿的鼻子，“有，那是留给你的。”';
 const screenshot = `${first}\n　　${second}\n　　${third}`;
 assert.deepEqual(Array.from(reader.splitText(screenshot, 64), item => item.text), [first, second, third]);
+
+// An ellipsis followed by more words is a pause inside the sentence: never end a chunk there.
+const hesitation = '以后玉帝陛下偷偷摸去瑶池宫，却见一位位女仙舞刀弄枪、披甲戴盔……\n　　“小神……明白。”\n　　' +
+  '李长寿低头应了句，只感觉一阵头疼。';
+for (const chunks of [reader.splitSystemText(hesitation, []), reader.splitCustomText(hesitation, 64),
+  reader.splitCloudText(hesitation)]) {
+  checkRanges(hesitation, chunks);
+  for (const chunk of chunks) assert.doesNotMatch(chunk.text, /小神…+$/u, 'ellipsis inside a quote is not a chunk end');
+}
+// A long run with nowhere to cut (letters/digits only) must still advance: the hard cut used to
+// walk back to the chunk start and the split loop never ended.
+for (const run of ['a'.repeat(1200), '7'.repeat(1200), '哈'.repeat(30) + 'x'.repeat(1200) + '。']) {
+  const unbroken = `他念出那串编号：${run}\n　　然后合上了本子。`;
+  for (const chunks of [reader.splitSystemText(unbroken, []), reader.splitCustomText(unbroken, 64),
+    reader.splitCloudText(unbroken), reader.splitText(unbroken, 64)]) {
+    checkRanges(unbroken, chunks);
+  }
+}
+assert.equal(reader.isEllipsisInsideSentence('盔……\n', 1), false, 'paragraph-final ellipsis still ends');
+assert.equal(reader.isEllipsisInsideSentence('神……”', 1), false, 'ellipsis before a closing quote still ends');
+assert.equal(reader.isEllipsisInsideSentence('Wait...what', 5), true, 'ASCII ellipsis inside a sentence');
+assert.equal(reader.isEllipsisInsideSentence('Done.Next', 4), false, 'a single full stop is not an ellipsis');
 
 const paths = [
   ['custom', text => reader.splitCustomText(text, 64)],
@@ -95,6 +118,15 @@ for (let offset = 24; offset < 30; offset++) {
   checkRanges(pageText, reader.splitCloudFocusChunks({ text: pageText, start: 100, end: 100 + pageText.length }), 100);
 }
 reader.optionFocusBreakOffsets = [];
+
+// Marker symbols must not reach custom voices, which read them out as "星号"; math stays spoken.
+assert.equal(reader.normalizeChunkForSpeech('*时间不早，该吃晚饭了。'), '时间不早，该吃晚饭了。');
+assert.equal(reader.normalizeChunkForSpeech('他**真的**来了，※注：★重点'), '他真的来了，注：重点');
+assert.equal(reader.normalizeChunkForSpeech('3*4与5＊6'), '3乘以4与5乘以6');
+assert.equal(reader.normalizeChunkForSpeech('3 * 4'), '3乘以4');
+const markerMap = reader.normalizeChunkForSpeechWithMap('*时间不早。');
+assert.equal(markerMap.text, '时间不早。');
+assert.deepEqual(Array.from(markerMap.sourceToSpeechOffsets.slice(0, 3)), [0, 0, 1]);
 
 // Old server timings may end anywhere inside a punctuation run. Adjacent mappings
 // must still be contiguous; punctuation-only timing ranges may disappear.

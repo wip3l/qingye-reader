@@ -1,7 +1,10 @@
 // 生效令牌：包里填了的用包里的，没填的回退到基底主题（规则与 ThemePackRegistry 拼装主题时一致）。
 import data from '../core/builtinThemes.json';
 import { S, project, type Mode } from './state.ts';
-import { normalizeOrnamentScale } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
+import {
+  bubbleFor, chapterHeadFor, commentBubbleFor, normalizeCommentBubble, normalizeOrnamentInset, normalizeOrnamentScale, titleBubbleFor,
+  type ThemePackageChapterHead, type ThemePackageCommentBubble
+} from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 
 export interface BaseVariant {
   colors: Record<string, string>;
@@ -23,8 +26,8 @@ export const THEMES: BaseTheme[] = (data as any).themes;
 export const BUBBLES: { id: string; label: string }[] = (data as any).bubbles;
 export const GENERIC_BUBBLES = ['qq-soft', 'qq-solid', 'capsule', 'paper', 'neon'];
 export const FREE_THEME_ID = 'plain-default';
-/** 不能作基底的主题：曜金藏书是终身超级会员领取型，不面向主题作者。 */
-export const BASE_EXCLUDED = ['obsidian-archive'];
+/** 不能作基底的主题：曜金藏书、星穹御藏是终身超级会员领取型（应用里的“超级会员专属”分组），不面向主题作者。 */
+export const BASE_EXCLUDED = ['obsidian-archive', 'celestial-vault'];
 
 /** 基底主题下拉：默认主题在前；其余付费主题导入者没有时，应用把基底换回默认主题。 */
 export function baseThemeOptions(): [string, string][] {
@@ -56,6 +59,7 @@ const filled = (record: any): Record<string, any> => {
 export const ttsComplete = (t: any): boolean => !!(t && t.artwork && t.skyColor && t.surfaceColor && t.glowColor);
 
 export interface Effective {
+  mode: Mode;
   c: Record<string, string>;
   reader: {
     backgroundColor: string; textColor: string; subTextColor: string; contentTone: string;
@@ -64,8 +68,19 @@ export interface Effective {
     mode: string; leading: string; trailing: string; image: string; imageFit: string;
     /** 左上、右下角饰各自的大小倍数，格式层夹在 0.5–2。 */
     leadingScale: number; trailingScale: number;
+    /** 左上、右下角饰各自的边距倍数，格式层夹在 0–3，0 是贴边。 */
+    leadingInset: number; trailingInset: number;
   };
   e: { mode: string; bubble: 'pack' | string; color: string; textColor: string };
+  /** 这个模式实际用的包内气泡（端饰、边框按项补上另一种模式的，同应用的 bubbleFor）；没有时为 null。 */
+  b: any | null;
+  /** 这个模式的段评气泡设置（气泡图、角标图只给了一种模式时两种都用，同应用 commentBubbleFor），字段为空表示沿用气泡样式。 */
+  comment: ThemePackageCommentBubble;
+  /** 这个模式的标题强调（mode 为空表示不设置）与标题气泡（按 titleBubbleFor 补齐另一种模式的）。 */
+  title: { mode: string; bubbleStyle: string; color: string; textColor: string };
+  tb: any | null;
+  /** 这个模式的章首装饰（饰图只给了一种模式时两种都用，同应用 chapterHeadFor）；没有时为 null。 */
+  head: ThemePackageChapterHead | null;
   radius: Record<string, number>;
   tts: any | null;
   startup: any | null;
@@ -91,10 +106,13 @@ export function effective(mode: Mode): Effective {
     contentTone: r.contentTone || bv.reader.contentTone,
     source, mode: bgMode, leading: r.leading || '', trailing: r.trailing || '', image: r.image || '', imageFit: r.imageFit || 'cover',
     leadingScale: normalizeOrnamentScale(typeof v.reader?.leadingScale === 'number' ? v.reader.leadingScale : 1),
-    trailingScale: normalizeOrnamentScale(typeof v.reader?.trailingScale === 'number' ? v.reader.trailingScale : 1)
+    trailingScale: normalizeOrnamentScale(typeof v.reader?.trailingScale === 'number' ? v.reader.trailingScale : 1),
+    leadingInset: normalizeOrnamentInset(v.reader?.leadingInset),
+    trailingInset: normalizeOrnamentInset(v.reader?.trailingInset)
   };
   const em = filled(v.emphasis);
-  const packBubble = !!(p.bubble && p.bubble.cap);
+  const b = bubbleFor(p, mode === 'dark');
+  const packBubble = !!b;
   const e = {
     mode: em.mode || bv.emphasis.mode,
     bubble: packBubble ? 'pack' : (em.bubbleStyle || bv.emphasis.bubbleStyle),
@@ -108,7 +126,12 @@ export function effective(mode: Mode): Effective {
     : (ttsComplete(p.ttsPanel && p.ttsPanel[other]) ? p.ttsPanel[other] : null);
   const startup = p.startup && p.startup[mode] && p.startup[mode].image ? p.startup[mode]
     : (p.startup && p.startup[other] && p.startup[other].image ? p.startup[other] : null);
-  return { c, reader, e, radius, tts, startup };
+  const comment = commentBubbleFor(p, mode === 'dark') || normalizeCommentBubble(v.commentBubble);
+  const te = filled(v.titleEmphasis);
+  const title = { mode: te.mode || '', bubbleStyle: te.bubbleStyle || '', color: te.color || '', textColor: te.textColor || '' };
+  const tb = titleBubbleFor(p, mode === 'dark');
+  const head = chapterHeadFor(p, mode === 'dark');
+  return { mode, c, reader, e, b, comment, title, tb, head, radius, tts, startup };
 }
 
 /** 字段的基底值，用作输入框里“沿用 …”的提示。 */

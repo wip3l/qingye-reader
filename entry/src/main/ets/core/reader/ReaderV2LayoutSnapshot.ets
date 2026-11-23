@@ -29,6 +29,33 @@ export class ReaderV2Rect {
   }
 }
 
+/** 章首装饰：章节标题旁的主题饰图，和分段标题第一段的颜色。image 为空时不画饰图。 */
+export class ReaderV2ChapterHeadStyle {
+  /** 饰图文件（沙箱路径或 file:// URI）。 */
+  image: string = '';
+  /** 原图宽 / 高。 */
+  aspect: number = 1;
+  /** 'side'（贴版心左边、上下居中于整组标题）、'top'、'bottom'（单独占一行，跟着标题的对齐方式）。 */
+  placement: string = 'side';
+  /** 0.5–2。 */
+  scale: number = 1;
+  /** 分段标题第一段的颜色（ARGB）；0 表示和标题同色。 */
+  numberColor: number = 0;
+  /** 首字装饰占几行：0 不处理，2 或 3。 */
+  capLines: number = 0;
+  /** 首字底下的印章图文件；空串只放大。 */
+  capImage: string = '';
+  /** 首字颜色（ARGB）；0 表示和正文同色。 */
+  capColor: number = 0;
+  /** 垫印章图时字高占印章边长的比例。 */
+  capRatio: number = 0.62;
+
+  identity(): string {
+    return `${this.image}_${Math.round(this.aspect * 1000)}_${this.placement}_${this.scale}_${this.numberColor}_` +
+      `${this.capLines}_${this.capImage}_${this.capColor}_${this.capRatio}`;
+  }
+}
+
 export class ReaderV2LayoutInput {
   viewportWidthPx: number = 0;
   viewportHeightPx: number = 0;
@@ -52,6 +79,7 @@ export class ReaderV2LayoutInput {
   titleMarginTopPx: number = 0;
   titleMarginBottomPx: number = 0;
   titleSinglePage: boolean = false;
+  chapterHead: ReaderV2ChapterHeadStyle = new ReaderV2ChapterHeadStyle();
   lineSpacingPx: number = 0;
   paragraphSpacingPx: number = 0;
   letterSpacingPx: number = 0;
@@ -103,6 +131,7 @@ export class ReaderV2LayoutSnapshot {
   titleMarginTopPx: number = 0;
   titleMarginBottomPx: number = 0;
   titleSinglePage: boolean = false;
+  chapterHead: ReaderV2ChapterHeadStyle = new ReaderV2ChapterHeadStyle();
   lineSpacingPx: number = 0;
   paragraphSpacingPx: number = 0;
   letterSpacingPx: number = 0;
@@ -166,6 +195,7 @@ export class ReaderV2LayoutSnapshot {
     snapshot.titleMarginTopPx = Number.isFinite(input.titleMarginTopPx) ? Math.max(0, input.titleMarginTopPx) : 0;
     snapshot.titleMarginBottomPx = Number.isFinite(input.titleMarginBottomPx) ? Math.max(0, input.titleMarginBottomPx) : 0;
     snapshot.titleSinglePage = input.titleSinglePage === true;
+    snapshot.chapterHead = input.chapterHead || new ReaderV2ChapterHeadStyle();
     snapshot.lineSpacingPx = Math.max(0, input.lineSpacingPx);
     snapshot.paragraphSpacingPx = Math.max(0, input.paragraphSpacingPx);
     snapshot.letterSpacingPx = input.letterSpacingPx;
@@ -201,11 +231,13 @@ export class ReaderV2LayoutSnapshot {
       snapshot.fontSizePx, snapshot.fontWeight, snapshot.titleFontSizePx, snapshot.titleFontWeight, snapshot.lineSpacingPx, snapshot.paragraphSpacingPx,
       snapshot.titleSecondaryScale, snapshot.titleLineGapPx,
       snapshot.titleAlignment, snapshot.titleMarginTopPx, snapshot.titleMarginBottomPx,
-      snapshot.titleSinglePage ? 1 : 0,
+      snapshot.titleSinglePage ? 1 : 0, snapshot.chapterHead.identity(),
       snapshot.letterSpacingPx, snapshot.textAlign, snapshot.noteColor, snapshot.commentFontSizePx, snapshot.commentBubbleSize, snapshot.commentBubble.identity(),
       snapshot.commentsEnabled ? 1 : 0, snapshot.regexEnabled ? 1 : 0,
       snapshot.commentCardStyle, snapshot.commentCardMaxPerPage, snapshot.commentCardLines,
-      snapshot.commentCardFontSizePx, snapshot.commentCardTagColor, snapshot.commentChapterCard ? 1 : 0
+      snapshot.commentCardFontSizePx, snapshot.commentCardTagColor, snapshot.commentChapterCard ? 1 : 0,
+      // 卡片排法的版本：改了卡片的留白或本章说的排法就换一个值，让按排版标识存下来的分页结果失效。
+      'cardgap3-chapter2-emoji1'
     ];
     const rounded = values.map((value: string | number): string =>
       typeof value === 'number' ? `${Math.round(value * 100) / 100}` : value).join('_');

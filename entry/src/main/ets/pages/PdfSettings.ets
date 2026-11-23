@@ -74,7 +74,7 @@ struct PdfSettingsPage {
   superResolutionRow() {
     if (this.access === ReaderComicSuperResolutionAccess.READY) {
       SettingSwitchRow({ title: 'AI超分', minimumMembership: AiAccessPolicy.trialOpen() ? '' : 'MONTHLY',
-        description: '增强符合条件的低清扫描页，文字页保持原生显示；会增加耗电',
+        description: '增强低清扫描页，文字页保持原样；会增加耗电',
         isOn: this.settings.superResolution, showDivider: false,
         onChange: (checked: boolean): void => {
           this.refreshAccess();
@@ -110,7 +110,7 @@ struct PdfSettingsPage {
       this.sectionTitle('画面')
       Column() {
         // 与漫画设置页的下拉行同一种写法；直接写在这里而不是按值 @Builder，选完下拉跟着刷新。
-        SettingRow({ title: '夜间页面', description: '应用夜间模式时 PDF 页面的显示；反色把白纸变成深灰、黑字变成浅灰' }) {
+        SettingRow({ title: '夜间页面', description: '夜间模式下页面的显示；反色即白纸变深灰、黑字变浅灰' }) {
           Select(ReaderPdfSettings.NIGHT_LABELS.map((label: string): SelectOption => ({ value: label })))
             .selected(Math.max(0, ReaderPdfSettings.NIGHT_MODES.indexOf(this.settings.nightMode)))
             .value(ReaderPdfSettings.NIGHT_LABELS[Math.max(0, ReaderPdfSettings.NIGHT_MODES.indexOf(this.settings.nightMode))])

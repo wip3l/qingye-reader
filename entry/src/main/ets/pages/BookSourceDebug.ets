@@ -19,6 +19,7 @@ import { PageScaffold } from '../components/common/PageScaffold';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { NativeSourceService, NativeCommentPage, HttpClient, ReaderActionMarker, ReaderActionData } from '@legado/sourceengine';
 import { NativeCommentPageView } from '../components/NativeCommentPageView';
+import { BookSourceStageRuntimeHost } from '../components/BookSourceStageRuntimeHost';
 import { saveDocuments, writeTextFile } from '../platform/Files';
 
 class BookSourceDebugExportReport {
@@ -84,6 +85,8 @@ struct BookSourceDebugPage {
     this.initialized = true;
     const params = router.getParams() as Record<string, string>;
     this.sourceUrl = params && params['bookSourceUrl'] ? params['bookSourceUrl'] : '';
+    // 从阅读页进来时预填书名，作为全链路调试的搜索关键词。
+    if (params && params['debugKeyword']) this.keyword = params['debugKeyword'];
     const draft = AppStorage.get<string>('bookSourceDebugDraftJson') || '';
     if (draft) {
       try {
@@ -115,6 +118,8 @@ struct BookSourceDebugPage {
       }, actions: () => {
         this.titleActions()
       } })
+      // 调试页是 push 上来的，下层页面的隐藏宿主不可用；不挂这个，@js 规则都会等到超时报“未就绪”。
+      BookSourceStageRuntimeHost()
     }
     .width('100%')
     .height('100%')
@@ -252,9 +257,12 @@ struct BookSourceDebugPage {
       if (this.session.steps.length === 0 && this.session.logs.length === 0) {
         Text('运行后显示请求、规则匹配和错误详情').fontSize(AppFontSize.BODY).fontColor(this.subTextColor()).width('100%')
       }
+      // 步骤对象在运行中被原地改写（补请求、规则、结束状态），键里带上这些量，卡片才会跟着重画；
+      // 只用阶段+开始时间时，运行中先渲染出的卡片会一直停在 running · 0ms。
       ForEach(this.session.steps, (step: BookSourceDebugStep) => {
         this.stepView(step)
-      }, (step: BookSourceDebugStep) => `${step.stage}_${step.startedAt}`)
+      }, (step: BookSourceDebugStep) => `${step.stage}_${step.startedAt}_${step.status}_${step.elapsedMs}_` +
+        `${step.requests.length}_${step.rules.length}_${Object.keys(step.outputs).length}_${step.error.length}`)
       ForEach(this.session.logs, (log: BookSourceDebugLog) => {
         Text(`[${log.level}] ${log.message}`).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%')
           .textSelectable(TextSelectableMode.SELECTABLE_FOCUSABLE)
@@ -272,7 +280,8 @@ struct BookSourceDebugPage {
       Text(step.name).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor())
           .layoutWeight(1)
         Text(`${step.status} · ${step.elapsedMs}ms`).fontSize(AppFontSize.CAPTION)
-          .fontColor(step.status === 'passed' ? ThemeRuntime.successColor(this.appDarkMode) : ThemeRuntime.dangerColor(this.appDarkMode))
+          .fontColor(step.status === 'passed' ? ThemeRuntime.successColor(this.appDarkMode) :
+            (step.status === 'warning' ? ThemeRuntime.warningColor(this.appDarkMode) : ThemeRuntime.dangerColor(this.appDarkMode)))
       }.width('100%')
       if (step.error) Text(`错误：${step.error}`).fontSize(12).fontColor(ThemeRuntime.dangerColor(this.appDarkMode)).width('100%')
         .textSelectable(TextSelectableMode.SELECTABLE_FOCUSABLE)
@@ -392,7 +401,13 @@ struct BookSourceDebugPage {
         await this.runFullDebug(debug);
       }
       this.collectDebugLinks(debug.session);
-      debug.finish(this.session.steps.some((step: BookSourceDebugStep): boolean => step.status === 'passed') ? 'passed' : 'failed');
+      // 链路走到的最后一步决定成败（完整链路里搜索无结果会改走发现，前面的失败不算整次失败）；
+      // 其余步骤有失败或告警时整次记为告警。
+      const steps = debug.session.steps;
+      const last = steps.length > 0 ? steps[steps.length - 1] : null;
+      const lastOk = !!last && (last.status === 'passed' || last.status === 'warning');
+      debug.finish(!lastOk ? 'failed' :
+        (steps.every((step: BookSourceDebugStep): boolean => step.status === 'passed') ? 'passed' : 'warning'));
       this.publishSession(debug);
     } catch (error) {
       debug.addLog('error', error instanceof Error ? error.message : String(error));
@@ -475,7 +490,10 @@ struct BookSourceDebugPage {
       this.status = progress.status;
       this.collectDebugLinks(debug.session);
     }, { targetSources: [this.source], maxResultsPerSource: 1, maxTotalResults: 1,
-      debugContext: debug });
+      debugContext: debug, onSourceComplete: async (_source, result) => {
+        // 完整链路搜索无结果会改走发现，失败原因要先记下来，否则只剩“有效记录 0”看不出卡在哪。
+        if (result.books.length === 0) debug.addLog('error', `搜索失败：${result.reason || '未搜索到结果'}`);
+      } });
     if (candidates.length === 0 && !this.source.enabledExplore) {
       debug.addLog('error', '该书源未启用发现，完整链路无法自动取得候选书');
       return;

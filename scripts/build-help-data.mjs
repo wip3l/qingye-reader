@@ -16,6 +16,8 @@ const GROUPS = [
     { id: 'layout', title: '界面总览', icon: 'square_grid_2x2', summary: '底部页签、“我的”入口、桌面卡片', parts: ['layout'] },
     { id: 'import', title: '导入、OPDS 与浏览器看书', icon: 'download', summary: '本地导入、ZIP、书库、WebDAV', parts: ['import', 'lan'],
       action: { label: '打开书籍导入', url: 'pages/BookImport' } },
+    { id: 'online', title: '在线阅读', icon: 'worldclock', summary: '网页解析开关、书源、发现与搜索、换源', parts: ['online'],
+      action: { label: '打开在线阅读', url: 'pages/WebParseSettings' } },
     { id: 'shelf', title: '书架', icon: 'bookshelf', summary: '筛选、分组、多选、隐私书架、封面', parts: ['shelf', 'shelfset'],
       action: { label: '打开书架设置', url: 'pages/BookshelfSettings' } },
   ],

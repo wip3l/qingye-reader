@@ -2,6 +2,7 @@ import { audio } from '@kit.AudioKit';
 import { media } from '@kit.MediaKit';
 import fs from '@ohos.file.fs';
 import { PlaybackLoudnessGain } from './PlaybackLoudnessGain';
+import { PlaybackSpeed } from './PlaybackSpeed';
 import { TtsAudioSession, TtsAudioSessionHintListener, TtsOutputLostListener } from './TtsAudioSession';
 
 // 和朗读共用应用的音频会话（两者不会同时播放）：借它让系统把“停止”改成“暂停”，并收到会话级通知。
@@ -22,6 +23,9 @@ export class RemoteAudioPlayback {
   private static instance: RemoteAudioPlayback | null = null;
   private player: media.AVPlayer | null = null;
   private listener: RemoteAudioPlaybackListener | null = null;
+  private claimedListener: RemoteAudioPlaybackListener | null = null;
+  /** 听视频：音轨按影视声音输出，不挂画面，只出声。 */
+  private movieUsage: boolean = false;
   private generation: number = 0;
   /** play() 已开始但还没出声的代次；切章时据此丢弃半途的播放器，避免旧章节随后响起。 */
   private loadingGeneration: number = -1;
@@ -74,12 +78,44 @@ export class RemoteAudioPlayback {
 
   attach(listener: RemoteAudioPlaybackListener): void {
     this.listener = listener;
+    if (this.claimedListener) return;
     listener.onStateChanged(this.state);
     listener.onPositionChanged(this.positionMs, this.durationMs);
   }
 
   detach(listener: RemoteAudioPlaybackListener): void {
     if (this.listener === listener) this.listener = null;
+  }
+
+  /**
+   * 听视频借用这个播放器时独占回调。听书页每次显示都会 attach，期间只记下它、不把事件给它，
+   * 否则视频播完会被听书页当成本章播完去切章。release 之后事件回到听书页。
+   */
+  claim(listener: RemoteAudioPlaybackListener, movie: boolean): void {
+    this.claimedListener = listener;
+    this.movieUsage = movie;
+  }
+
+  release(listener: RemoteAudioPlaybackListener): void {
+    if (this.claimedListener !== listener) return;
+    this.claimedListener = null;
+    this.movieUsage = false;
+  }
+
+  /** 当前音频地址用的请求头副本。字幕取本章音频时沿用，免得书源再解析一遍地址。 */
+  mediaHeadersSnapshot(): Record<string, string> {
+    const copy: Record<string, string> = {};
+    for (const key of Object.keys(this.mediaHeaders)) copy[key] = this.mediaHeaders[key];
+    return copy;
+  }
+
+  /** 听视频借用播放器时为 true：这时播的不是有声书，字幕不跟。 */
+  isMovieUsage(): boolean {
+    return this.claimedListener !== null;
+  }
+
+  private eventTarget(): RemoteAudioPlaybackListener | null {
+    return this.claimedListener || this.listener;
   }
 
   matches(bookUrl: string, chapterIndex: number): boolean {
@@ -121,7 +157,7 @@ export class RemoteAudioPlayback {
       // createAVPlayer starts in idle. While a media source is being attached, keep the public
       // state as loading instead of briefly advertising an idle player that cannot be resumed.
       this.setState(state === 'idle' && !!this.mediaUrl ? 'loading' : state);
-      if (state === 'completed') this.listener?.onPlaybackCompleted();
+      if (state === 'completed') this.eventTarget()?.onPlaybackCompleted();
     });
     player.on('timeUpdate', (position: number): void => {
       if (generation !== this.generation) return;
@@ -139,17 +175,17 @@ export class RemoteAudioPlayback {
         }
       }
       this.positionMs = Math.max(0, position || 0);
-      this.listener?.onPositionChanged(this.positionMs, this.durationMs);
+      this.eventTarget()?.onPositionChanged(this.positionMs, this.durationMs);
     });
     player.on('durationUpdate', (duration: number): void => {
       if (generation !== this.generation) return;
       this.durationMs = Math.max(0, duration || 0);
-      this.listener?.onPositionChanged(this.positionMs, this.durationMs);
+      this.eventTarget()?.onPositionChanged(this.positionMs, this.durationMs);
     });
     player.on('error', (error: Error): void => {
       if (generation !== this.generation) return;
       this.setState('error');
-      this.listener?.onPlaybackError(error.message || String(error));
+      this.eventTarget()?.onPlaybackError(error.message || String(error));
     });
     player.on('audioInterrupt', (event: audio.InterruptEvent): void => {
       this.handleAudioInterrupt(player, generation, event);
@@ -177,7 +213,11 @@ export class RemoteAudioPlayback {
       await this.waitForInitialized(player, generation);
       timing.mark('initialized');
       if (generation !== this.generation) return;
-      player.audioRendererInfo = {
+      // 听视频时地址是视频：不设 surfaceId 时 AVPlayer 只解码音轨。
+      player.audioRendererInfo = this.movieUsage ? {
+        usage: audio.StreamUsage.STREAM_USAGE_MOVIE,
+        rendererFlags: 0
+      } : {
         content: audio.ContentType.CONTENT_TYPE_SPEECH,
         usage: audio.StreamUsage.STREAM_USAGE_AUDIOBOOK,
         rendererFlags: 0
@@ -298,7 +338,7 @@ export class RemoteAudioPlayback {
     this.pendingSeekMs = target;
     this.verifySeekMs = -1;
     this.positionMs = target;
-    this.listener?.onPositionChanged(this.positionMs, this.durationMs);
+    this.eventTarget()?.onPositionChanged(this.positionMs, this.durationMs);
     // seekDone 偶尔不回调（网络流缓冲失败等），超时后照常收 timeUpdate，并按定位完成核对一次。
     this.seekTimeoutId = setTimeout((): void => {
       this.seekTimeoutId = -1;
@@ -347,6 +387,16 @@ export class RemoteAudioPlayback {
     }, 1000);
   }
 
+  /** 在进行中的定时上加时；没有定时就新开一个。 */
+  extendSleepTimer(minutes: number): void {
+    if (minutes <= 0) return;
+    if (this.sleepEndAt <= 0) {
+      this.setSleepTimer(minutes);
+      return;
+    }
+    this.sleepEndAt += minutes * 60 * 1000;
+  }
+
   sleepRemainingSeconds(): number {
     return this.sleepEndAt > 0 ? Math.max(0, Math.ceil((this.sleepEndAt - Date.now()) / 1000)) : 0;
   }
@@ -382,7 +432,7 @@ export class RemoteAudioPlayback {
     // 播完、出错时不再占着会话；被打断停住（stopped）时要留着，等恢复通知。
     if (state === 'completed' || state === 'error') TtsAudioSession.release(AUDIO_SESSION_OWNER);
     this.state = state || 'idle';
-    this.listener?.onStateChanged(this.state);
+    this.eventTarget()?.onStateChanged(this.state);
   }
 
   private syncPlayerState(player: media.AVPlayer, generation: number): void {
@@ -395,7 +445,7 @@ export class RemoteAudioPlayback {
   }
 
   private normalizeSpeed(speed: number): number {
-    return Math.max(0.5, Math.min(2.5, speed || 1));
+    return PlaybackSpeed.normalize(speed);
   }
 
   private applySpeed(player: media.AVPlayer, speed: number): void {
@@ -459,7 +509,7 @@ export class RemoteAudioPlayback {
       const revision = ++this.interruptRevision;
       this.resumeAfterInterrupt(player, generation, revision).catch((error: Error) => {
         if (generation === this.generation && player === this.player) {
-          this.listener?.onPlaybackError(error.message || String(error));
+          this.eventTarget()?.onPlaybackError(error.message || String(error));
         }
       });
     }
@@ -471,7 +521,7 @@ export class RemoteAudioPlayback {
       revision !== this.interruptRevision || this.userPaused || !this.interruptPaused;
     this.resumeAfterOtherAudio(player, generation, cancelled).catch((error: Error) => {
       if (generation === this.generation && player === this.player) {
-        this.listener?.onPlaybackError(error.message || String(error));
+        this.eventTarget()?.onPlaybackError(error.message || String(error));
       }
     });
   }

@@ -34,6 +34,11 @@ export class LocalTtsModelFile {
   onnxMeta: string = '';
   sourceBytes: number = 0;
   sourceSha256: string = '';
+  /**
+   * 音色上线后才补进清单的文件。安装校验不看它，免得老用户的音色突然变成“未下载”；
+   * 朗读加载模型前缺了就自动补下（见 ensureSupplements）。
+   */
+  supplement: boolean = false;
 
   constructor(name: string, bytes: number, sha256: string) {
     this.name = name;
@@ -147,6 +152,7 @@ export class LocalTtsModels {
   private static downloadActive: boolean = false;
   private static downloadCancelled: boolean = false;
   private static userModels: LocalTtsModel[] = [];
+  private static supplementTasks: Map<string, Promise<void>> = new Map<string, Promise<void>>();
 
   static readonly CATALOG: LocalTtsModel[] = [LocalTtsModels.chaowen(), LocalTtsModels.huayan()]
     .concat(LocalTtsModels.aishell3Voices());
@@ -179,7 +185,11 @@ export class LocalTtsModels {
     return model;
   }
 
-  /** 旧版 Piper 转换：发音走 espeak-ng，只带中文要用的几个 espeak-ng-data 文件（约 2MB）。 */
+  /**
+   * 旧版 Piper 转换：发音走 espeak-ng，只带中文要用的几个 espeak-ng-data 文件（约 2MB）。
+   * en_dict 不能省：普通话词典里查不到的字符（英文字母、“” 这类标点）espeak-ng 会切到英文去读，
+   * 缺了英文词典它加载失败后仍拿未初始化的哈希表查词，原生层直接 SIGSEGV。
+   */
   private static huayan(): LocalTtsModel {
     const model = new LocalTtsModel();
     model.id = 'piper-zh-huayan';
@@ -208,6 +218,10 @@ export class LocalTtsModels {
       new LocalTtsModelFile('espeak-ng-data/lang/sit/cmn', 686,
         'a130a38e3b622735c2401cb37f6719f46995e84a133729185cef9a543ec0b072')
     ];
+    const english = new LocalTtsModelFile('espeak-ng-data/en_dict', 166944,
+      '71bd330ba8a2e3e8076e631508208ef49449d6147c17b7bd2b4b1e1468292e35');
+    english.supplement = true;
+    model.files.push(english);
     return model;
   }
 
@@ -404,12 +418,48 @@ export class LocalTtsModels {
     try {
       if (!fs.accessSync(`${dir}/${LocalTtsModels.MARKER}`)) return false;
       for (const file of model.files) {
-        const path = `${dir}/${file.name}`;
-        if (!fs.accessSync(path) || fs.statSync(path).size !== file.bytes) return false;
+        if (file.supplement) continue;
+        if (!LocalTtsModels.sizeMatches(`${dir}/${file.name}`, file)) return false;
       }
       return true;
     } catch (_) {
       return false;
+    }
+  }
+
+  private static sizeMatches(path: string, file: LocalTtsModelFile): boolean {
+    try {
+      return fs.accessSync(path) && fs.statSync(path).size === file.bytes;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /** 加载模型前补齐后加进清单的文件；同一目录同时只补一次，并发的朗读请求共用同一个结果。 */
+  static ensureSupplements(model: LocalTtsModel): Promise<void> {
+    const dir = LocalTtsModels.modelPath(model);
+    if (!dir || model.imported) return Promise.resolve();
+    const missing = model.files.filter((file: LocalTtsModelFile): boolean =>
+      file.supplement && !LocalTtsModels.sizeMatches(`${dir}/${file.name}`, file));
+    if (missing.length === 0) return Promise.resolve();
+    const running = LocalTtsModels.supplementTasks.get(dir);
+    if (running) return running;
+    const task = LocalTtsModels.downloadSupplements(model, dir, missing)
+      .finally((): void => { LocalTtsModels.supplementTasks.delete(dir); });
+    LocalTtsModels.supplementTasks.set(dir, task);
+    return task;
+  }
+
+  private static async downloadSupplements(model: LocalTtsModel, dir: string,
+    missing: LocalTtsModelFile[]): Promise<void> {
+    try {
+      for (const file of missing) {
+        LocalTtsModels.ensureParents(dir, file.name);
+        await LocalTtsModels.downloadFile(model, file, `${dir}/${file.name}`, (): void => {});
+      }
+    } catch (error) {
+      console.warn(`[LocalTts] supplement for ${model.id} failed:`, (error as Error).message);
+      throw new Error('离线音色需要补充一个发音词典文件，请联网后重试');
     }
   }
 

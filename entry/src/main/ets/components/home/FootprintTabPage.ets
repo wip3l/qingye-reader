@@ -4,9 +4,12 @@ import { Bookmark } from '@legado/sourceengine';
 import { appDb, ReadStatsRow } from '../../model/data/AppDatabase';
 import { readStatsTracker } from '../../core/stats/ReadStatsTracker';
 import { ReadStatsBar, ReadStatsRank, ReadStatsSummary } from '../../core/stats/ReadStatsSummary';
+import { ReadStatsFold } from '../../core/stats/ReadStatsFold';
+import { ReadWorkMergeStore } from '../../utils/ReadWorkMergeStore';
 import { ReadStatsPosterSession, ReadStatsPosterSnapshot } from '../../core/stats/ReadStatsPosterModel';
 import { AccountSessionStore } from '../../account/AccountSessionStore';
 import { HdsFeedback } from '../../utils/HdsFeedback';
+import { bookmarkPreviewText } from '../../utils/BookmarkPreviewText';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
@@ -21,6 +24,10 @@ import { FootprintSettingsStore } from '../../utils/FootprintSettingsStore';
 import { BookMark, BookMarkRules, BookMarkStatus } from '../../model/book/BookMark';
 import { BookMarkService } from '../../core/mark/BookMarkService';
 import { BookMarkStars } from '../book/BookMarkStars';
+import { ReadingTicketCard } from '../ticket/ReadingTicketCard';
+import { ReadingTicket } from '../../core/ticket/ReadingTicket';
+import { ReadingTicketLoader } from '../../core/ticket/ReadingTicketLoader';
+import { TicketAlbumStore } from '../../utils/TicketAlbumStore';
 
 /** 本月日历的一格；day 为 0 是月初前的空位。level 0 没读，1~3 越大读得越久，-1 是还没到的日子。 */
 class FootprintDay {
@@ -48,6 +55,8 @@ export struct FootprintTabPage {
   static readonly LEVEL_STEPS_MS: number[] = [20 * 60000, 60 * 60000];
   @Prop statusBarHeight: number = 0;
   @Prop navBarHeight: number = 0;
+  /** 底栏没开足迹页签时，足迹以独立页打开（pages/Footprint），标题前加返回钮。 */
+  @Prop showBack: boolean = false;
   onHeaderCollapseChange: (progress: number) => void = () => {};
   @State headerCollapse: number = 0;
   @State headerBackdropReveal: number = 0;
@@ -71,7 +80,11 @@ export struct FootprintTabPage {
   @StorageProp('readStatsRecording') readStatsRecording: boolean = true;
   /** 本月日历卡收起与否，在 EntryAbility 里持久化。 */
   @StorageLink('footprintMonthCollapsed') monthCollapsed: boolean = false;
-  @StorageProp('footprintLayout') layoutRaw: string = '';
+  @StorageProp('footprintLayout') @Watch('onLayoutChanged') layoutRaw: string = '';
+  /** “最近的票”：默认不显示，打开这块才读。 */
+  @State tickets: ReadingTicket[] = [];
+  @State ticketsLoaded: boolean = false;
+  @State ticketStyle: string = TicketAlbumStore.STYLE_PAPER;
   private scroller: Scroller = new Scroller();
   private alive: boolean = false;
   private ownerId: string = '';
@@ -106,13 +119,15 @@ export struct FootprintTabPage {
       const bookmarks = await appDb.getAllBookmarks();
       const excerpts = await appDb.getExcerptAnnotations(FootprintTabPage.EXCERPT_LOAD_LIMIT);
       const marks = await appDb.getAllBookMarks(FootprintTabPage.EXCERPT_LOAD_LIMIT);
+      const fold = await ReadStatsFold.load(context);
+      const merges = await ReadWorkMergeStore.load(context);
       if (!this.alive) return;
       this.excerpts = excerpts;
       this.excerptsLoaded = true;
       this.marks = marks;
       this.marksLoaded = true;
       this.ownerId = ownerId;
-      this.summary = ReadStatsSummary.calculate(rows, 'week', now, now);
+      this.summary = ReadStatsSummary.calculate(rows, 'week', now, now, fold, merges);
       this.lastWeekMs = ReadStatsSummary.calculate(rows, 'week', lastWeekAnchor, now).totalMs;
       this.monthDays = this.buildMonth(rows, month.startTs, now);
       this.monthTitle = `${new Date(now).getMonth() + 1} 月足迹`;
@@ -122,6 +137,7 @@ export struct FootprintTabPage {
     } finally {
       if (this.alive) this.loading = false;
     }
+    this.loadTickets();
   }
 
   onExcerptRevision(): void {
@@ -130,6 +146,44 @@ export struct FootprintTabPage {
 
   onBookMarkRevision(): void {
     this.loadMarks();
+    this.loadTickets();
+  }
+
+  onLayoutChanged(): void {
+    if (!this.ticketsLoaded) this.loadTickets();
+  }
+
+  async loadTickets(): Promise<void> {
+    if (!this.layout().isVisible(FootprintLayout.TICKET)) return;
+    try {
+      const context = getContext(this);
+      await TicketAlbumStore.load(context);
+      const tickets = await ReadingTicketLoader.loadAll(context);
+      if (!this.alive) return;
+      this.ticketStyle = TicketAlbumStore.currentStyle();
+      this.tickets = tickets;
+      this.ticketsLoaded = true;
+      const shown = tickets.slice(0, this.layout().limit(FootprintLayout.TICKET));
+      if (ReadingTicketLoader.pendingAccents(shown) > 0) {
+        await ReadingTicketLoader.fillAccents(context, shown, shown.length, (): void => {
+          if (this.alive) this.tickets = tickets.slice();
+        }, (): boolean => this.alive);
+      }
+    } catch (error) {
+      console.warn('读取最近的票失败:', error);
+    }
+  }
+
+  openTicketAlbum(): void {
+    router.pushUrl({ url: 'pages/TicketAlbum' }).catch((error: Error) => {
+      console.error('打开票夹失败:', error);
+    });
+  }
+
+  openTicket(ticket: ReadingTicket): void {
+    router.pushUrl({ url: 'pages/TicketDetail', params: { workKey: ticket.workKey } }).catch((error: Error) => {
+      console.error('打开票根失败:', error);
+    });
   }
 
   async loadMarks(): Promise<void> {
@@ -246,6 +300,9 @@ export struct FootprintTabPage {
 
       Column() {
         Row({ space: 10 }) {
+          if (this.showBack) {
+            this.headerButton($r('sys.symbol.chevron_left'), '返回', () => router.back())
+          }
           Text('足迹')
             .fontSize(AppFontSize.DISPLAY)
             .fontWeight(FontWeight.Bold)
@@ -258,7 +315,7 @@ export struct FootprintTabPage {
         .width('100%')
         .height(56 + this.statusBarHeight)
         .alignItems(VerticalAlign.Center)
-        .padding({ left: AppSpacing.XL, right: AppSpacing.LG, top: this.statusBarHeight })
+        .padding({ left: this.showBack ? AppSpacing.LG : AppSpacing.XL, right: AppSpacing.LG, top: this.statusBarHeight })
         .opacity(CollapsingHeader.contentOpacity(this.headerCollapse))
         .hitTestBehavior(CollapsingHeader.acceptsTouch(this.headerCollapse) ? HitTestMode.Default : HitTestMode.None)
       }
@@ -294,7 +351,7 @@ export struct FootprintTabPage {
           Column() {
             ForEach(this.summary.items.slice(0, this.layout().limit(FootprintLayout.RANK)), (item: ReadStatsRank) => {
               this.rankRow(item)
-            }, (item: ReadStatsRank) => item.bookKey)
+            }, (item: ReadStatsRank) => `${item.bookKey}:${item.name}:${item.durationMs}:${item.onShelf}`)
           }
           .width('100%')
           .padding({ top: AppSpacing.XS, bottom: AppSpacing.XS })
@@ -340,6 +397,48 @@ export struct FootprintTabPage {
             .height(FootprintTabPage.MARK_CARD_HEIGHT)
           } else {
             this.markEmptyCard()
+          }
+        }
+      } else if (id === FootprintLayout.TICKET) {
+        if (this.ticketsLoaded) {
+          this.sectionHeaderWithMore('最近的票', '票夹', () => this.openTicketAlbum())
+          if (this.tickets.length > 0) {
+            Scroll() {
+              Row({ space: AppSpacing.MD }) {
+                ForEach(this.tickets.slice(0, this.layout().limit(FootprintLayout.TICKET)), (ticket: ReadingTicket) => {
+                  Column() {
+                    ReadingTicketCard({
+                      ticket: ticket,
+                      ticketStyle: this.ticketStyle,
+                      cardWidth: 120,
+                      notchColor: ThemeRuntime.pageColor(this.appDarkMode),
+                      thumbnail: true
+                    })
+                  }
+                  .accessibilityGroup(true)
+                  .accessibilityText(`${ticket.bookName}的票`)
+                  .onClick(() => this.openTicket(ticket))
+                }, (ticket: ReadingTicket) =>
+                  `${ticket.workKey}|${ticket.status}|${ticket.number}|${ticket.totalMs}|${ticket.rating}|${ticket.accent}|` +
+                  `${this.ticketStyle}`)
+              }
+              .alignItems(VerticalAlign.Top)
+              .padding({ top: AppSpacing.XS, bottom: AppSpacing.LG })
+            }
+            .scrollable(ScrollDirection.Horizontal)
+            .scrollBar(BarState.Off)
+            .edgeEffect(EdgeEffect.Spring)
+            .width('100%')
+            .align(Alignment.TopStart)
+          } else {
+            Text('把书标成“读过”“在读”或“弃读”，就会在这里出一张票。')
+              .fontSize(AppFontSize.BODY)
+              .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
+              .width('100%')
+              .padding(AppSpacing.LG)
+              .borderRadius(ThemeRuntime.largeRadius())
+              .backgroundColor(this.cardColor())
+              .onClick(() => this.openTicketAlbum())
           }
         }
       } else if (id === FootprintLayout.BOOKMARK) {
@@ -906,7 +1005,7 @@ export struct FootprintTabPage {
         .fontWeight(FontWeight.Bold)
         .fontColor(this.accentTint('80'))
         .height(26)
-      Text(bookmark.content || bookmark.chapterName || '书签')
+      Text(bookmarkPreviewText(bookmark.content) || bookmark.chapterName || '书签')
         .fontSize(AppFontSize.BODY)
         .lineHeight(20)
         .fontColor(this.primaryTextColor())

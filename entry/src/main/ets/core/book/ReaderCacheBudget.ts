@@ -103,6 +103,7 @@ export class ReaderCacheBudget {
   }
 
   private static async prepare(): Promise<void> {
+    await appDb.ensureContentIndexes();
     while (await appDb.backfillCachedContentBytes() > 0) await ReaderCacheBudget.yield();
     while (await appDb.backfillImageReferences() > 0) await ReaderCacheBudget.yield();
   }

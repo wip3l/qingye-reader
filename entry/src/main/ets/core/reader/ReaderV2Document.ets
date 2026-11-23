@@ -1,4 +1,4 @@
-import { ReaderActionData, ReaderActionMarker, ReaderActionMatch } from '@legado/sourceengine';
+import { ReaderActionData, ReaderActionHot, ReaderActionMarker, ReaderActionMatch } from '@legado/sourceengine';
 import { EpubNoteLink } from '../book/EpubNoteLink';
 import { ReaderImageMarker } from '../book/ReaderImageMarker';
 import { ReaderTitleSplit, ReaderTitleSplitSettings } from './ReaderTitleSplit';
@@ -44,6 +44,11 @@ export class ReaderV2InlineAction {
   likes: string = '';
   /** 章末的本章说/章评入口：单独成段时画成本章说卡片，不会挂在段落后面。 */
   chapter: boolean = false;
+  /** 本章说的评论条数文字（如“79条评论”）与热评列表。 */
+  count: string = '';
+  hots: ReaderActionHot[] = [];
+  /** 热评文字里表情代号的图片地址（书源提供），卡片把代号画成图片。 */
+  emojis: Record<string, string> = {};
 
   constructor(id: string, marker: string, label: string, data: ReaderActionData,
     displayStart: number, displayEnd: number, sourceStart: number, sourceEnd: number) {
@@ -57,13 +62,32 @@ export class ReaderV2InlineAction {
     this.note = EpubNoteLink.isNote(this.url);
     this.preview = this.note ? '' : (data.preview || '');
     this.likes = this.preview ? (data.likes || '') : '';
+    if (!this.note && data.emojis) this.emojis = data.emojis;
     const rawLabel = data.label || '';
     this.chapter = !this.note && (/本章说|章评|章末/.test(rawLabel) ||
       (/^(?:本章说|章评)/.test(data.title || '') && !/(?:99\+|\d+)\s*$/.test(rawLabel)));
+    if (this.chapter) ReaderV2InlineAction.fillChapter(this, data);
     this.displayStart = displayStart;
     this.displayEnd = displayEnd;
     this.sourceStart = sourceStart;
     this.sourceEnd = sourceEnd;
+  }
+
+  /**
+   * 本章说的条数与热评。旧标记（含已缓存章节）只有 preview：卡面文字开头的“79 条评论”拆进条数，
+   * 其余当作一条没有昵称的热评。
+   */
+  private static fillChapter(action: ReaderV2InlineAction, data: ReaderActionData): void {
+    action.count = data.count || '';
+    action.hots = data.hots || [];
+    if (action.count || action.hots.length > 0 || !action.preview) return;
+    const head = /^(?:共\s*)?(\d+(?:\.\d+)?[万wWkK千]?\+?)\s*(?:条评论|条|评论)\s*/.exec(action.preview);
+    if (head) action.count = `${head[1]}条评论`;
+    const rest = head ? action.preview.substring(head[0].length).trim() : action.preview;
+    if (rest) {
+      const hot: ReaderActionHot = { user: '', text: rest, likes: action.likes };
+      action.hots = [hot];
+    }
   }
 }
 
@@ -98,6 +122,8 @@ export class ReaderV2Block {
   title: boolean = false;
   /** 0 is the original/first title segment, 1 is the enlarged second segment. */
   titleSegment: number = 0;
+  /** 分段标题的第一段（“第十二章”那一行）。 */
+  titleLead: boolean = false;
   /** 1-6 表示章内小标题，0 表示普通段落。 */
   headingLevel: number = 0;
   image: ReaderV2ImageRef | null = null;
@@ -144,6 +170,34 @@ export class ReaderV2Document {
   offsets: ReaderV2OffsetSegment[] = [];
   regexRanges: ReaderV2RegexRange[] = [];
   identity: string = '';
+
+  private dropCapBlock: number = -2;
+
+  /**
+   * 首字装饰所在的块：紧跟章节标题的第一个普通文字段；标题后面是图片、小标题、热评卡，或这份文档没有
+   * 标题（滚动阅读里一章的后几截）时为 -1。
+   */
+  dropCapBlockIndex(): number {
+    if (this.dropCapBlock !== -2) return this.dropCapBlock;
+    let index = -1;
+    for (let cursor = 0; cursor < this.blocks.length; cursor++) {
+      if (this.blocks[cursor].title) index = cursor + 1;
+      else if (index >= 0) break;
+    }
+    const block = index >= 0 && index < this.blocks.length ? this.blocks[index] : null;
+    this.dropCapBlock = block && !block.image && !block.card && block.headingLevel === 0 && !block.title ? index : -1;
+    return this.dropCapBlock;
+  }
+
+  /** 章节标题占几块（不分段 1 块，分段 2 块，没有标题 0）。 */
+  titleBlockCount(): number {
+    let count = 0;
+    for (const block of this.blocks) {
+      if (block.title) count++;
+      else if (count > 0) break;
+    }
+    return count;
+  }
 
   sourceOffsetForDisplay(displayOffset: number): number {
     const target = Math.max(0, Math.min(this.displayText.length, displayOffset));
@@ -457,6 +511,7 @@ export class ReaderV2DocumentParser {
       const second = new ReaderV2Block(`${block.id}_title_second`, block.text.substring(cut),
         boundary, block.displayEnd, sourceBoundary, block.sourceEnd, true);
       second.titleSegment = 1;
+      first.titleLead = true;
       blocks.push(first, second);
     }
     document.blocks = blocks;

@@ -28,6 +28,7 @@ struct DataSyncPage {
   @State foregroundSyncEnabled: boolean = false;
   @State localBooksEnabled: boolean = true;
   @State customFontsEnabled: boolean = true;
+  @State customThemesEnabled: boolean = true;
   @State readingDataEnabled: boolean = true;
   @State bookSourcesEnabled: boolean = true;
   @State readingPreferencesEnabled: boolean = true;
@@ -141,11 +142,12 @@ struct DataSyncPage {
 
       this.sectionTitle('同步内容')
       Column() {
-        this.fileSyncRow('本地书籍', '同步加入书架的本地书籍文件', true)
-        this.fileSyncRow('自定义字体', '同步导入的自定义字体文件', false)
+        this.fileSyncRow('本地书籍', '同步加入书架的本地书籍文件', 'BOOK')
+        this.fileSyncRow('自定义字体', '同步导入的自定义字体文件', 'FONT')
+        this.fileSyncRow('自定义主题', '同步自定义主题用到的图片、启动封面和预览图', 'THEME')
         SettingSwitchRow({
           title: '阅读数据',
-          description: this.webParseEnabled ? '在线书架、分组、排序、进度、书签和阅读统计；本地书同步进度与统计' :
+          description: this.webParseEnabled ? '书架、分组、进度、书签与统计；本地书只同步进度和统计' :
             '书架分组、排序、进度、书签和阅读统计',
           isOn: this.readingDataEnabled,
           onChange: (value: boolean) => {
@@ -155,7 +157,7 @@ struct DataSyncPage {
         if (this.webParseEnabled) {
           SettingSwitchRow({
             title: '书源',
-            description: '配置、分组、排序、启用和锁定状态；不含登录凭证。仅作为你的私有数据保存，不公开、不能分享',
+            description: '配置、分组和启用状态；不含登录凭证，仅自己可见',
             isOn: this.bookSourcesEnabled,
             onChange: (value: boolean) => {
               this.setBookSourcesEnabled(value);
@@ -310,17 +312,17 @@ struct DataSyncPage {
   }
 
   @Builder
-  fileSyncRow(title: string, description: string, books: boolean) {
+  fileSyncRow(title: string, description: string, kind: string) {
     SettingRow({ title: title, minimumMembership: 'SUPER_LIFETIME',
       description: description,
       onTap: () => {
         if (!this.isSuperMember()) this.promptSuperMembership();
       } }) {
       AdaptiveSwitch({
-        isOn: this.isSuperMember() && (books ? this.localBooksEnabled : this.customFontsEnabled),
+        isOn: this.isSuperMember() && this.fileScopeEnabled(kind),
         switchEnabled: this.isSuperMember() && !this.saving,
         accessibilityLabel: title,
-        onChange: (value: boolean) => { this.setFileScopeEnabled(books, value); }
+        onChange: (value: boolean) => { this.setFileScopeEnabled(kind, value); }
       })
         .opacity(this.isSuperMember() ? 1 : 0.45)
     }
@@ -333,7 +335,7 @@ struct DataSyncPage {
   async promptSuperMembership(): Promise<void> {
     const result = await promptAction.showDialog({
       title: '终身超级会员专享',
-      message: '本地书籍和自定义字体同步仅限终身超级会员，请开通或升级为终身超级会员。',
+      message: '本地书籍、自定义字体和自定义主题同步仅限终身超级会员，请开通或升级为终身超级会员。',
       buttons: [
         { text: '取消', color: this.subTextColor() },
         { text: '开通或升级', color: this.accentColor() }
@@ -342,18 +344,27 @@ struct DataSyncPage {
     if (result.index === 1) router.pushUrl({ url: 'pages/AccountCenter' });
   }
 
-  async setFileScopeEnabled(books: boolean, value: boolean): Promise<void> {
+  fileScopeEnabled(kind: string): boolean {
+    if (kind === 'BOOK') return this.localBooksEnabled;
+    return kind === 'FONT' ? this.customFontsEnabled : this.customThemesEnabled;
+  }
+
+  applyFileScope(kind: string, value: boolean): void {
+    if (kind === 'BOOK') this.localBooksEnabled = value;
+    else if (kind === 'FONT') this.customFontsEnabled = value;
+    else this.customThemesEnabled = value;
+  }
+
+  async setFileScopeEnabled(kind: string, value: boolean): Promise<void> {
     if (AccountSessionStore.activeMembershipSku() !== 'SUPER_LIFETIME') {
       await this.promptSuperMembership();
       return;
     }
     if (this.saving) return;
-    const previous = books ? this.localBooksEnabled : this.customFontsEnabled;
-    if (books) this.localBooksEnabled = value;
-    else this.customFontsEnabled = value;
+    const previous = this.fileScopeEnabled(kind);
+    this.applyFileScope(kind, value);
     if (!await this.saveSettings()) {
-      if (books) this.localBooksEnabled = previous;
-      else this.customFontsEnabled = previous;
+      this.applyFileScope(kind, previous);
       return;
     }
     CloudAutoSync.schedule(getContext(this), 0);
@@ -527,6 +538,7 @@ struct DataSyncPage {
     settings.foregroundSyncEnabled = this.foregroundSyncEnabled;
     settings.localBooksEnabled = this.localBooksEnabled;
     settings.customFontsEnabled = this.customFontsEnabled;
+    settings.customThemesEnabled = this.customThemesEnabled;
     settings.readingDataEnabled = this.readingDataEnabled;
     settings.bookSourcesEnabled = this.bookSourcesEnabled;
     settings.readingPreferencesEnabled = this.readingPreferencesEnabled;
@@ -545,6 +557,7 @@ struct DataSyncPage {
     this.foregroundSyncEnabled = settings.foregroundSyncEnabled;
     this.localBooksEnabled = settings.localBooksEnabled;
     this.customFontsEnabled = settings.customFontsEnabled;
+    this.customThemesEnabled = settings.customThemesEnabled;
     this.readingDataEnabled = settings.readingDataEnabled;
     this.bookSourcesEnabled = settings.bookSourcesEnabled;
     this.readingPreferencesEnabled = settings.readingPreferencesEnabled;

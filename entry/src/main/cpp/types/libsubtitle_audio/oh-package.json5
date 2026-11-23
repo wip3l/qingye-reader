@@ -1,0 +1,6 @@
+{
+  "name": "libsubtitle_audio.so",
+  "types": "./index.d.ts",
+  "version": "1.0.0",
+  "description": "听书字幕的本地音频解码"
+}

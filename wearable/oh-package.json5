@@ -1,0 +1,11 @@
+{
+  "name": "wearable",
+  "version": "4.6.037",
+  "description": "开源轻页手表端：给手机阅读页翻页的遥控器",
+  "main": "",
+  "author": "李其健",
+  "homepage": "https://github.com/wip3l/qingye-reader",
+  "repository": "https://github.com/wip3l/qingye-reader.git",
+  "license": "GPL-3.0",
+  "dependencies": {}
+}

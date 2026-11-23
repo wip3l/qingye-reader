@@ -15,7 +15,7 @@ import { EpubConvertResult, EpubHtmlConverter } from './EpubHtmlConverter';
 import { EpubTextOffsetMap } from './EpubTextOffsetMap';
 import { MobiImportTask } from '../concurrency/MobiImportTask';
 import { PdfBookService } from './pdf/PdfBookService';
-import { LocalArchiveImport } from './LocalArchiveImport';
+import { ComicArchiveChapter, ComicArchiveContent, LocalArchiveImport } from './LocalArchiveImport';
 import { TxtChapterMatcher, TxtTocResolvedRule, TxtTocRules } from './TxtTocRules';
 import { TxtTocRuleStore } from '../../utils/TxtTocRuleStore';
 import { ReadBookEngine } from './ReadBookEngine';
@@ -140,14 +140,18 @@ export class LocalBookService {
   // 10 / 2：注释编号换成可点的注释标记。11：音频的封面图、视频的海报当插图显示。
   private static readonly EPUB_PARSER_VERSION: string = '11';
   private static readonly MOBI_PARSER_VERSION: string = '2';
+  private static readonly CBZ_PARSER_VERSION: string = '1';
   /** 导入时同时预读的正文文件数。 */
   private static readonly IMPORT_READ_AHEAD: number = 4;
   /** 导入转换连续占用主线程的时长上限，超过后让出一次。 */
   private static readonly IMPORT_SLICE_MS: number = 32;
 
-  /** 可导入的本地书格式。MOBI 解析后与 EPUB 一样按解压目录阅读，书籍类型同为 TYPE_EPUB。 */
-  static readonly SUPPORTED_FORMATS: string[] = ['txt', 'epub', 'mobi', 'pdf'];
-  static readonly UNSUPPORTED_FORMAT_MESSAGE: string = '仅支持 TXT、EPUB、MOBI 和 PDF 文件';
+  /**
+   * 可导入的本地书格式。MOBI、CBZ 解析后与 EPUB 一样按解压目录阅读，书籍类型同为 TYPE_EPUB。
+   * CBZ 即纯图片 ZIP；包里没有书只有图片的 .zip 也按 CBZ 导入。
+   */
+  static readonly SUPPORTED_FORMATS: string[] = ['txt', 'epub', 'mobi', 'pdf', 'cbz'];
+  static readonly UNSUPPORTED_FORMAT_MESSAGE: string = '仅支持 TXT、EPUB、MOBI、PDF 和 CBZ 文件';
   private static readonly TXT_READ_CHUNK_BYTES: number = 256 * 1024;
   private static readonly TXT_MAX_CHAPTER_CHARS: number = 32 * 1024;
   private static readonly TXT_DB_BATCH_SIZE: number = 16;
@@ -168,7 +172,8 @@ export class LocalBookService {
   static bookTypeForFormat(format: string): number {
     const value = (format || '').toLowerCase();
     if (value === 'pdf') return LocalBookService.TYPE_PDF;
-    return value === 'epub' || value === 'mobi' ? LocalBookService.TYPE_EPUB : LocalBookService.TYPE_TXT;
+    return value === 'epub' || value === 'mobi' || value === 'cbz' ? LocalBookService.TYPE_EPUB :
+      LocalBookService.TYPE_TXT;
   }
 
   /** 本地书的格式；早期导入没有记录 localFormat 时按书籍类型推断。 */
@@ -206,6 +211,7 @@ export class LocalBookService {
     if (format === 'pdf') return PdfBookService.PARSER_VERSION;
     if (format === 'epub') return LocalBookService.EPUB_PARSER_VERSION;
     if (format === 'mobi') return LocalBookService.MOBI_PARSER_VERSION;
+    if (format === 'cbz') return LocalBookService.CBZ_PARSER_VERSION;
     return LocalBookService.TXT_PARSER_VERSION;
   }
 
@@ -436,7 +442,7 @@ export class LocalBookService {
     const options = new picker.DocumentSelectOptions();
     options.selectMode = picker.DocumentSelectMode.FILE;
     options.maxSelectNumber = 500;
-    options.fileSuffixFilters = ['电子书|.txt,.epub,.mobi,.pdf,.zip'];
+    options.fileSuffixFilters = ['电子书|.txt,.epub,.mobi,.pdf,.cbz,.zip'];
     const result = await selectDocuments(context, options);
     const paths: LocalBookFile[] = [];
     for (const uri of result) {
@@ -475,7 +481,10 @@ export class LocalBookService {
     return result;
   }
 
-  /** 压缩包按包里的每本书计数；包本身打不开时算一次失败。 */
+  /**
+   * 压缩包按包里的每本书计数；包本身打不开时算一次失败。包里没有书只有图片时整包当一本漫画（CBZ）导入；
+   * 书和图片都有时只导入书，图片多半是插图或封面。
+   */
   private static async importArchive(context: Context, archive: LocalBookFile,
     result: LocalBookScanResult): Promise<void> {
     const archiveName = archive.name || LocalBookService.displayName(archive.uri);
@@ -488,6 +497,10 @@ export class LocalBookService {
         result.failures.push(`${archiveName}/${failure}`);
       }
       if (extracted.files.length === 0 && extracted.failures.length === 0) {
+        if (extracted.imageCount > 0) {
+          await LocalBookService.importComicArchive(context, archive, archiveName, result);
+          return;
+        }
         result.failed++;
         result.failures.push(`${archiveName}：压缩包内没有可导入的书籍`);
       }
@@ -512,6 +525,22 @@ export class LocalBookService {
       console.error('[LocalBook] archive import failed:', archive.uri, e);
     } finally {
       LocalArchiveImport.removeWorkDir(workDir);
+    }
+  }
+
+  private static async importComicArchive(context: Context, archive: LocalBookFile, archiveName: string,
+    result: LocalBookScanResult): Promise<void> {
+    try {
+      const outcome = await LocalBookService.importLocalFile(context, archive.uri, 'cbz', archiveName);
+      if (outcome.duplicate) {
+        result.duplicates.push(`${archiveName}（书架中为《${outcome.book.name}》）`);
+      } else {
+        result.imported++;
+      }
+    } catch (e) {
+      result.failed++;
+      result.failures.push(`${archiveName}：${e instanceof Error ? e.message : '压缩包读取失败'}`);
+      console.error('[LocalBook] comic archive import failed:', archive.uri, e);
     }
   }
 
@@ -592,11 +621,21 @@ export class LocalBookService {
   }
 
   static webDavBookUrl(connectionId: string, remotePath: string): string {
-    return `webdav://${connectionId}/${LocalBookService.hashText(remotePath)}`;
+    return `${LocalBookService.webDavBookUrlPrefix(connectionId)}${LocalBookService.hashText(remotePath)}`;
+  }
+
+  /** 某个 WebDAV 连接下所有书的 bookUrl 共同前缀。 */
+  static webDavBookUrlPrefix(connectionId: string): string {
+    return `webdav://${connectionId}/`;
   }
 
   static opdsBookUrl(serverId: string, acquisitionUrl: string): string {
-    return `opds://${serverId}/${LocalBookService.hashText(acquisitionUrl)}`;
+    return `${LocalBookService.opdsBookUrlPrefix(serverId)}${LocalBookService.hashText(acquisitionUrl)}`;
+  }
+
+  /** 某个 OPDS 书库下所有书的 bookUrl 共同前缀。 */
+  static opdsBookUrlPrefix(serverId: string): string {
+    return `opds://${serverId}/`;
   }
 
   static async importOpdsBook(context: Context, sourcePath: string, serverId: string,
@@ -828,8 +867,7 @@ export class LocalBookService {
     }
 
     let chapters: LocalChapterData[] = [];
-    const epub = extension === 'mobi' ? await LocalBookService.parseMobi(context, localPath, id) :
-      await LocalBookService.parseEpub(context, localPath, id);
+    const epub = await LocalBookService.parsePackage(context, extension, localPath, id);
     const oldChapterPath = oldBook ? await LocalBookService.currentEpubChapterPath(book) : '';
     const oldChapterContent = oldBook ? await LocalBookService.currentEpubChapterContent(book) : '';
     book.name = hasCustomMetadata ? book.getVariable('localCustomName') :
@@ -932,8 +970,7 @@ export class LocalBookService {
     const id = book.bookUrl.startsWith('local://') ? book.bookUrl.substring('local://'.length) :
       LocalBookService.hashText(localPath);
     const format = LocalBookService.formatOf(book);
-    const epub = format === 'mobi' ? await LocalBookService.parseMobi(context, localPath, id) :
-      await LocalBookService.parseEpub(context, localPath, id);
+    const epub = await LocalBookService.parsePackage(context, format, localPath, id);
     const oldChapterPath = await LocalBookService.currentEpubChapterPath(book);
     const oldChapterContent = await LocalBookService.currentEpubChapterContent(book);
     if (book.getVariable('localMetadataCustomized') === '1') {
@@ -1386,6 +1423,45 @@ export class LocalBookService {
     } finally {
       await fs.close(file);
     }
+  }
+
+  private static async parsePackage(context: Context, format: string, path: string,
+    id: string): Promise<EpubPackageData> {
+    if (format === 'mobi') return await LocalBookService.parseMobi(context, path, id);
+    if (format === 'cbz') return await LocalBookService.parseComicArchive(context, path, id);
+    return await LocalBookService.parseEpub(context, path, id);
+  }
+
+  /**
+   * CBZ（纯图片 ZIP）：图片按章解到解压目录，一个文件夹一章，章节 resourceUrl 是该章目录，
+   * 正文缓存被清理后由 LocalChapterContentLoader 列目录重建。书名取文件名，第一张或名为 cover 的图当封面。
+   */
+  private static async parseComicArchive(context: Context, cbzPath: string, id: string): Promise<EpubPackageData> {
+    const stat = await fs.stat(cbzPath);
+    const extractRoot = `${context.filesDir}/local_books/${id}_${stat.mtime}`;
+    if (LocalBookService.exists(extractRoot)) fs.rmdirSync(extractRoot);
+    LocalBookService.ensureDir(extractRoot);
+    let comic: ComicArchiveContent;
+    try {
+      comic = await LocalArchiveImport.extractComic(cbzPath, extractRoot);
+    } catch (e) {
+      LocalBookService.deleteLocalPath(context, extractRoot);
+      throw e as Error;
+    }
+    const result = new EpubPackageData();
+    result.extractRoot = extractRoot;
+    result.coverPath = comic.coverPath;
+    result.isComic = true;
+    comic.chapters.forEach((source: ComicArchiveChapter): void => {
+      const chapter = new LocalChapterData();
+      chapter.title = source.title || '漫画正文';
+      chapter.content = source.images.map((path: string): string => LocalBookService.createReaderImageMarker(path))
+        .join('\n\n');
+      chapter.sourcePath = source.dir;
+      chapter.imageOnly = true;
+      result.chapters.push(chapter);
+    });
+    return result;
   }
 
   private static async parseEpub(context: Context, epubPath: string, id: string): Promise<EpubPackageData> {

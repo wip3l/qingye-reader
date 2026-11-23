@@ -3,6 +3,7 @@ import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { AdaptiveSwitch } from '../AdaptiveSwitch';
+import { SettingsFocus } from '../../utils/SettingsFocus';
 
 /**
  * 设置页卡片里的一行：左侧标题和说明，右侧控件用尾随闭包传入。
@@ -20,14 +21,30 @@ export struct SettingRow {
   @Prop titleColor?: ResourceColor;
   /** 行首图标，用在作为入口的行上；普通设置项不传。 */
   @Prop icon?: Resource;
+  /** 行首的序号圆点，用在几行有先后顺序的地方（如封面来源的取用顺序）；不传不显示。 */
+  @Prop badge: string = '';
   @StorageProp('appDarkMode') appDarkMode: boolean = false;
   @StorageProp('themeRevision') themeRevision: number = 0;
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  /** 从设置搜索跳来时，这一行的定位 id 与闪烁状态。 */
+  @State focusId: string = '';
+  @State focusFlash: boolean = false;
   onTap: () => void = () => {
   };
   @BuilderParam trailing: () => void = this.emptySlot;
 
   @Builder
   emptySlot() {
+  }
+
+  aboutToAppear(): void {
+    if (!SettingsFocus.claim(this.title)) return;
+    this.focusId = `settings_focus_${Date.now()}`;
+    const scroller = SettingsFocus.takeScroller();
+    setTimeout(() => {
+      const delay = SettingsFocus.scrollIntoView(this.getUIContext(), this.focusId, scroller, this.statusBarHeight);
+      setTimeout(() => SettingsFocus.flash((on: boolean) => { this.focusFlash = on; }), delay);
+    }, SettingsFocus.SETTLE_MS);
   }
 
   build() {
@@ -43,6 +60,18 @@ export struct SettingRow {
         .borderRadius(9)
         .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
         .margin({ right: AppSpacing.LG })
+      }
+      if (this.badge) {
+        Text(this.badge)
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeRuntime.accentColor(this.appDarkMode))
+          .textAlign(TextAlign.Center)
+          .width(22)
+          .height(22)
+          .borderRadius(11)
+          .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+          .margin({ right: AppSpacing.MD })
       }
       Column() {
         Row({ space: AppSpacing.XS }) {
@@ -73,6 +102,9 @@ export struct SettingRow {
     .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
     .border({ width: { bottom: this.showDivider ? 0.5 : 0 }, color: ThemeRuntime.hairlineColor(this.appDarkMode) })
     .alignItems(VerticalAlign.Center)
+    .id(this.focusId)
+    .borderRadius(this.focusId ? 10 : 0)
+    .backgroundColor(this.focusFlash ? ThemeRuntime.accentSurfaceColor(this.appDarkMode) : Color.Transparent)
     .onClick(() => this.onTap())
   }
 }
@@ -113,6 +145,7 @@ export struct SettingNavRow {
   @Prop showDivider: boolean = true;
   @Prop titleColor?: ResourceColor;
   @Prop icon?: Resource;
+  @Prop badge: string = '';
   @StorageProp('appDarkMode') appDarkMode: boolean = false;
   @StorageProp('themeRevision') themeRevision: number = 0;
   onTap: () => void = () => {
@@ -120,7 +153,7 @@ export struct SettingNavRow {
 
   build() {
     SettingRow({ title: this.title, minimumMembership: this.minimumMembership, description: this.description, showDivider: this.showDivider,
-      titleColor: this.titleColor, icon: this.icon, onTap: () => this.onTap() }) {
+      titleColor: this.titleColor, icon: this.icon, badge: this.badge, onTap: () => this.onTap() }) {
       Row({ space: AppSpacing.XS }) {
         if (this.value) {
           Text(this.value)
@@ -152,8 +185,21 @@ export struct SettingScopeRow {
   @Prop showDivider: boolean = true;
   @StorageProp('appDarkMode') appDarkMode: boolean = false;
   @StorageProp('themeRevision') themeRevision: number = 0;
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @State focusId: string = '';
+  @State focusFlash: boolean = false;
   onToggle: (value: number, on: boolean) => void = (_value: number, _on: boolean) => {
   };
+
+  aboutToAppear(): void {
+    if (!SettingsFocus.claim(this.title)) return;
+    this.focusId = `settings_focus_${Date.now()}`;
+    const scroller = SettingsFocus.takeScroller();
+    setTimeout(() => {
+      const delay = SettingsFocus.scrollIntoView(this.getUIContext(), this.focusId, scroller, this.statusBarHeight);
+      setTimeout(() => SettingsFocus.flash((on: boolean) => { this.focusFlash = on; }), delay);
+    }, SettingsFocus.SETTLE_MS);
+  }
 
   private isOn(value: number): boolean {
     return (this.scope & value) !== 0;
@@ -199,5 +245,8 @@ export struct SettingScopeRow {
     .padding({ top: AppSpacing.MD, bottom: AppSpacing.MD })
     .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
     .border({ width: { bottom: this.showDivider ? 0.5 : 0 }, color: ThemeRuntime.hairlineColor(this.appDarkMode) })
+    .id(this.focusId)
+    .borderRadius(this.focusId ? 10 : 0)
+    .backgroundColor(this.focusFlash ? ThemeRuntime.accentSurfaceColor(this.appDarkMode) : Color.Transparent)
   }
 }

@@ -5,17 +5,19 @@ import { ReaderThemeBackground } from '../ReaderThemeBackground';
 import { ImmersiveMaterialSurface } from '../ImmersiveMaterialSurface';
 import { ReaderTypographyPreview, ReaderTypographyPreviewConfig } from './ReaderTypographyPreview';
 import { ReaderV2DocumentParser } from '../../core/reader/ReaderV2Document';
-import { ReaderV2Color, ReaderV2SpanStyleRange } from '../../core/reader/ReaderV2Style';
+import { ReaderV2BubbleFrame, ReaderV2Color, ReaderV2SpanStyleRange } from '../../core/reader/ReaderV2Style';
 import { ReaderCommentBubbleStyles } from '../../core/reader/ReaderCommentBubble';
 import { ReaderInfoBarRow } from './ReaderInfoBar';
 import { ReaderInfoBarConfig, ReaderInfoBarContext, ReaderInfoBarText, ReaderInfoProgressBar } from '../../core/reader/ReaderInfoBarModel';
 import { ReaderInfoBarClock } from '../../core/reader/ReaderInfoBarClock';
 import { ReaderHorizontalMargin } from '../../core/reader/ReaderHorizontalMargin';
 import { ReaderTitleStyleCodec } from '../../model/reader/ReaderTitleStyle';
+import { ReaderChapterHead } from '../../model/reader/ReaderChapterHead';
 import { ReaderRegexBubbleStyleResolver, ReaderRegexEmphasisContext, ReaderRegexFontCodec,
-  ReaderRegexFontRule, ReaderRegexLegacySettings } from '../../model/reader/ReaderRegexFontRule';
+  ReaderRegexFontRule, ReaderRegexLegacySettings, ReaderTitleEmphasis } from '../../model/reader/ReaderRegexFontRule';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
+import { ThemePackRegistry } from '../../theme/ThemePackRegistry';
 
 const SETTINGS_PREVIEW_TITLE: string = '第一章 风起';
 const SETTINGS_PREVIEW_PARAGRAPHS: string[] = [
@@ -131,8 +133,8 @@ export struct ReaderSettingsPreview {
   }
 
   spanStyle(rule: ReaderRegexFontRule | null, fontSize: number, family: string,
-    fontWeight: number): ReaderV2SpanStyleRange {
-    const resolved = ReaderRegexBubbleStyleResolver.resolve(rule, this.emphasisContext());
+    fontWeight: number, context: ReaderRegexEmphasisContext | null = null): ReaderV2SpanStyleRange {
+    const resolved = ReaderRegexBubbleStyleResolver.resolve(rule, context || this.emphasisContext());
     const ui = this.getUIContext();
     const style = new ReaderV2SpanStyleRange();
     style.fontSizePx = ui.fp2px(fontSize);
@@ -152,10 +154,10 @@ export struct ReaderSettingsPreview {
     style.shadowRadiusPx = ui.vp2px(Math.max(0, resolved.textShadowRadius));
     style.shadowOffsetXPx = ui.vp2px(Math.max(0, resolved.textShadowOffsetX));
     style.shadowOffsetYPx = ui.vp2px(Math.max(0, resolved.textShadowOffsetY));
-    style.decorationEnabled = resolved.bubbleDecorationEnabled &&
-      ThemeAssetRegistry.hasRegexBubbleCap(resolved.bubbleStyleId);
-    style.decorationStyleId = style.decorationEnabled ? resolved.bubbleStyleId : '';
-    style.decorationSizePx = style.decorationEnabled ? ui.vp2px(Math.max(15, Math.min(22, fontSize * 0.72))) : 0;
+    ReaderV2BubbleFrame.decorate(style, resolved.bubbleDecorationEnabled, resolved.bubbleStyleId,
+      ThemeAssetRegistry.hasRegexBubbleCap(resolved.bubbleStyleId, this.darkMode),
+      ui.vp2px(Math.max(15, Math.min(22, fontSize * 0.72))),
+      ThemePackRegistry.bubbleFrame(resolved.bubbleStyleId, this.darkMode), this.darkMode);
     return style;
   }
 
@@ -205,13 +207,17 @@ export struct ReaderSettingsPreview {
     input.titleMarginTopPx = ui.vp2px(title.marginTop);
     input.titleMarginBottomPx = ui.vp2px(title.marginBottom);
     input.titleSinglePage = title.singlePage;
+    input.chapterHead = ReaderChapterHead.style(ThemeRuntime.chapterHeadTokens(this.appDarkMode), title.decoration,
+      title.dropCap);
     input.textColor = ReaderV2Color.parse(this.readerTheme.textColor, 0xFF202124);
     input.regexEnabled = this.settings.regexFontEnabled;
     input.styleIdentity = `settings_preview_${this.revision}`;
     const bubbleContext = this.emphasisContext();
     bubbleContext.inheritedMode = 'bubble';
     const bubble = ReaderRegexBubbleStyleResolver.resolve(null, bubbleContext);
-    input.commentBubble = ReaderCommentBubbleStyles.resolve(bubble.bubbleStyleId, this.darkMode, this.readerTheme.textColor);
+    input.commentBubble = ReaderCommentBubbleStyles.resolveThemed(bubble.bubbleStyleId, this.darkMode,
+      this.readerTheme.textColor, ThemeRuntime.commentBubbleTokens(this.darkMode), bubble.backgroundColor,
+      bubble.textColor, bubble.emphasisColor);
     input.commentBubbleSize = this.settings.commentBubbleSize;
     input.commentFontSizePx = ui.fp2px(Math.max(10, this.settings.fontSize - 5));
     config.fontSizeVp = this.settings.fontSize;
@@ -224,11 +230,14 @@ export struct ReaderSettingsPreview {
         'preview:paragraph', '段评示例')).join('\n');
     config.document = ReaderV2DocumentParser.parse(SETTINGS_PREVIEW_TITLE + '\n' + body,
       0, SETTINGS_PREVIEW_TITLE, [], title);
-    if (title.emphasis.emphasisMode !== 'none') {
+    const titlePlan = ReaderTitleEmphasis.plan(title.emphasis, ThemeRuntime.titleEmphasisTokens(this.appDarkMode),
+      this.emphasisContext());
+    if (titlePlan) {
       for (const block of config.document.blocks) {
         if (!block.title) continue;
         const fontSize = this.settings.titleFontSize * (block.titleSegment > 0 ? title.secondaryScale : 1);
-        const style = this.spanStyle(title.emphasis, fontSize, input.titleFontFamily, this.settings.titleFontWeight);
+        const style = this.spanStyle(titlePlan.rule, fontSize, input.titleFontFamily, this.settings.titleFontWeight,
+          titlePlan.context);
         style.start = block.displayStart;
         style.end = block.displayEnd;
         style.repeatCaps = true;
@@ -308,8 +317,9 @@ export struct ReaderSettingsPreview {
     Stack({ alignContent: Alignment.TopStart }) {
       ReaderThemeBackground({ surfaceColor: this.readerTheme.backgroundColor,
         backgroundAssetId: this.readerTheme.backgroundAssetId, customImage: this.readerTheme.backgroundImageUri,
-        customImageFit: this.readerTheme.backgroundImageFit === 'contain' ? ImageFit.Contain :
-          (this.readerTheme.backgroundImageFit === 'fill' ? ImageFit.Fill : ImageFit.Cover) })
+        customImageFit: this.readerTheme.backgroundImageFit,
+        customImagePosition: this.readerTheme.backgroundImagePosition,
+        customImageGap: this.readerTheme.backgroundImageGap })
       if (this.previewHeight > 0) {
         ReaderTypographyPreview({ config: this.config(pageIndex) })
           .width('100%')

@@ -21,6 +21,8 @@ struct ReaderInfoBarSlot {
   @Prop slotOpacity: number = 1;
   /** 中间槽位与眼动提示互换时淡入淡出。 */
   @Prop fades: boolean = false;
+  /** 节点 id 前缀；阅读页自绘翻页纹理时按它取文字和电池的位置。空串表示不需要。 */
+  @Prop slotId: string = '';
 
   build() {
     Row({ space: AppSpacing.XS }) {
@@ -33,6 +35,7 @@ struct ReaderInfoBarSlot {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .flexShrink(1)
+          .id(this.slotId ? `${this.slotId}_text` : '')
       }
       if (this.battery >= 0) {
         Row() {
@@ -47,6 +50,7 @@ struct ReaderInfoBarSlot {
           .height(this.textSize * 0.75)
           .padding(1)
           .border({ width: 1, color: this.textColor, radius: 2.5 })
+          .id(this.slotId ? `${this.slotId}_battery` : '')
 
           Row()
             .width(1.5)
@@ -62,6 +66,7 @@ struct ReaderInfoBarSlot {
           .textVerticalAlign(TextVerticalAlign.CENTER)
           .fontColor(this.textColor)
           .maxLines(1)
+          .id(this.slotId ? `${this.slotId}_battery_text` : '')
       }
     }
     .justifyContent(this.justify)
@@ -192,6 +197,12 @@ export struct ReaderInfoBarRow {
   @Prop cueText: string = '抬眼翻页';
   /** 没有进度时也显示提示（新版识别模型识别到人脸时常驻淡色提示）。 */
   @Prop cueVisible: boolean = false;
+  /** 节点 id 前缀，槽位为 `<前缀>_left|center|right`；空串表示不需要。 */
+  @Prop idPrefix: string = '';
+
+  private slotId(side: string): string {
+    return this.idPrefix ? `${this.idPrefix}_${side}` : '';
+  }
 
   private hasLeft(): boolean {
     return !!this.leftText || this.leftBattery >= 0;
@@ -237,6 +248,7 @@ export struct ReaderInfoBarRow {
           textColor: this.textColor,
           justify: FlexAlign.Start,
           slotWeight: 1,
+          slotId: this.slotId('left'),
           slotOpacity: this.textOpacity
         })
       } else {
@@ -254,6 +266,7 @@ export struct ReaderInfoBarRow {
             textSize: this.textSize,
             textColor: this.textColor,
             justify: FlexAlign.Center,
+            slotId: this.slotId('center'),
             slotMaxWidth: '50%',
             slotMarginLeft: 12,
             slotMarginRight: 12,
@@ -270,6 +283,7 @@ export struct ReaderInfoBarRow {
             textColor: this.textColor,
             justify: FlexAlign.End,
             slotWeight: 1,
+            slotId: this.slotId('right'),
             slotOpacity: this.textOpacity
           })
         } else {
@@ -283,6 +297,7 @@ export struct ReaderInfoBarRow {
           textSize: this.textSize,
           textColor: this.textColor,
           justify: FlexAlign.End,
+          slotId: this.slotId('right'),
           slotMaxWidth: this.hasLeft() ? '60%' : '100%',
           slotMarginLeft: 12,
           slotOpacity: this.textOpacity

@@ -7,6 +7,7 @@ import { AppSpacing } from '../../theme/AppSpacing';
 import {
   ReaderComicBackground,
   ReaderComicFit,
+  ReaderComicTrimMode,
   ReaderComicMode,
   ReaderComicOption
 } from '../../core/reader/ReaderComicSettings';
@@ -279,6 +280,7 @@ export struct ReaderComicDisplaySettingsPanel {
   @Prop surface: string = ReaderComicBackground.BLACK;
   @Prop pageGap: number = 0;
   @Prop fit: string = ReaderComicFit.WIDTH;
+  @Prop trim: string = ReaderComicTrimMode.OFF;
   @Prop infoBar: boolean = true;
   @Prop doubleTapZoom: boolean = true;
   /** 「AI超分」开关的保存值。 */
@@ -295,6 +297,7 @@ export struct ReaderComicDisplaySettingsPanel {
   onBackgroundChange: (value: string) => void = () => {};
   onPageGapChange: (value: number) => void = () => {};
   onFitChange: (value: string) => void = () => {};
+  onTrimChange: (value: string) => void = () => {};
   onInfoBarChange: (checked: boolean) => void = () => {};
   onDoubleTapZoomChange: (checked: boolean) => void = () => {};
   onSuperResolutionChange: (checked: boolean) => void = () => {};
@@ -337,7 +340,7 @@ export struct ReaderComicDisplaySettingsPanel {
       ReaderSettingActionRow({
         title: 'AI超分',
         minimumMembership: this.trialOpen ? '' : 'MONTHLY',
-        description: '当前系统不支持，需要 API 26 及以上且支持图片超分的设备',
+        description: '当前设备不支持（需 API 26 及以上并支持超分）',
         actionText: '',
         textColor: this.colors.textColor,
         subTextColor: this.colors.subTextColor
@@ -433,7 +436,6 @@ export struct ReaderComicDisplaySettingsPanel {
         colors: this.colors,
         onSelect: (value: string): void => this.onFitChange(value)
       })
-
       this.superResolutionRow()
 
       this.colorRow()
@@ -441,8 +443,18 @@ export struct ReaderComicDisplaySettingsPanel {
       this.textConvertRow()
 
       ReaderSettingSwitchRow({
+        title: '去白边',
+        description: '裁掉图片四周的白边或黑边；条漫长图只裁左右',
+        checked: this.trim !== ReaderComicTrimMode.OFF,
+        textColor: this.colors.textColor,
+        subTextColor: this.colors.subTextColor,
+        onChange: (checked: boolean): void =>
+          this.onTrimChange(checked ? ReaderComicTrimMode.ALL : ReaderComicTrimMode.OFF)
+      })
+
+      ReaderSettingSwitchRow({
         title: '双击缩放',
-        description: '双击放大到 2 倍，再双击还原；关闭后单击响应更快，双指缩放不受影响',
+        description: '双击放大 2 倍，再双击还原；关闭后单击更快',
         checked: this.doubleTapZoom,
         textColor: this.colors.textColor,
         subTextColor: this.colors.subTextColor,

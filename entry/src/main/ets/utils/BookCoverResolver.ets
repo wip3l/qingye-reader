@@ -12,15 +12,14 @@ export class BookCoverResolver {
 
   static sourceCovers(book: Book, darkMode: boolean,
     settings: CoverGallerySnapshot = CoverGalleryStore.snapshotFromStorage()): string[] {
-    return CoverGallerySettings.getDisplayCoverList(book, darkMode, settings.albumsRaw,
-      settings.lightAlbumId, settings.darkAlbumId, settings.applyScope, settings.targetBooksRaw,
-      settings.ignoreSourceCover, settings.coverMode, settings.ignoreEmptyCoverOnly);
+    return CoverGallerySettings.coversFor(book, darkMode, settings);
   }
 
   static first(book: Book | null, darkMode: boolean = AppStorage.get<boolean>('appDarkMode') || false,
     settings: CoverGallerySnapshot = CoverGalleryStore.snapshotFromStorage()): ResourceStr {
     if (!book) return '';
-    if (ThemeBookCoverSettings.enabled(darkMode, AppStorage.get<boolean>('appThemeBookCoverEnabled') || false)) {
+    if (ThemeBookCoverSettings.enabledFor(book, darkMode,
+      AppStorage.get<boolean>('appThemeBookCoverEnabled') || false, settings)) {
       return ThemeBookCoverSettings.covers(book, darkMode, settings.coverMode)[0] || '';
     }
     return BookCoverResolver.sourceCovers(book, darkMode, settings)[0] || '';

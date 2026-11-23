@@ -10,7 +10,7 @@ const attempts = file.slice(file.indexOf('class VideoNativeAttempt'), file.index
 const methods = file.slice(file.indexOf('struct VideoPlayerPage {'), file.indexOf('  @Builder'))
   .replace('struct VideoPlayerPage', 'class VideoPlayerPage')
   .replace(/@(State|StorageProp|StorageLink|Watch)(\([^\n]*?\))?\s+/g, '');
-const saves = [], notices = [], requests = [], timers = new Map();
+const saves = [], notices = [], requests = [], timers = new Map(), mixedPuts = [];
 let nextTimer = 0;
 class MediaController {
   calls = [];
@@ -37,6 +37,12 @@ const context = vm.createContext({
   AppDatabase: { getInstance: () => ({ updateBook: async book => saves.push(structuredClone(book)) }) },
   HdsFeedback: { showToast: text => notices.push(text) }, ReaderTtsFloatingSession: { pause: async () => {}, suspendForOtherAudio: async () => {}, resumeAfterOtherAudio: async () => {} },
   AppCookies: { saveSync() {} },
+  // 熄屏听视频：测试里没有在听的剧，接过位置一律返回 null。
+  VideoListenSession: { get: () => ({ isListening: () => false, takeOver: async () => null, setHost() {}, setAutoNext() {}, playEpisode() {} }) },
+  // 图文书里的视频章：测试里用 mixedTest 标记混排书，章节 type 为 video 的是视频章。
+  MixedVideoChapter: { isMixedBook: book => !!(book && book.mixedTest) },
+  BookChapter: { isVideoChapter: chapter => !!chapter && chapter.type === 'video' },
+  MixedVideoProgress: { get: async () => 37, put: async (...args) => { mixedPuts.push(args); } },
   setTimeout: (fn, ms) => { const id = ++nextTimer; timers.set(id, { fn, ms }); return id; },
   clearTimeout: id => timers.delete(id), CONTROLS_HIDE_DELAY_MS: 4000, SPEEDS: [1, 1.25, 1.75, 2, 0.75],
   DISPLAY_MODES: ['contain', 'none', 'cover', 'fill'],
@@ -162,6 +168,37 @@ assert.equal(reopened.controller.calls.find(call => Array.isArray(call) && call[
 reopened.onVideoSeeked(43);
 assert.equal(reopened.resumeNotice, '已恢复到 00:43');
 reopened.stopPlayback();
+
+// 图文书里的视频章：只列视频章、按章节序号定位、进度存进 MixedVideoProgress，不改书的阅读进度，也不重开阅读引擎。
+{
+  const mixedBook = { bookUrl: 'https://site.example/article', origin: 'https://site.example', mixedTest: true,
+    durChapterIndex: 0, durChapterPos: 120, durChapterTitle: '正文' };
+  const all = [{ index: 0, url: '/a', title: '正文' }, { index: 1, url: '/a?seg=1', title: '正片 1', type: 'video' },
+    { index: 2, url: '/a?seg=2', title: '正片 2', type: 'video' }];
+  let reopenedEngine = 0;
+  context.AppDatabase = { getInstance: () => ({
+    initWithContext: async () => {}, getBook: async () => mixedBook, getBookSource: async () => ({}),
+    updateBook: async book => saves.push(structuredClone(book)), getBookChapters: async () => all,
+  }) };
+  context.ReadBookEngine = { get: () => ({ book: mixedBook, chapters: all, openBook: async () => { reopenedEngine++; } }) };
+  const page = newPage();
+  const savesBefore = saves.length;
+  await page.loadBook(mixedBook.bookUrl, 2);
+  assert.deepEqual(page.chapters.map(chapter => chapter.title), ['正片 1', '正片 2'], 'only video chapters are episodes');
+  assert.equal(page.episodeIndex, 1, 'chapter index maps to the episode position');
+  assert.equal(requests.at(-1)[2].url, '/a?seg=2');
+  assert.equal(page.positionSec, 37, 'resumes from the mixed progress store');
+  assert.equal(reopenedEngine, 0, 'the reader engine is not reopened');
+  page.onVideoPrepared(300);
+  page.onVideoSeeked(37);
+  page.positionSec = 64;
+  page.saveProgress(true);
+  assert.deepEqual(mixedPuts.at(-1), [{}, mixedBook.bookUrl, '/a?seg=2', 64]);
+  assert.equal([mixedBook.durChapterIndex, mixedBook.durChapterPos, mixedBook.durChapterTitle].join('|'), '0|120|正文',
+    'reading progress is untouched');
+  assert.equal(saves.length, savesBefore, 'the book row is not rewritten');
+  page.stopPlayback();
+}
 context.AppDatabase = database;
 
 // Controller-driven seeks may only report onUpdate; onSeeked belongs to the native progress bar.

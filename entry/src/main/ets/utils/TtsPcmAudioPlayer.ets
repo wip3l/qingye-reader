@@ -2,6 +2,7 @@ import { audio } from '@kit.AudioKit';
 import deviceInfo from '@ohos.deviceInfo';
 import { TtsAudioSession, TtsAudioSessionHintListener } from './TtsAudioSession';
 import { PlaybackLoudnessGain } from './PlaybackLoudnessGain';
+import { PcmOutput, PcmOutputHandlers } from './PcmOutput';
 import { sleepMs } from '@legado/sourceengine';
 
 interface PcmPlaybackMark {
@@ -10,10 +11,13 @@ interface PcmPlaybackMark {
 }
 
 interface PendingPcmWrite {
+  id: number;
   data: Uint8Array;
   offset: number;
   generation: number;
   resolve: () => void;
+  /** 线程输出时已经发给了哪个输出；换输出后要重发。 */
+  forwardedTo?: PcmOutput | null;
 }
 
 export interface PcmPlaybackCue {
@@ -25,8 +29,21 @@ export class TtsPcmAudioPlayer {
   private static readonly CLOCK_FALLBACK_DRAIN_GRACE_MS: number = 80;
   private static readonly TIMESTAMP_TAIL_DRAIN_GRACE_MS: number = 100;
   private static readonly RENDERER_DRAIN_MAX_WAIT_MS: number = 120;
+  private static readonly GAP_FILL_LEAD_MS: number = 200;
+  private static readonly GAP_FILL_MAX_MS: number = 15000;
+  // 本机渲染器调 setSpeed 失败过：之后自定义音色改回本地时间伸缩（见 HttpTtsReader.synthesize）。
+  private static speedUnsupported: boolean = false;
+  /**
+   * 渲染器倍速（AudioRenderer.setSpeed，系统做时间伸缩，不变调）。时间线、提示点都按写入的原始帧算：
+   * 倍速不是 1 时播放进度按“墙钟 × 倍速”推算，不用渲染器帧位置——系统变速后帧位置按哪一侧计数没有文档保证。
+   */
+  private speed: number = 1;
+  private gapFillTimerId: number = -1;
+  private gapFillStartedAt: number = 0;
+  private gapFillFrames: number = 0;
+  private gapFillUntil: number = 0;
   private readonly audioSessionOwner: string = `tts_pcm_${Date.now()}_${Math.random()}`;
-  private renderer: audio.AudioRenderer | null = null;
+  private renderer: PcmOutput | null = null;
   private currentSampleRate: audio.AudioSamplingRate = audio.AudioSamplingRate.SAMPLE_RATE_16000;
   private playGeneration: number = 0;
   private writeChain: Promise<void> = Promise.resolve();
@@ -43,8 +60,18 @@ export class TtsPcmAudioPlayer {
   private timestampFailureLogged: boolean = false;
   private progressMode: string = 'CLOCK_FALLBACK';
   private rendererStartPromise: Promise<void> | null = null;
-  private rendererWriteCallback: audio.AudioRendererWriteDataCallback | null = null;
-  private rendererInterruptCallback: ((event: audio.InterruptEvent) => void) | null = null;
+  private nextWriteId: number = 1;
+  private readonly outputHandlers: PcmOutputHandlers = {
+    pull: (_output: PcmOutput, buffer: ArrayBuffer): audio.AudioDataCallbackResult =>
+      this.handleRendererWriteData(buffer),
+    consumed: (output: PcmOutput, writeIds: number[], paddingFrames: number): void =>
+      this.handleThreadedConsumed(output, writeIds, paddingFrames),
+    interrupt: (output: PcmOutput, hint: audio.InterruptHint, force: audio.InterruptForceType): void =>
+      this.handleInterruptHint(output, hint, force, 'stream'),
+    failed: (output: PcmOutput): void => {
+      this.replaceFailedOutput(output);
+    }
+  };
   private pendingWrites: PendingPcmWrite[] = [];
   private pendingWriteBytes: number = 0;
   private paused: boolean = false;
@@ -67,8 +94,96 @@ export class TtsPcmAudioPlayer {
     await this.drain();
   }
 
+  static speedSupported(): boolean {
+    return !TtsPcmAudioPlayer.speedUnsupported;
+  }
+
+  /**
+   * 设渲染器倍速，播放中途也可以改：已写进去还没放的部分按新倍速放。1 倍时从不调用系统变速，原样直通。
+   * 改之前先把已经放过的帧按旧倍速记进时间线，之后从当前位置按新倍速接着推算。
+   */
+  setSpeed(speed: number): void {
+    const next = TtsPcmAudioPlayer.speedUnsupported ? 1 : Math.max(0.25, Math.min(4, speed || 1));
+    if (Math.abs(next - this.speed) < 0.001) return;
+    this.rebaseTimelineForSpeedChange();
+    const previous = this.speed;
+    this.speed = next;
+    console.info(`[TTS] pcm speed: ${previous} -> ${next}`);
+    const renderer = this.renderer;
+    if (renderer) this.applyRendererSpeed(renderer);
+  }
+
+  private applyRendererSpeed(renderer: PcmOutput): void {
+    const speed = this.speed;
+    renderer.setSpeed(speed).catch((error: Error) => {
+      if (renderer !== this.renderer || renderer.state === audio.AudioState.STATE_RELEASED ||
+        Math.abs(speed - 1) < 0.001) {
+        return;
+      }
+      TtsPcmAudioPlayer.speedUnsupported = true;
+      console.warn(`[TTS] pcm renderer setSpeed(${speed}) unsupported, falling back to local time stretch:`, error);
+      if (Math.abs(this.speed - speed) < 0.001) {
+        this.rebaseTimelineForSpeedChange();
+        this.speed = 1;
+      }
+    });
+  }
+
+  private rebaseTimelineForSpeedChange(): void {
+    const generation = this.playGeneration;
+    const clockRunning = this.timelineStartedAt > 0;
+    this.updatePlaybackTimeline(generation);
+    if (clockRunning && this.timelineStartedAt > 0) {
+      this.timelineBaseFrame = this.lastReachedFrame;
+      this.timelineStartedAt = Date.now();
+    }
+    // 回到 1 倍时帧位置重新对齐到这里。
+    this.rendererFrameOrigin = -1;
+    this.rendererLogicalFrameOrigin = this.lastReachedFrame;
+  }
+
   write(data: ArrayBuffer, sampleRate: number): Promise<void> {
+    this.stopGapFill();
     return this.enqueueWrite(data, sampleRate);
+  }
+
+  /**
+   * 章与章之间下一章的语音还没写来时，按实时速度往流里垫静音（最多领先 GAP_FILL_LEAD_MS）。
+   *
+   * 不走 offload 的通道（普通蓝牙耳机等）只预收零点几秒数据；流里一断数据，音频服务约 1 秒后把它转入
+   * 待机，系统随即判定应用“全部静音”（standby、all session mute），再过几秒就冻结进程，下一章要等解锁。
+   * 静音按帧计入时间线，下一章的提示点照常对齐；写入真正的语音、停止、暂停或 drain 时自动停，最多垫 maxMs。
+   */
+  startGapFill(maxMs: number = TtsPcmAudioPlayer.GAP_FILL_MAX_MS): void {
+    if (!this.renderer || this.paused || this.systemInterrupted) return;
+    this.gapFillUntil = Date.now() + Math.max(0, maxMs);
+    if (this.gapFillTimerId >= 0) return;
+    this.gapFillStartedAt = Date.now();
+    this.gapFillFrames = 0;
+    this.gapFillTimerId = setInterval((): void => this.tickGapFill(), 50);
+    this.tickGapFill();
+  }
+
+  stopGapFill(): void {
+    if (this.gapFillTimerId < 0) return;
+    clearInterval(this.gapFillTimerId);
+    this.gapFillTimerId = -1;
+    console.info(`[TTS] pcm gap fill stopped: frames=${this.gapFillFrames}`);
+  }
+
+  private tickGapFill(): void {
+    if (!this.renderer || this.paused || this.systemInterrupted || Date.now() > this.gapFillUntil) {
+      this.stopGapFill();
+      return;
+    }
+    const sampleRate = Math.max(1, this.queuedSampleRate || Number(this.currentSampleRate) || 16000);
+    // 变速时渲染器按倍速取数，垫的静音也要按倍速多垫，才能保持领先。
+    const dueFrames = Math.round((Date.now() - this.gapFillStartedAt + TtsPcmAudioPlayer.GAP_FILL_LEAD_MS) *
+      sampleRate * this.speed / 1000);
+    const frames = Math.min(dueFrames - this.gapFillFrames, Math.round(sampleRate * 0.3));
+    if (frames < Math.round(sampleRate * 0.02)) return;
+    this.gapFillFrames += frames;
+    this.enqueueWrite(new ArrayBuffer(frames * 2), sampleRate, undefined, true).catch((): void => {});
   }
 
   /**
@@ -86,6 +201,7 @@ export class TtsPcmAudioPlayer {
   }
 
   writeSegment(data: ArrayBuffer, sampleRate: number, onPlaybackStart: () => void): Promise<void> {
+    this.stopGapFill();
     return this.enqueueWrite(data, sampleRate, [{
       frameOffset: 0,
       callback: onPlaybackStart
@@ -93,11 +209,13 @@ export class TtsPcmAudioPlayer {
   }
 
   writeTimedSegment(data: ArrayBuffer, sampleRate: number, cues: PcmPlaybackCue[]): Promise<void> {
+    this.stopGapFill();
     return this.enqueueWrite(data, sampleRate, cues);
   }
 
+  /** filler：垫的静音，计入时间线但不算正文结尾（drain 不等它）。 */
   private enqueueWrite(data: ArrayBuffer, sampleRate: number,
-    cues?: PcmPlaybackCue[]): Promise<void> {
+    cues?: PcmPlaybackCue[], filler: boolean = false): Promise<void> {
     if (!data || data.byteLength === 0) {
       return this.writeChain;
     }
@@ -114,7 +232,7 @@ export class TtsPcmAudioPlayer {
     const startFrame = this.queuedFrames;
     const segmentFrames = Math.floor(audioData.byteLength / 2);
     this.queuedFrames += segmentFrames;
-    this.queuedContentEndFrame = this.queuedFrames;
+    if (!filler) this.queuedContentEndFrame = this.queuedFrames;
     if (cues && cues.length > 0) {
       const sortedCues = cues.slice().sort((left: PcmPlaybackCue, right: PcmPlaybackCue) =>
         left.frameOffset - right.frameOffset);
@@ -132,13 +250,16 @@ export class TtsPcmAudioPlayer {
       resolveWrite = resolve;
     });
     const pendingWrite: PendingPcmWrite = {
+      id: this.nextWriteId++,
       data: new Uint8Array(audioData),
       offset: 0,
       generation: generation,
-      resolve: resolveWrite
+      resolve: resolveWrite,
+      forwardedTo: null
     };
     this.pendingWrites.push(pendingWrite);
     this.pendingWriteBytes += audioData.byteLength;
+    this.forwardPendingWrites();
     const completionPromise = this.ensureRendererStarted(normalizedSampleRate, generation)
       .then(() => consumedPromise)
       .catch((error: Error) => {
@@ -184,6 +305,7 @@ export class TtsPcmAudioPlayer {
   }
 
   async drain(): Promise<void> {
+    this.stopGapFill();
     await this.writeChain;
     await this.waitUntilResumed();
     const renderer = this.renderer;
@@ -227,7 +349,7 @@ export class TtsPcmAudioPlayer {
     }
   }
 
-  private async settleRendererDrain(renderer: audio.AudioRenderer, generation: number): Promise<void> {
+  private async settleRendererDrain(renderer: PcmOutput, generation: number): Promise<void> {
     let settled = false;
     let drainError: Error | null = null;
     renderer.drain()
@@ -255,7 +377,7 @@ export class TtsPcmAudioPlayer {
     }
   }
 
-  private async waitUntilPlaybackFrameReached(targetFrame: number, renderer: audio.AudioRenderer,
+  private async waitUntilPlaybackFrameReached(targetFrame: number, renderer: PcmOutput,
     generation: number): Promise<boolean> {
     const sampleRate = Math.max(1, this.queuedSampleRate || Number(this.currentSampleRate) || 16000);
     let fallbackBaseFrame = this.lastReachedFrame;
@@ -286,7 +408,7 @@ export class TtsPcmAudioPlayer {
       // this does not cut speech; the grace only absorbs output-route latency.
       const fallbackElapsedMs = Math.max(0,
         now - fallbackStartedAt - TtsPcmAudioPlayer.TIMESTAMP_TAIL_DRAIN_GRACE_MS);
-      const fallbackFrame = fallbackBaseFrame + Math.floor(fallbackElapsedMs * sampleRate / 1000);
+      const fallbackFrame = fallbackBaseFrame + Math.floor(fallbackElapsedMs * sampleRate * this.speed / 1000);
       if (this.pendingWriteBytes === 0 && fallbackFrame >= targetFrame) {
         console.warn(`[TTS] pcm drain timestamp tail fallback: reached=${this.lastReachedFrame},` +
           `target=${targetFrame},elapsedMs=${now - fallbackStartedAt}`);
@@ -300,12 +422,14 @@ export class TtsPcmAudioPlayer {
   }
 
   async pause(): Promise<void> {
+    this.stopGapFill();
     this.interruptRevision++;
     this.interruptResumeAllowed = false;
     if (this.paused) {
       return;
     }
     this.paused = true;
+    this.syncOutputHold();
     const renderer = this.renderer;
     const generation = this.playGeneration;
     if (!renderer || renderer.state !== audio.AudioState.STATE_RUNNING) {
@@ -332,6 +456,7 @@ export class TtsPcmAudioPlayer {
     this.systemInterrupted = false;
     this.interruptResumeAllowed = false;
     this.systemDucked = false;
+    this.syncOutputHold();
     const revision = ++this.interruptRevision;
     await this.interruptPausePromise;
     if (revision !== this.interruptRevision || this.paused || this.systemInterrupted) return;
@@ -371,6 +496,7 @@ export class TtsPcmAudioPlayer {
   }
 
   stop(): void {
+    this.stopGapFill();
     this.playGeneration++;
     this.interruptRevision++;
     this.interruptResumeAllowed = false;
@@ -385,16 +511,12 @@ export class TtsPcmAudioPlayer {
     this.rendererStartPromise = null;
     this.resolvePendingWrites();
     const renderer = this.renderer;
-    const writeCallback = this.rendererWriteCallback;
-    const interruptCallback = this.rendererInterruptCallback;
-    this.rendererWriteCallback = null;
-    this.rendererInterruptCallback = null;
     this.clearPlaybackTimeline(renderer);
     this.renderer = null;
     if (!renderer) {
       return;
     }
-    this.releaseRenderer(renderer, writeCallback, interruptCallback);
+    this.releaseRenderer(renderer);
   }
 
   release(): void {
@@ -407,10 +529,11 @@ export class TtsPcmAudioPlayer {
         `queuedFrames=${this.queuedFrames},contentEnd=${this.queuedContentEndFrame},marks=${this.playbackMarks.length},` +
         `pendingBytes=${this.pendingWriteBytes},progress=${this.progressMode}`;
     }
-    return `renderer=${this.audioStateName(this.renderer.state)},paused=${this.paused},` +
+    return `renderer=${this.audioStateName(this.renderer.state)},threaded=${this.renderer.threaded},` +
+      `paused=${this.paused},` +
       `interrupted=${this.systemInterrupted},ducked=${this.systemDucked},sampleRate=${this.currentSampleRate},` +
       `generation=${this.playGeneration},queuedFrames=${this.queuedFrames},contentEnd=${this.queuedContentEndFrame},` +
-      `marks=${this.playbackMarks.length},` +
+      `marks=${this.playbackMarks.length},speed=${this.speed},` +
       `pendingBytes=${this.pendingWriteBytes},progress=${this.progressMode}`;
   }
 
@@ -452,6 +575,8 @@ export class TtsPcmAudioPlayer {
       if (!this.paused && !this.systemInterrupted && generation === this.playGeneration &&
         renderer === this.renderer) {
         await renderer.start();
+        // 建渲染器时已设过；启动后再设一次，防止个别机型 start 时把倍速复位。
+        if (Math.abs(this.speed - 1) >= 0.001) this.applyRendererSpeed(renderer);
         await this.pauseRendererIfInterrupted(renderer);
       }
     }
@@ -465,7 +590,7 @@ export class TtsPcmAudioPlayer {
     }
   }
 
-  private waitUntilRendererRunning(renderer: audio.AudioRenderer, generation: number): Promise<boolean> {
+  private waitUntilRendererRunning(renderer: PcmOutput, generation: number): Promise<boolean> {
     if (generation !== this.playGeneration || this.renderer !== renderer) {
       return Promise.resolve(false);
     }
@@ -488,7 +613,7 @@ export class TtsPcmAudioPlayer {
     });
   }
 
-  private async pauseRendererIfInterrupted(renderer: audio.AudioRenderer): Promise<boolean> {
+  private async pauseRendererIfInterrupted(renderer: PcmOutput): Promise<boolean> {
     if (renderer !== this.renderer) return true;
     if (!this.paused && !this.systemInterrupted) return false;
     if (renderer.state === audio.AudioState.STATE_RUNNING) await renderer.pause();
@@ -518,17 +643,11 @@ export class TtsPcmAudioPlayer {
     }
   }
 
-  private async releaseStaleRenderer(renderer: audio.AudioRenderer): Promise<void> {
-    let writeCallback: audio.AudioRendererWriteDataCallback | null = null;
-    let interruptCallback: ((event: audio.InterruptEvent) => void) | null = null;
+  private async releaseStaleRenderer(renderer: PcmOutput): Promise<void> {
     if (this.renderer === renderer) {
       this.renderer = null;
-      writeCallback = this.rendererWriteCallback;
-      interruptCallback = this.rendererInterruptCallback;
-      this.rendererWriteCallback = null;
-      this.rendererInterruptCallback = null;
     }
-    await this.releaseRenderer(renderer, writeCallback, interruptCallback);
+    await this.releaseRenderer(renderer);
   }
 
   private ensurePlaybackTimeline(sampleRate: number, generation: number): void {
@@ -563,17 +682,19 @@ export class TtsPcmAudioPlayer {
     this.clearPlaybackTimelineTimer();
     const sampleRate = Math.max(1, this.queuedSampleRate || Number(this.currentSampleRate) || 16000);
     const elapsedMs = Math.max(0, Date.now() - this.timelineStartedAt);
-    const clockFrame = this.timelineBaseFrame + Math.round(elapsedMs * sampleRate / 1000);
+    const clockFrame = this.timelineBaseFrame + Math.round(elapsedMs * sampleRate * this.speed / 1000);
     let reachedFrame = clockFrame;
     const renderer = this.renderer;
     if (!renderer || renderer.state !== audio.AudioState.STATE_RUNNING || this.paused || this.systemInterrupted) {
       this.pausePlaybackTimelineAt(this.lastReachedFrame);
       return;
     }
-    if (renderer && renderer.state === audio.AudioState.STATE_RUNNING) {
+    if (Math.abs(this.speed - 1) >= 0.001) {
+      // 变速时只用“墙钟 × 倍速”（见 speed 字段注释）；按旧设备的时钟模式处理，drain 也带上同样的余量。
+      this.progressMode = 'CLOCK_FALLBACK';
+    } else if (renderer && renderer.state === audio.AudioState.STATE_RUNNING) {
       try {
-        const timestamp = renderer.getAudioTimestampInfoSync();
-        const rendererFrame = Math.max(0, Math.round(timestamp.framePos));
+        const rendererFrame = renderer.framePosition();
         if (this.rendererFrameOrigin < 0) {
           this.rendererFrameOrigin = rendererFrame;
           this.rendererLogicalFrameOrigin = Math.max(this.lastReachedFrame, clockFrame);
@@ -631,7 +752,7 @@ export class TtsPcmAudioPlayer {
     }
   }
 
-  private clearPlaybackTimeline(renderer: audio.AudioRenderer | null): void {
+  private clearPlaybackTimeline(renderer: PcmOutput | null): void {
     this.clearPlaybackTimelineTimer();
     this.queuedFrames = 0;
     this.queuedContentEndFrame = 0;
@@ -669,7 +790,7 @@ export class TtsPcmAudioPlayer {
     }
   }
 
-  private async ensureRenderer(sampleRate: number): Promise<audio.AudioRenderer> {
+  private async ensureRenderer(sampleRate: number): Promise<PcmOutput> {
     const nextSampleRate = this.toAudioSampleRate(sampleRate);
     if (this.renderer && this.currentSampleRate === nextSampleRate &&
       this.renderer.state !== audio.AudioState.STATE_RELEASED &&
@@ -677,13 +798,9 @@ export class TtsPcmAudioPlayer {
       return this.renderer;
     }
     const previousRenderer = this.renderer;
-    const previousWriteCallback = this.rendererWriteCallback;
-    const previousInterruptCallback = this.rendererInterruptCallback;
     this.renderer = null;
-    this.rendererWriteCallback = null;
-    this.rendererInterruptCallback = null;
     if (previousRenderer) {
-      await this.releaseRenderer(previousRenderer, previousWriteCallback, previousInterruptCallback);
+      await this.releaseRenderer(previousRenderer);
     }
     this.currentSampleRate = nextSampleRate;
     const options: audio.AudioRendererOptions = {
@@ -700,65 +817,90 @@ export class TtsPcmAudioPlayer {
         rendererFlags: 0
       }
     };
-    const renderer = await audio.createAudioRenderer(options);
-    const writeCallback: audio.AudioRendererWriteDataCallback = (data: ArrayBuffer):
-      audio.AudioDataCallbackResult => {
-      return this.handleRendererWriteData(data);
-    };
-    renderer.on('writeData', writeCallback);
-    const interruptCallback = (event: audio.InterruptEvent): void => {
-      this.handleAudioInterrupt(renderer, event);
-    };
-    renderer.on('audioInterrupt', interruptCallback);
-    this.rendererWriteCallback = writeCallback;
-    this.rendererInterruptCallback = interruptCallback;
+    // 优先在输出线程里建渲染器：取数回调不经过主线程，界面卡顿时不断音（见 PcmOutput）。
+    const renderer = await PcmOutput.create(options, this.outputHandlers);
     this.renderer = renderer;
+    if (Math.abs(this.speed - 1) >= 0.001) this.applyRendererSpeed(renderer);
+    this.syncOutputHold();
+    this.forwardPendingWrites();
     TtsAudioSession.addHintListener(this.sessionHintListener);
     PlaybackLoudnessGain.trackRenderer(renderer);
     console.info(`[TTS] audio renderer created: ${this.debugState()}`);
     return renderer;
   }
 
-  private async releaseRenderer(renderer: audio.AudioRenderer,
-    writeCallback: audio.AudioRendererWriteDataCallback | null,
-    interruptCallback: ((event: audio.InterruptEvent) => void) | null): Promise<void> {
+  private async releaseRenderer(renderer: PcmOutput): Promise<void> {
     PlaybackLoudnessGain.untrackRenderer(renderer);
-    if (writeCallback) {
-      try {
-        renderer.off('writeData', writeCallback);
-      } catch (error) {
-        console.warn('[TTS] unregister pcm write callback failed:', error);
+    await renderer.shutdown();
+  }
+
+  /** 线程输出：待写数据整段提前发给输出线程（发副本，换输出时还能重发）；过期的一代直接作废。 */
+  private forwardPendingWrites(): void {
+    const renderer = this.renderer;
+    if (!renderer || !renderer.threaded) return;
+    for (const pending of this.pendingWrites.slice()) {
+      if (pending.forwardedTo === renderer) continue;
+      if (pending.generation !== this.playGeneration) {
+        this.discardPendingWrite(pending);
+        continue;
       }
-    }
-    if (interruptCallback) {
-      try {
-        renderer.off('audioInterrupt', interruptCallback);
-      } catch (error) {
-        console.warn('[TTS] unregister pcm interrupt callback failed:', error);
-      }
-    }
-    try {
-      if (renderer.state === audio.AudioState.STATE_RUNNING ||
-        renderer.state === audio.AudioState.STATE_PAUSED) {
-        await renderer.stop();
-      }
-    } catch (error) {
-      console.warn('[TTS] stop pcm renderer failed:', error);
-    }
-    try {
-      if (renderer.state !== audio.AudioState.STATE_RELEASED) {
-        await renderer.release();
-      }
-    } catch (error) {
-      console.warn('[TTS] release pcm renderer failed:', error);
+      const remaining = pending.data.subarray(pending.offset);
+      if (remaining.length === 0) continue;
+      pending.forwardedTo = renderer;
+      const copy = new ArrayBuffer(remaining.length);
+      new Uint8Array(copy).set(remaining);
+      renderer.send(pending.id, copy);
     }
   }
 
-  private handleAudioInterrupt(renderer: audio.AudioRenderer, event: audio.InterruptEvent): void {
+  /** 线程输出整段写完：与直连时 handleRendererWriteData 里写完一段的处理相同。 */
+  private handleThreadedConsumed(output: PcmOutput, writeIds: number[], paddingFrames: number): void {
+    if (output !== this.renderer) return;
+    for (const id of writeIds) {
+      const index = this.pendingWrites.findIndex((pending: PendingPcmWrite) => pending.id === id);
+      if (index < 0) continue;
+      const pending = this.pendingWrites[index];
+      this.pendingWrites.splice(index, 1);
+      this.pendingWriteBytes = Math.max(0, this.pendingWriteBytes - (pending.data.length - pending.offset));
+      pending.offset = pending.data.length;
+      pending.resolve();
+    }
+    if (paddingFrames > 0) {
+      this.queuedFrames += paddingFrames;
+      console.info(`[TTS] pcm write tail padded: frames=${paddingFrames}`);
+    }
+  }
+
+  /** 输出线程不可用：换成主线程直连的渲染器，还没写完的数据从头接上。 */
+  private async replaceFailedOutput(output: PcmOutput): Promise<void> {
+    if (output !== this.renderer) return;
+    console.warn(`[TTS] threaded pcm output failed, switching to main thread: ${this.debugState()}`);
+    const generation = this.playGeneration;
+    const sampleRate = Number(this.currentSampleRate);
+    this.renderer = null;
+    this.rendererStartPromise = null;
+    await this.releaseRenderer(output);
+    for (const pending of this.pendingWrites) pending.forwardedTo = null;
+    this.rendererFrameOrigin = -1;
+    this.rendererLogicalFrameOrigin = this.lastReachedFrame;
+    if (generation !== this.playGeneration || this.pendingWrites.length === 0) return;
+    try {
+      await this.ensureRendererStarted(sampleRate, generation);
+    } catch (error) {
+      console.warn('[TTS] restart pcm output on main thread failed:', error);
+    }
+  }
+
+  /** 线程输出在暂停或被打断期间不取数据；直连时 handleRendererWriteData 自己看这两个标记。 */
+  private syncOutputHold(): void {
+    this.renderer?.setHold(this.paused || this.systemInterrupted);
+  }
+
+  private handleAudioInterrupt(renderer: PcmOutput, event: audio.InterruptEvent): void {
     this.handleInterruptHint(renderer, event.hintType, event.forceType, 'stream');
   }
 
-  private handleInterruptHint(renderer: audio.AudioRenderer, hint: audio.InterruptHint,
+  private handleInterruptHint(renderer: PcmOutput, hint: audio.InterruptHint,
     forceType: audio.InterruptForceType, from: string): void {
     if (renderer !== this.renderer) {
       return;
@@ -787,6 +929,7 @@ export class TtsPcmAudioPlayer {
       this.interruptResumeAllowed = !this.paused;
       this.updatePlaybackTimeline(this.playGeneration);
       this.systemInterrupted = true;
+      this.syncOutputHold();
       this.updatePlaybackTimeline(this.playGeneration);
       // SHARE requires the application to pause. FORCE has already paused/stopped the renderer.
       if (forceType === audio.InterruptForceType.INTERRUPT_SHARE &&
@@ -812,7 +955,7 @@ export class TtsPcmAudioPlayer {
   }
 
   /** 系统对永久停止不发恢复通知：等通话结束、其他应用的媒体声音停下后，按收到恢复处理。 */
-  private resumeWhenOtherAudioEnds(renderer: audio.AudioRenderer, revision: number): void {
+  private resumeWhenOtherAudioEnds(renderer: PcmOutput, revision: number): void {
     const cancelled = (): boolean => renderer !== this.renderer || revision !== this.interruptRevision ||
       this.paused || !this.systemInterrupted || !this.interruptResumeAllowed;
     TtsAudioSession.waitForOtherAudioToEnd(cancelled).then((ended: boolean) => {
@@ -825,7 +968,7 @@ export class TtsPcmAudioPlayer {
     });
   }
 
-  private async resumeRendererAfterInterrupt(renderer: audio.AudioRenderer, revision: number): Promise<void> {
+  private async resumeRendererAfterInterrupt(renderer: PcmOutput, revision: number): Promise<void> {
     await this.interruptPausePromise;
     if (renderer !== this.renderer || revision !== this.interruptRevision || this.paused ||
       !this.systemInterrupted || !this.interruptResumeAllowed) {
@@ -848,6 +991,7 @@ export class TtsPcmAudioPlayer {
       this.systemInterrupted = false;
       this.interruptResumeAllowed = false;
       this.systemDucked = false;
+      this.syncOutputHold();
       if (renderer === this.renderer && renderer.state === audio.AudioState.STATE_RUNNING) {
         this.rendererFrameOrigin = -1;
         this.rendererLogicalFrameOrigin = this.lastReachedFrame;

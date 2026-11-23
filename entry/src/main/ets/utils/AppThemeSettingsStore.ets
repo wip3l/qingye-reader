@@ -2,10 +2,12 @@ import { Context } from '@kit.AbilityKit';
 import preferences from '@ohos.data.preferences';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import {
+  DefaultBaseRevision,
   ThemeColorOverrides,
   ThemeColorTokens,
   ThemeComponentSourceIds,
   ThemeEmphasisOverrides,
+  ThemeTitleEmphasisTokens,
   ThemeIds,
   ThemePack,
   ThemeRadiusOverrides,
@@ -17,10 +19,24 @@ import { ReaderSettings, ReaderSettingsStore } from './ReaderSettingsStore';
 import { ReaderThemeHelper, ReaderThemeItem } from './ReaderThemeHelper';
 import { CloudSyncChangeTracker } from '../account/CloudSyncChangeTracker';
 import { HexColor } from './HexColor';
+import {
+  CHAPTER_HEAD_NONE,
+  COMMENT_IMAGE_NONE,
+  commentBubbleHasImage,
+  commentBubbleIsEmpty,
+  copyCommentImage,
+  isPackThemeId,
+  normalizeChapterHead,
+  normalizeCommentBubble,
+  ThemePackageChapterHead,
+  ThemePackageCommentBubble
+} from '../theme/share/ThemePackageFormat';
 
 export class AppThemeSettings {
   themeId: string = '';
   themeBookCoverEnabled: boolean = false;
+  // 书架封面套主题边框，和是否用主题封面分开；没存过时沿用 themeBookCoverEnabled（两者原来是一个开关）。
+  themeBookFrameEnabled: boolean = false;
   // Remembers the last choice made in the "apply theme" prompt. Defaults to off so
   // switching themes preserves the reader's current layout unless the user opts in.
   themeApplyLayoutEnabled: boolean = false;
@@ -67,11 +83,14 @@ export class AppThemeSettings {
   customDarkStartupText: ThemeStartupTextStyle = new ThemeStartupTextStyle();
   // 方案卡片的预览图（本机文件，不同步）；空用启动封面。
   customPreviewImagePath: string = '';
+  // 方案里 plain-default 指哪一版默认主题；旧数据没有这项，读取时换成原默认主题（见 DefaultBaseRevision）。
+  defaultBaseRevision: number = DefaultBaseRevision.CURRENT;
 }
 
 export class AppThemeSettingsStore {
   static readonly KEY_THEME_ID: string = ThemeRuntime.KEY_THEME_ID;
   static readonly KEY_THEME_BOOK_COVER_ENABLED: string = 'appThemeBookCoverEnabled';
+  static readonly KEY_THEME_BOOK_FRAME_ENABLED: string = 'appThemeBookFrameEnabled';
   static readonly KEY_THEME_APPLY_LAYOUT_ENABLED: string = 'appThemeApplyLayoutEnabled';
   static readonly KEY_LIGHT_ACCENT_COLOR: string = 'appLightAccentColor';
   static readonly KEY_DARK_ACCENT_COLOR: string = 'appDarkAccentColor';
@@ -111,6 +130,7 @@ export class AppThemeSettingsStore {
   static readonly KEY_CUSTOM_LIGHT_STARTUP_TEXT: string = 'appCustomLightStartupText';
   static readonly KEY_CUSTOM_DARK_STARTUP_TEXT: string = 'appCustomDarkStartupText';
   static readonly KEY_CUSTOM_PREVIEW_IMAGE_PATH: string = 'appCustomPreviewImagePath';
+  static readonly KEY_DEFAULT_BASE_REVISION: string = 'appCustomDefaultBaseRevision';
   static readonly DEFAULT_THEME_ID: string = BuiltinThemeRegistry.DEFAULT_THEME_ID;
   static readonly DEFAULT_LIGHT_ACCENT_COLOR: string = '#007DFF';
   static readonly DEFAULT_DARK_ACCENT_COLOR: string = '#4E9BFF';
@@ -132,6 +152,8 @@ export class AppThemeSettingsStore {
     settings.themeBookCoverEnabled = await AppThemeSettingsStore.getBoolean(
       store, AppThemeSettingsStore.KEY_THEME_BOOK_COVER_ENABLED,
       AppStorage.get<boolean>(AppThemeSettingsStore.KEY_THEME_BOOK_COVER_ENABLED) || false);
+    settings.themeBookFrameEnabled = await AppThemeSettingsStore.getBoolean(
+      store, AppThemeSettingsStore.KEY_THEME_BOOK_FRAME_ENABLED, settings.themeBookCoverEnabled);
     settings.themeApplyLayoutEnabled = await AppThemeSettingsStore.getBoolean(
       store, AppThemeSettingsStore.KEY_THEME_APPLY_LAYOUT_ENABLED, false);
     const customBaseFallback = BuiltinThemeRegistry.normalizeBuiltinId(settings.themeId);
@@ -146,6 +168,7 @@ export class AppThemeSettingsStore {
       store, AppThemeSettingsStore.KEY_CUSTOM_DARK_SOURCES,
       AppStorage.get<string>(AppThemeSettingsStore.KEY_CUSTOM_DARK_SOURCES) || ''),
     settings.customBaseThemeId);
+    await AppThemeSettingsStore.upgradeStoredDefaultBase(store, settings);
     const defaults = AppThemeSettingsStore.defaultsForTheme(
       settings.themeId === ThemeIds.CUSTOM ? settings.customBaseThemeId : settings.themeId);
     settings.lightAccentColor = AppThemeSettingsStore.normalizeColor(await AppThemeSettingsStore.getString(
@@ -249,6 +272,7 @@ export class AppThemeSettingsStore {
     const store = await preferences.getPreferences(context, AppThemeSettingsStore.STORE_NAME);
     await store.put(AppThemeSettingsStore.KEY_THEME_ID, normalized.themeId);
     await store.put(AppThemeSettingsStore.KEY_THEME_BOOK_COVER_ENABLED, normalized.themeBookCoverEnabled);
+    await store.put(AppThemeSettingsStore.KEY_THEME_BOOK_FRAME_ENABLED, normalized.themeBookFrameEnabled);
     await store.put(AppThemeSettingsStore.KEY_THEME_APPLY_LAYOUT_ENABLED, normalized.themeApplyLayoutEnabled);
     await store.put(AppThemeSettingsStore.KEY_LIGHT_ACCENT_COLOR, normalized.lightAccentColor);
     await store.put(AppThemeSettingsStore.KEY_DARK_ACCENT_COLOR, normalized.darkAccentColor);
@@ -326,6 +350,8 @@ export class AppThemeSettingsStore {
     AppStorage.setOrCreate(AppThemeSettingsStore.KEY_THEME_ID, normalized.themeId);
     AppStorage.setOrCreate(AppThemeSettingsStore.KEY_THEME_BOOK_COVER_ENABLED,
       normalized.themeBookCoverEnabled);
+    AppStorage.setOrCreate(AppThemeSettingsStore.KEY_THEME_BOOK_FRAME_ENABLED,
+      normalized.themeBookFrameEnabled);
     AppStorage.setOrCreate(AppThemeSettingsStore.KEY_LIGHT_ACCENT_COLOR, normalized.lightAccentColor);
     AppStorage.setOrCreate(AppThemeSettingsStore.KEY_DARK_ACCENT_COLOR, normalized.darkAccentColor);
     AppStorage.setOrCreate(AppThemeSettingsStore.KEY_LIGHT_BUTTON_COLOR, normalized.lightButtonColor);
@@ -445,6 +471,7 @@ export class AppThemeSettingsStore {
       previous.customBaseThemeId : normalizedThemeId);
     settings.themeId = normalizedThemeId;
     settings.themeBookCoverEnabled = previous.themeBookCoverEnabled;
+    settings.themeBookFrameEnabled = previous.themeBookFrameEnabled;
     AppThemeSettingsStore.copyCustom(previous, settings);
     if (normalizedThemeId === ThemeIds.CUSTOM) {
       AppThemeSettingsStore.useCustomColors(settings);
@@ -494,8 +521,8 @@ export class AppThemeSettingsStore {
   static applyOverrides(theme: ThemePack, settings: AppThemeSettings): void {
     AppThemeSettingsStore.applyPaletteOverride(theme.light.colors, settings.customLightPalette);
     AppThemeSettingsStore.applyPaletteOverride(theme.dark.colors, settings.customDarkPalette);
-    AppThemeSettingsStore.applyEmphasisOverride(theme.light.regexEmphasis, settings.customLightEmphasis);
-    AppThemeSettingsStore.applyEmphasisOverride(theme.dark.regexEmphasis, settings.customDarkEmphasis);
+    AppThemeSettingsStore.applyEmphasisOverride(theme.light.regexEmphasis, settings.customLightEmphasis, false);
+    AppThemeSettingsStore.applyEmphasisOverride(theme.dark.regexEmphasis, settings.customDarkEmphasis, true);
     if (settings.customAppFontFamily) theme.typography.appFontFamily = settings.customAppFontFamily;
     const radius = settings.customRadius;
     if (radius.small >= 0) theme.radius.small = radius.small;
@@ -516,11 +543,75 @@ export class AppThemeSettingsStore {
     if (override.dangerColor) colors.dangerColor = override.dangerColor;
   }
 
-  private static applyEmphasisOverride(tokens: ThemeRegexEmphasisTokens, override: ThemeEmphasisOverrides): void {
+  private static applyEmphasisOverride(tokens: ThemeRegexEmphasisTokens, override: ThemeEmphasisOverrides,
+    darkMode: boolean): void {
     if (override.mode) tokens.emphasisMode = override.mode;
     if (override.bubbleStyle) tokens.bubbleStyle = override.bubbleStyle;
     if (override.color) tokens.emphasisColor = override.color;
     if (override.textColor) tokens.emphasisTextColor = override.textColor;
+    const comment = normalizeCommentBubble(override.comment);
+    if (!commentBubbleIsEmpty(comment)) {
+      // 逐项盖在来源主题的段评设置上；换一个新对象，不改到来源主题。
+      const merged = normalizeCommentBubble(tokens.commentBubble);
+      if (comment.shape) merged.shape = comment.shape;
+      if (comment.radius >= 0) merged.radius = comment.radius;
+      if (comment.fill) merged.fill = comment.fill;
+      if (comment.stroke) merged.stroke = comment.stroke;
+      if (comment.text) merged.text = comment.text;
+      if (comment.ornament) merged.ornament = comment.ornament;
+      if (comment.ornamentColor) merged.ornamentColor = comment.ornamentColor;
+      if (comment.ornamentCorner) merged.ornamentCorner = comment.ornamentCorner;
+      if (comment.ornamentSize >= 0) merged.ornamentSize = comment.ornamentSize;
+      if (comment.image === COMMENT_IMAGE_NONE) {
+        copyCommentImage(merged, new ThemePackageCommentBubble());
+      } else if (isPackThemeId(comment.image)) {
+        const packComment = AppThemeSettingsStore.packCommentBubble(comment.image, darkMode);
+        if (commentBubbleHasImage(packComment)) copyCommentImage(merged, packComment);
+        else copyCommentImage(merged, new ThemePackageCommentBubble());
+      }
+      if (isPackThemeId(comment.ornamentImage)) {
+        merged.ornamentImage = AppThemeSettingsStore.packCommentBubble(comment.ornamentImage, darkMode).ornamentImage;
+      }
+      tokens.commentBubble = merged;
+    }
+    const title = AppThemeSettingsStore.normalizeTitleEmphasis(override.title);
+    if (AppThemeSettingsStore.titleEmphasisOverridden(title)) {
+      // 同样换一个新对象。mode 为 off 时整组清空（来源主题设了标题强调、方案要不设置）。
+      const next = new ThemeTitleEmphasisTokens();
+      const base = tokens.title;
+      if (title.mode !== 'off') {
+        next.mode = title.mode || (base ? base.mode : '');
+        next.bubbleStyle = title.bubbleStyle || (base ? base.bubbleStyle : '');
+        next.color = title.color || (base ? base.color : '');
+        next.textColor = title.textColor || (base ? base.textColor : '');
+      }
+      tokens.title = next;
+    }
+    // 章首装饰整套换：'none' 清空，pack:<id> 取那个包这个模式的（包不在这台设备上时等于没有）。
+    const head = AppThemeSettingsStore.normalizeChapterHeadOverride(override.chapterHead);
+    if (head === CHAPTER_HEAD_NONE) {
+      tokens.chapterHead = new ThemePackageChapterHead();
+    } else if (head) {
+      const pack = BuiltinThemeRegistry.findById(head);
+      tokens.chapterHead = pack.id === head ?
+        normalizeChapterHead((darkMode ? pack.dark : pack.light).regexEmphasis.chapterHead) : new ThemePackageChapterHead();
+    }
+  }
+
+  /** 只收空串、'none' 和 pack:<id>。 */
+  static normalizeChapterHeadOverride(value: string | null | undefined): string {
+    const text = typeof value === 'string' ? value.trim() : '';
+    return text === CHAPTER_HEAD_NONE || isPackThemeId(text) ? text.substring(0, 80) : '';
+  }
+
+  /**
+   * 方案覆盖里 pack:<id> 指向的那个包这个模式的段评设置（素材已是本机 URI）。包不在这台设备上时
+   * findById 回到默认主题，取出来没有图片，段评按形状画。
+   */
+  private static packCommentBubble(packThemeId: string, darkMode: boolean): ThemePackageCommentBubble {
+    const pack = BuiltinThemeRegistry.findById(packThemeId);
+    if (pack.id !== packThemeId) return new ThemePackageCommentBubble();
+    return normalizeCommentBubble((darkMode ? pack.dark : pack.light).regexEmphasis.commentBubble);
   }
 
   static hasOverrides(settings: AppThemeSettings): boolean {
@@ -539,7 +630,9 @@ export class AppThemeSettingsStore {
   }
 
   static hasEmphasisOverride(override: ThemeEmphasisOverrides): boolean {
-    return !!(override.mode || override.bubbleStyle || override.color || override.textColor);
+    return !!(override.mode || override.bubbleStyle || override.color || override.textColor) ||
+      !commentBubbleIsEmpty(override.comment) || AppThemeSettingsStore.titleEmphasisOverridden(override.title) ||
+      !!AppThemeSettingsStore.normalizeChapterHeadOverride(override.chapterHead);
   }
 
   static hasRadiusOverride(radius: ThemeRadiusOverrides): boolean {
@@ -636,7 +729,27 @@ export class AppThemeSettingsStore {
     result.bubbleStyle = (source.bubbleStyle || '').trim().substring(0, 80);
     result.color = HexColor.parseAlpha(source.color || '');
     result.textColor = HexColor.parseAlpha(source.textColor || '');
+    result.comment = normalizeCommentBubble(source.comment);
+    result.title = AppThemeSettingsStore.normalizeTitleEmphasis(source.title);
+    result.chapterHead = AppThemeSettingsStore.normalizeChapterHeadOverride(source.chapterHead);
     return result;
+  }
+
+  /** 标题强调覆盖：mode 只收 off/none/text/highlight/bubble（off 表示强制不设置），颜色可带透明度。 */
+  static normalizeTitleEmphasis(source: ThemeTitleEmphasisTokens | null | undefined): ThemeTitleEmphasisTokens {
+    const result = new ThemeTitleEmphasisTokens();
+    if (!source || typeof source !== 'object') return result;
+    const mode = (source.mode || '').trim();
+    result.mode = mode === 'off' || mode === 'none' || mode === 'text' || mode === 'highlight' || mode === 'bubble' ?
+      mode : '';
+    result.bubbleStyle = (source.bubbleStyle || '').trim().substring(0, 80);
+    result.color = HexColor.parseAlpha(source.color || '');
+    result.textColor = HexColor.parseAlpha(source.textColor || '');
+    return result;
+  }
+
+  static titleEmphasisOverridden(source: ThemeTitleEmphasisTokens | null | undefined): boolean {
+    return !!source && !!(source.mode || source.bubbleStyle || source.color || source.textColor);
   }
 
   private static async putOverrides(store: preferences.Preferences, settings: AppThemeSettings): Promise<void> {
@@ -674,21 +787,61 @@ export class AppThemeSettingsStore {
   }
 
   /**
+   * 素笺之前存下的自定义设置只升级一次：有旧数据时把底子和部件来源里的 plain-default 换成原默认主题并写回，
+   * 没存过自定义设置的（新安装）只记下版本号。
+   */
+  private static async upgradeStoredDefaultBase(store: preferences.Preferences, settings: AppThemeSettings):
+    Promise<void> {
+    const stored = await store.get(AppThemeSettingsStore.KEY_DEFAULT_BASE_REVISION, 0);
+    if (!DefaultBaseRevision.isLegacy(typeof stored === 'number' ? stored : 0)) return;
+    if (await store.has(AppThemeSettingsStore.KEY_CUSTOM_BASE_THEME_ID) ||
+      await store.has(AppThemeSettingsStore.KEY_CUSTOM_LIGHT_SOURCES) ||
+      await store.has(AppThemeSettingsStore.KEY_CUSTOM_DARK_SOURCES)) {
+      AppThemeSettingsStore.upgradeLegacyDefaultBase(settings);
+      await store.put(AppThemeSettingsStore.KEY_CUSTOM_BASE_THEME_ID, settings.customBaseThemeId);
+      await store.put(AppThemeSettingsStore.KEY_CUSTOM_LIGHT_SOURCES, JSON.stringify(settings.customLightSources));
+      await store.put(AppThemeSettingsStore.KEY_CUSTOM_DARK_SOURCES, JSON.stringify(settings.customDarkSources));
+    }
+    await store.put(AppThemeSettingsStore.KEY_DEFAULT_BASE_REVISION, DefaultBaseRevision.CURRENT);
+    await store.flush();
+  }
+
+  /** 旧方案的底子和各部件来源：plain-default 当时指素笺之前的默认主题，换成 plain-base。 */
+  private static upgradeLegacyDefaultBase(settings: AppThemeSettings): void {
+    settings.customBaseThemeId = DefaultBaseRevision.upgradeId(settings.customBaseThemeId);
+    for (const sources of [settings.customLightSources, settings.customDarkSources]) {
+      sources.startupThemeId = DefaultBaseRevision.upgradeId(sources.startupThemeId);
+      sources.paletteThemeId = DefaultBaseRevision.upgradeId(sources.paletteThemeId);
+      sources.readerThemeId = DefaultBaseRevision.upgradeId(sources.readerThemeId);
+      sources.ttsPanelThemeId = DefaultBaseRevision.upgradeId(sources.ttsPanelThemeId);
+      sources.bubbleThemeId = DefaultBaseRevision.upgradeId(sources.bubbleThemeId);
+      sources.navigationThemeId = DefaultBaseRevision.upgradeId(sources.navigationThemeId);
+      sources.bookThemeId = DefaultBaseRevision.upgradeId(sources.bookThemeId);
+      sources.homeBackdropThemeId = DefaultBaseRevision.upgradeId(sources.homeBackdropThemeId);
+      sources.typographyThemeId = DefaultBaseRevision.upgradeId(sources.typographyThemeId);
+      sources.layoutThemeId = DefaultBaseRevision.upgradeId(sources.layoutThemeId);
+      sources.radiusThemeId = DefaultBaseRevision.upgradeId(sources.radiusThemeId);
+      sources.glassThemeId = DefaultBaseRevision.upgradeId(sources.glassThemeId);
+    }
+    settings.defaultBaseRevision = DefaultBaseRevision.CURRENT;
+  }
+
+  /**
    * 默认主题早期的石板灰几乎不带色相，选中态与普通文字分不开；已保存的旧灰色换成新的冷调石板色，
    * 其他用户自选的颜色保持不动。
    */
   private static upgradeLegacyPlainDefaultColors(settings: AppThemeSettings, defaults: AppThemeSettings): void {
-    // 第二组是开发中短暂用过的蓝色，测试机上可能已保存。
-    if (['#5B6573', '#3366CC'].includes(settings.lightAccentColor.toUpperCase())) {
+    // 第二组是开发中短暂用过的蓝色，测试机上可能已保存；第三组是默认主题改成“留白”之前的石板蓝。
+    if (['#5B6573', '#3366CC', '#4A5F7E'].includes(settings.lightAccentColor.toUpperCase())) {
       settings.lightAccentColor = defaults.lightAccentColor;
     }
-    if (['#AAB2BD', '#8FB5F0'].includes(settings.darkAccentColor.toUpperCase())) {
+    if (['#AAB2BD', '#8FB5F0', '#9DB1CF'].includes(settings.darkAccentColor.toUpperCase())) {
       settings.darkAccentColor = defaults.darkAccentColor;
     }
-    if (['#505967', '#2D5DB8'].includes(settings.lightButtonColor.toUpperCase())) {
+    if (['#505967', '#2D5DB8', '#435673'].includes(settings.lightButtonColor.toUpperCase())) {
       settings.lightButtonColor = defaults.lightButtonColor;
     }
-    if (['#737D8A', '#3F72C2'].includes(settings.darkButtonColor.toUpperCase())) {
+    if (['#737D8A', '#3F72C2', '#62748F'].includes(settings.darkButtonColor.toUpperCase())) {
       settings.darkButtonColor = defaults.darkButtonColor;
     }
   }
@@ -812,6 +965,9 @@ export class AppThemeSettingsStore {
       AppThemeSettingsStore.DEFAULT_THEME_ID;
     settings.themeId = AppThemeSettingsStore.normalizeThemeId(source.themeId || currentThemeId);
     settings.themeBookCoverEnabled = source.themeBookCoverEnabled === true;
+    // 旧版本或云端旧数据没有这一项：两者原来是同一个开关，沿用主题封面的值。
+    settings.themeBookFrameEnabled = typeof source.themeBookFrameEnabled === 'boolean' ?
+      source.themeBookFrameEnabled : settings.themeBookCoverEnabled;
     settings.themeApplyLayoutEnabled = source.themeApplyLayoutEnabled === true;
     settings.customBaseThemeId = BuiltinThemeRegistry.normalizeBuiltinId(source.customBaseThemeId);
     settings.customLightSources = AppThemeSettingsStore.normalizeSources(
@@ -819,6 +975,10 @@ export class AppThemeSettingsStore {
     settings.customDarkSources = AppThemeSettingsStore.normalizeSources(
       source.customDarkSources, settings.customBaseThemeId);
     settings.customDarkSources.layoutThemeId = settings.customLightSources.layoutThemeId;
+    // 方案列表、云同步和主题包里的旧方案没有这项：读进来时就按原默认主题打底（见 DefaultBaseRevision）。
+    if (DefaultBaseRevision.isLegacy(source.defaultBaseRevision)) {
+      AppThemeSettingsStore.upgradeLegacyDefaultBase(settings);
+    }
     const defaults = AppThemeSettingsStore.defaultsForTheme(settings.themeId === ThemeIds.CUSTOM ?
       settings.customBaseThemeId : settings.themeId);
     settings.lightAccentColor = AppThemeSettingsStore.normalizeColor(

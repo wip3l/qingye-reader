@@ -9,6 +9,7 @@ import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
 import { PlaybackLoudnessGain } from '../../utils/PlaybackLoudnessGain';
+import { PlaybackSpeed } from '../../utils/PlaybackSpeed';
 import { LocalTtsModel, LocalTtsModels } from '../../utils/localtts/LocalTtsModels';
 
 /**
@@ -43,6 +44,18 @@ export struct ReaderTtsQuickSettingsPanel {
   /** 拖动滑条时的显示值；-1 表示没在拖。 */
   @State gainDraft: number = -1;
 
+  /** 拖动倍速滑条时的显示值；-1 表示没在拖。 */
+  @State speedDraft: number = -1;
+
+  private speedShown(): number {
+    return this.speedDraft > 0 ? this.speedDraft : this.speed;
+  }
+
+  private setSpeed(value: number): void {
+    this.speedDraft = -1;
+    this.onSpeedChange(PlaybackSpeed.normalize(value));
+  }
+
   private chipColor(): string {
     return this.dark ? '#24272D' : '#EEF0F3';
   }
@@ -63,35 +76,43 @@ export struct ReaderTtsQuickSettingsPanel {
           .fontSize(AppFontSize.BODY_LARGE)
           .fontColor(this.textColor)
           .layoutWeight(1)
-        Text(`${this.speed.toFixed(1)}x`)
+        Text(`${PlaybackSpeed.label(this.speedShown())}x`)
           .fontSize(AppFontSize.BODY)
           .fontColor(this.subTextColor)
       }
       .width('100%')
 
       Row({ space: AppSpacing.MD }) {
-        this.stepButton($r('sys.symbol.minus'), '降低朗读倍速', this.speed > 0.5, () => {
-          this.onSpeedChange(this.speed - 0.1);
+        this.stepButton($r('sys.symbol.minus'), '降低朗读倍速', this.speed > PlaybackSpeed.MIN + 0.001, () => {
+          this.setSpeed(this.speed - PlaybackSpeed.STEP);
         })
-        Slider({ value: this.speed, min: 0.5, max: 3, step: 0.1 })
+        Slider({
+          value: this.speedShown(),
+          min: PlaybackSpeed.MIN,
+          max: PlaybackSpeed.MAX,
+          step: PlaybackSpeed.STEP
+        })
           .layoutWeight(1)
-          .showTips(true)
           .selectedColor(this.accentColor)
           .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
-          .onChange((value: number) => this.onSpeedChange(value))
-        this.stepButton($r('sys.symbol.plus'), '提高朗读倍速', this.speed < 3, () => {
-          this.onSpeedChange(this.speed + 0.1);
+          .onChange((value: number, mode: SliderChangeMode) => {
+            // 换倍速要从当前句重新合成，拖动中只改显示，松手才下发。
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.setSpeed(value);
+            } else {
+              this.speedDraft = PlaybackSpeed.normalize(value);
+            }
+          })
+        this.stepButton($r('sys.symbol.plus'), '提高朗读倍速', this.speed < PlaybackSpeed.MAX - 0.001, () => {
+          this.setSpeed(this.speed + PlaybackSpeed.STEP);
         })
       }
       .width('100%')
 
       Row({ space: AppSpacing.MD }) {
-        this.speedChip(0.8)
-        this.speedChip(1.0)
-        this.speedChip(1.2)
-        this.speedChip(1.5)
-        this.speedChip(2.0)
-        this.speedChip(3.0)
+        ForEach(PlaybackSpeed.PRESETS, (value: number) => {
+          this.speedChip(value)
+        }, (value: number) => value.toString())
       }
       .width('100%')
 
@@ -228,15 +249,15 @@ export struct ReaderTtsQuickSettingsPanel {
 
   @Builder
   speedChip(value: number) {
-    Text(`${value.toFixed(1)}x`)
+    Text(`${PlaybackSpeed.label(value)}x`)
       .fontSize(AppFontSize.BODY)
-      .fontColor(Math.abs(this.speed - value) < 0.01 ? '#FFFFFF' : this.textColor)
+      .fontColor(PlaybackSpeed.same(this.speedShown(), value) ? '#FFFFFF' : this.textColor)
       .textAlign(TextAlign.Center)
       .layoutWeight(1)
       .height(32)
       .borderRadius(16)
-      .backgroundColor(Math.abs(this.speed - value) < 0.01 ? this.accentColor : this.chipColor())
-      .onClick(() => this.onSpeedChange(value))
+      .backgroundColor(PlaybackSpeed.same(this.speedShown(), value) ? this.accentColor : this.chipColor())
+      .onClick(() => this.setSpeed(value))
   }
 
   @Builder

@@ -111,10 +111,20 @@ export class TtsPanelThemeStyles {
         return darkMode ?
           new TtsPanelThemeStyle($r('app.media.tts_panel_starwish_magic_dark'), '#2A1D4A', '#151022', '#33C3A2F2') :
           new TtsPanelThemeStyle($r('app.media.tts_panel_starwish_magic_light'), '#EADDF8', '#F8F4FC', '#339A74D6');
+      // 晨雾和默认主题（素笺）的面板插画取自各自首页背景的上部（720 × 520 JPG）。
+      case ThemeIds.MORNING_MIST:
+        return darkMode ?
+          new TtsPanelThemeStyle($r('app.media.tts_panel_morning_mist_dark'), '#0B1530', '#0E1016', '#2E8F99FF') :
+          new TtsPanelThemeStyle($r('app.media.tts_panel_morning_mist_light'), '#F7F7FB', '#F2F3F7', '#2E5562E8');
+      // 原默认主题（只给旧方案打底）保留素笺之前的同心圆面板。
+      case ThemeIds.PLAIN_BASE:
+        return darkMode ?
+          new TtsPanelThemeStyle($r('app.media.tts_panel_plain_base_dark'), '#1B1D20', '#111111', '#1F9DB1CF') :
+          new TtsPanelThemeStyle($r('app.media.tts_panel_plain_base_light'), '#E9ECEF', '#F7F7F7', '#1F4A5F7E');
       default:
         return darkMode ?
-          new TtsPanelThemeStyle($r('app.media.tts_panel_plain_default_dark'), '#1B1D20', '#111111', '#1F9DB1CF') :
-          new TtsPanelThemeStyle($r('app.media.tts_panel_plain_default_light'), '#E9ECEF', '#F7F7F7', '#1F4A5F7E');
+          new TtsPanelThemeStyle($r('app.media.tts_panel_plain_default_dark'), '#2A2C30', '#121316', '#1F8DB0D9') :
+          new TtsPanelThemeStyle($r('app.media.tts_panel_plain_default_light'), '#F5EFE3', '#F5F3EE', '#1F2E5A88');
     }
   }
 }

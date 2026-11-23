@@ -4,6 +4,7 @@ import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { Book, BookChapter, Bookmark } from '@legado/sourceengine';
 import { AppDatabase } from '../../model/data/AppDatabase';
 import { HdsFeedback } from '../../utils/HdsFeedback';
+import { bookmarkPreviewText } from '../../utils/BookmarkPreviewText';
 import { ListDissolve, ListDissolveParticles } from '../../utils/ListDissolve';
 import { DeleteParticleBurst, DeleteParticleLayer } from '../common/DeleteParticles';
 import { BookCover } from '../book/BookCover';
@@ -15,6 +16,17 @@ import { AppSpacing } from '../../theme/AppSpacing';
 import { ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
 import { BookAnnotation, BookAnnotationStyles } from '../../model/reader/BookAnnotation';
 import { TocVolumeFold } from '../../core/reader/TocVolumeFold';
+
+/** 目录刷新的结果，由阅读页比对刷新前后的目录得出。 */
+export interface ReaderTocRefreshOutcome {
+  ok: boolean;
+  /** 失败原因，ok 为 false 时有值。 */
+  message: string;
+  added: number;
+  changed: boolean;
+}
+
+const TOC_REFRESH_NOTE_MS: number = 2500;
 
 const TOC_WINDOW_PAGE_SIZE = 72;
 const TOC_SCROLLBAR_DRAG_UPDATE_INTERVAL_MS = 90;
@@ -81,7 +93,13 @@ export struct ReaderTocPanel {
   onJumpToBookmark: (bookmark: Bookmark) => void = (_bookmark: Bookmark): void => {
   };
   /** 重新抓取目录；完成后面板自己恢复定位或重做搜索。 */
-  onRefreshToc: () => Promise<void> = (): Promise<void> => Promise.resolve();
+  onRefreshToc: () => Promise<ReaderTocRefreshOutcome> = (): Promise<ReaderTocRefreshOutcome> =>
+    Promise.resolve({ ok: true, message: '', added: 0, changed: false } as ReaderTocRefreshOutcome);
+  @State tocRefreshing: boolean = false;
+  /** 章数位置临时显示的刷新状态或结果；空串时显示“共 N 章”。 */
+  @State private tocRefreshNote: string = '';
+  @State private tocRefreshNoteColor: string = '';
+  private tocRefreshNoteTimer: number = -1;
   onLoadBookmarks: () => void = (): void => {
   };
   /** 本地 TXT 显示"目录规则"按钮。 */
@@ -119,6 +137,13 @@ export struct ReaderTocPanel {
   @State private databaseChapterCount: number = 0;
   @State private listViewportHeight: number = 0;
   @State private firstVisibleGlobalIndex: number = 0;
+  /** 第一行在当前列表（收起后的列表或搜索结果）里的下标，“去顶部/去底部”按它判断方向。 */
+  @State private firstVisibleListIndex: number = 0;
+  /**
+   * 按钮方向：1 去底部、-1 去顶部、0 还没手动滑过（按位置判断）。手指上滑变去底部、下滑变去顶部；
+   * 只认手指拖动，程序定位和松手后的惯性、回弹不改方向。
+   */
+  @State private edgeJumpDirection: number = 0;
   @State private visibleItemCount: number = 1;
   @State private scrollbarDragging: boolean = false;
   @State private scrollbarDragOffset: number = 0;
@@ -140,6 +165,7 @@ export struct ReaderTocPanel {
   private searchRequestSerial: number = 0;
   private scrollbarPointerAnchor: number = 0;
   private scrollbarPendingIndex: number = -1;
+  private scrollbarPendingAtEnd: boolean = false;
   private scrollbarUpdateTimer: number = -1;
   private tocScroller: Scroller = new Scroller();
   private bookmarkScroller: ListScroller = new ListScroller();
@@ -170,6 +196,10 @@ export struct ReaderTocPanel {
   aboutToDisappear(): void {
     this.searchRequestSerial++;
     this.positionRequestSerial++;
+    if (this.tocRefreshNoteTimer >= 0) {
+      clearTimeout(this.tocRefreshNoteTimer);
+      this.tocRefreshNoteTimer = -1;
+    }
     if (this.scrollbarUpdateTimer >= 0) {
       clearTimeout(this.scrollbarUpdateTimer);
       this.scrollbarUpdateTimer = -1;
@@ -459,8 +489,33 @@ export struct ReaderTocPanel {
   }
 
   private async refreshToc(): Promise<void> {
+    // 刷新期间再点不重复发起：连点会叠出几次整本目录解析，主线程被占满后卡死。
+    if (this.tocRefreshing) return;
+    this.tocRefreshing = true;
+    this.showTocRefreshNote('正在刷新目录…', this.accentColor, false);
+    let outcome: ReaderTocRefreshOutcome = { ok: false, message: '未知错误', added: 0, changed: false };
+    try {
+      outcome = await this.runRefreshToc();
+    } catch (e) {
+      outcome = { ok: false, message: e instanceof Error ? e.message : String(e), added: 0, changed: false };
+    } finally {
+      this.tocRefreshing = false;
+    }
+    if (!outcome.ok) {
+      this.showTocRefreshNote(`刷新失败：${outcome.message || '未知错误'}`, ThemeRuntime.dangerColor(this.dark), true);
+    } else if (outcome.added > 0) {
+      this.showTocRefreshNote(`目录已更新 · 新增 ${outcome.added} 章`, ThemeRuntime.successColor(this.dark), true);
+    } else if (outcome.changed) {
+      this.showTocRefreshNote(`目录已更新 · 共 ${this.chapters.length} 章`, ThemeRuntime.successColor(this.dark), true);
+    } else {
+      this.showTocRefreshNote('目录没有变化', this.subTextColor, true);
+    }
+  }
+
+  private async runRefreshToc(): Promise<ReaderTocRefreshOutcome> {
     const searchQuery = this.searchQuery;
-    await this.onRefreshToc();
+    const outcome = await this.onRefreshToc();
+    if (!outcome.ok) return outcome;
     this.databaseChapterCount = this.chapters.length;
     if (this.searchVisible && this.searchResultActive && searchQuery.trim()) {
       await this.submitSearch();
@@ -468,7 +523,22 @@ export struct ReaderTocPanel {
       this.setWindowAround(this.currentChapterIndex, ScrollAlign.CENTER);
       this.scrollToCurrentChapter(false);
     }
-    HdsFeedback.showToast('目录已刷新');
+    return outcome;
+  }
+
+  /** 在章数位置显示一句状态；autoClear 时停留一会儿后换回“共 N 章”。 */
+  private showTocRefreshNote(text: string, color: string, autoClear: boolean): void {
+    if (this.tocRefreshNoteTimer >= 0) {
+      clearTimeout(this.tocRefreshNoteTimer);
+      this.tocRefreshNoteTimer = -1;
+    }
+    this.tocRefreshNote = text;
+    this.tocRefreshNoteColor = color;
+    if (!autoClear) return;
+    this.tocRefreshNoteTimer = setTimeout(() => {
+      this.tocRefreshNoteTimer = -1;
+      this.tocRefreshNote = '';
+    }, TOC_REFRESH_NOTE_MS);
   }
 
   private titleColor(chapter: BookChapter, index: number): string {
@@ -615,6 +685,7 @@ export struct ReaderTocPanel {
   private updateScrollbarPosition(start: number, end: number): void {
     const localStart = Math.max(0, start);
     this.firstVisibleGlobalIndex = this.globalIndex(localStart);
+    this.firstVisibleListIndex = this.isSearchActive() ? localStart : this.windowStart + localStart;
     this.visibleItemCount = Math.max(1, end - start + 1);
   }
 
@@ -702,8 +773,10 @@ export struct ReaderTocPanel {
       pointerY - this.scrollbarPointerAnchor);
     this.scrollbarDragOffset = offset;
     const total = this.scrollbarTotal();
-    const targetIndex = VirtualListScrollbar.firstVisibleIndex(this.listViewportHeight, thumbLength,
-      total, this.visibleItemCount, offset);
+    const atEnd = VirtualListScrollbar.reachesEnd(this.listViewportHeight, thumbLength, offset);
+    this.scrollbarPendingAtEnd = atEnd;
+    const targetIndex = atEnd ? total - 1 : VirtualListScrollbar.firstVisibleIndex(this.listViewportHeight,
+      thumbLength, total, this.visibleItemCount, offset);
     const targetChapterIndex = this.scrollbarFolded() ? this.canonicalAtDisplayIndex(targetIndex) :
       (this.reverseOrder ? total - 1 - targetIndex : targetIndex);
     this.firstVisibleGlobalIndex = targetChapterIndex;
@@ -737,12 +810,15 @@ export struct ReaderTocPanel {
 
   private applyScrollbarTarget(targetIndex: number): void {
     if (targetIndex < 0) return;
+    // 滑块到底时最后一行贴底，否则按首行定位。
+    const align = this.scrollbarPendingAtEnd ? ScrollAlign.END : ScrollAlign.START;
     if (this.isSearchActive()) {
-      const localIndex = this.nearestSearchResultIndex(targetIndex);
+      const localIndex = this.scrollbarPendingAtEnd ? this.searchChapterIndexes.length - 1 :
+        this.nearestSearchResultIndex(targetIndex);
       if (localIndex < 0) return;
       this.firstVisibleGlobalIndex = this.searchChapterIndexes[localIndex] ?? targetIndex;
       try {
-        this.tocScroller.scrollToIndex(localIndex, false, ScrollAlign.START);
+        this.tocScroller.scrollToIndex(localIndex, false, align);
       } catch (e) {
         console.warn('拖动目录滚动条定位搜索结果失败:', e);
       }
@@ -752,17 +828,66 @@ export struct ReaderTocPanel {
     const target = Math.max(0, Math.min(targetIndex, this.chapters.length - 1));
     const requestSerial = ++this.positionRequestSerial;
     this.positioning = true;
-    const localIndex = this.setWindowAround(target, ScrollAlign.START);
+    const localIndex = this.setWindowAround(target, align);
     setTimeout(() => {
       if (requestSerial !== this.positionRequestSerial) return;
       try {
-        this.tocScroller.scrollToIndex(localIndex, false, ScrollAlign.START);
+        this.tocScroller.scrollToIndex(localIndex, false, align);
       } catch (e) {
         console.warn('拖动目录滚动条定位章节失败:', e);
       } finally {
         if (requestSerial === this.positionRequestSerial) this.positioning = false;
       }
     }, 0);
+  }
+
+  // ---------------------------------------------------------------- 去顶部 / 去底部
+
+  /** 当前列表的行数：搜索时是结果数，否则是收起后的列表。 */
+  private edgeJumpTotal(): number {
+    return this.isSearchActive() ? this.searchChapterIndexes.length : this.displayCount();
+  }
+
+  /** 列表超过约 3 屏才显示；拖滚动条、搜索框还没出结果时不显示。 */
+  private shouldShowEdgeJump(): boolean {
+    if (this.listViewportHeight <= 0 || this.scrollbarDragging) return false;
+    if (this.searchVisible && !this.searchResultActive) return false;
+    return this.edgeJumpTotal() > Math.max(1, this.visibleItemCount) * 3;
+  }
+
+  /**
+   * 手指上滑过就去底部、下滑过就去顶部；还没滑过时第一屏中点在前半段去底部，否则去顶部。
+   * 顶部、底部指列表在屏幕上的两端，倒序时顶部是最新章。
+   */
+  private edgeJumpGoesDown(): boolean {
+    if (this.edgeJumpDirection !== 0) return this.edgeJumpDirection > 0;
+    return this.firstVisibleListIndex + this.visibleItemCount / 2 < this.edgeJumpTotal() / 2;
+  }
+
+  private trackEdgeJumpDirection(delta: number, state: ScrollState): void {
+    if (state !== ScrollState.Scroll || Math.abs(delta) < 1) return;
+    const direction = delta > 0 ? 1 : -1;
+    if (direction !== this.edgeJumpDirection) this.edgeJumpDirection = direction;
+  }
+
+  private jumpToListEdge(toBottom: boolean): void {
+    // 到了一端，按钮换成回另一端。
+    this.edgeJumpDirection = toBottom ? -1 : 1;
+    if (this.isSearchActive()) {
+      const count = this.searchChapterIndexes.length;
+      if (count === 0) return;
+      try {
+        this.tocScroller.scrollToIndex(toBottom ? count - 1 : 0, false, toBottom ? ScrollAlign.END : ScrollAlign.START);
+      } catch (e) {
+        console.warn('目录搜索结果去顶部/底部失败:', e);
+      }
+      return;
+    }
+    const count = this.displayCount();
+    if (count === 0) return;
+    // 和拖滚动条一样直接换窗口再定位，不经过中间的章节。
+    const target = this.canonicalAtDisplayIndex(toBottom ? count - 1 : 0);
+    this.scrollToChapter(target, toBottom ? ScrollAlign.END : ScrollAlign.START, false);
   }
 
   private nearestSearchResultIndex(targetIndex: number): number {
@@ -1149,6 +1274,17 @@ export struct ReaderTocPanel {
             .fontSize(AppFontSize.BODY)
             .fontColor(this.subTextColor)
             .margin({ left: AppSpacing.SM })
+        } else if (this.tocRefreshNote) {
+          Text(this.tocRefreshNote)
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.tocRefreshNoteColor || this.subTextColor)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .constraintSize({ maxWidth: 190 })
+            .margin({ left: AppSpacing.SM })
+            .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
+            .height(34)
+            .accessibilityText(this.tocRefreshNote)
         } else {
           Text(`共 ${this.chapters.length} 章`)
             .fontSize(AppFontSize.BODY)
@@ -1215,7 +1351,8 @@ export struct ReaderTocPanel {
           startInset: 0,
           materialScale: 0.7,
           compactLayout: true,
-          accessibilityLabel: '刷新目录',
+          accessibilityLabel: this.tocRefreshing ? '正在刷新目录' : '刷新目录',
+          iconSpinning: this.tocRefreshing,
           onBack: () => {
             this.refreshToc();
           }
@@ -1380,14 +1517,25 @@ export struct ReaderTocPanel {
                 .width(18)
                 .textAlign(TextAlign.Center)
 
-              Text(this.chapterTitle(chapter.index))
-                .fontSize(AppFontSize.BODY_LARGE)
-                .fontWeight(chapter.index === this.currentChapterIndex ?
-                  FontWeight.Medium : FontWeight.Regular)
-                .fontColor(this.titleColor(chapter, chapter.index))
-                .maxLines(2)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .layoutWeight(1)
+              // 书源目录给了章节更新时间、字数时显示在章节名下方。
+              Column({ space: 2 }) {
+                Text(this.chapterTitle(chapter.index))
+                  .fontSize(AppFontSize.BODY_LARGE)
+                  .fontWeight(chapter.index === this.currentChapterIndex ?
+                    FontWeight.Medium : FontWeight.Regular)
+                  .fontColor(this.titleColor(chapter, chapter.index))
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                if (BookChapter.metaTextOf(chapter)) {
+                  Text(BookChapter.metaTextOf(chapter))
+                    .fontSize(AppFontSize.MICRO)
+                    .fontColor(this.subTextColor)
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
 
               if (this.book?.origin !== 'local' && chapter.cacheDate > 0) {
                 Text('已缓存')
@@ -1415,16 +1563,43 @@ export struct ReaderTocPanel {
       .height('100%')
       .scrollBar(BarState.Off)
       .onScrollIndex((start: number, end: number) => this.updateScrollbarPosition(start, end))
+      .onDidScroll((delta: number, state: ScrollState) => this.trackEdgeJumpDirection(delta, state))
       .onReachStart(() => this.loadPreviousPage())
       .onReachEnd(() => this.loadNextPage())
 
       this.virtualScrollbar()
+      this.edgeJumpButton()
     }
     .layoutWeight(1)
     .width('100%')
     .onAreaChange((_oldValue: Area, newValue: Area) => {
       this.listViewportHeight = Number(newValue.height);
     })
+  }
+
+  @Builder
+  edgeJumpButton() {
+    if (this.shouldShowEdgeJump()) {
+      ImmersiveBackButton({
+        icon: this.edgeJumpGoesDown() ? $r('sys.symbol.arrow_down_to_line') : $r('sys.symbol.arrow_up_to_line'),
+        iconOffsetX: 0,
+        iconSize: 20,
+        iconColor: this.accentColor,
+        darkMode: this.dark,
+        buttonSize: 40,
+        containerWidth: 40,
+        containerHeight: 40,
+        startInset: 0,
+        materialScale: 0.83,
+        compactLayout: true,
+        accessibilityLabel: this.edgeJumpGoesDown() ? '去底部' : '去顶部',
+        onBack: () => this.jumpToListEdge(this.edgeJumpGoesDown())
+      })
+        // 让出右侧 24vp 宽的滚动条触控区。
+        .position({ right: 28, bottom: AppSpacing.LG })
+        .zIndex(11)
+        .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.FastOutSlowIn }))
+    }
   }
 
   @Builder
@@ -1594,7 +1769,7 @@ export struct ReaderTocPanel {
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor)
       }
-      Text(bookmark.content || '已保存阅读位置')
+      Text(bookmarkPreviewText(bookmark.content) || '已保存阅读位置')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor)
         .maxLines(2)

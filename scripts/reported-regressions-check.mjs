@@ -66,9 +66,11 @@ let confirmedTime = 0, nextChapters = [chapter(1), chapter(2), chapter(3)];
 const engineDb = {
   recordBookChapterUpdate: async (url, time) => { confirmedTime = Math.max(confirmedTime, time); },
   updateBook: async () => {}, deleteBookChapters: async () => {}, insertBookChapters: async () => {},
+  realignCachedChapterContents: async () => {}, realignChapterMarks: async () => false,
+  deleteBookCachedContent: async () => {},
 };
 const Engine = compile(clean('core/book/ReadBookEngine.ts') + '\nReadBookEngine', {
-  WebBookService: class {}, BookChapterUpdate: Updates, appDb: engineDb,
+  WebBookService: class { setSourceInteraction() { return this; } }, BookChapterUpdate: Updates, appDb: engineDb,
   BookUrlResolver: { getVariableJson: value => value }, console: { log() {}, warn() {} },
 });
 const engine = Engine.createBackgroundWorker();
@@ -126,7 +128,8 @@ Backup.replaceRoot = value => value;
 assert.equal(Backup.hydrateBook({ confirmedChapterUpdateTime: 123 }, '', '').confirmedChapterUpdateTime, 123);
 assert.equal(Backup.hydrateBook({ latestChapterTime: 999 }, '', '').confirmedChapterUpdateTime, 0);
 const Sync = compile(`class CloudSyncCoordinator { ${method('account/CloudSyncCoordinator.ets', 'restoreBook')} }; CloudSyncCoordinator`,
-  { Book: class {}, BookIdentity: { keyOfBook: () => 'book' } });
+  { Book: class {}, BookIdentity: { keyOfBook: () => 'book' },
+    BookTypeSupport: { CATEGORY_VIDEO: 'video', isVideo: () => false } });
 let restored = { confirmedChapterUpdateTime: 500, bookUrl: 'book' };
 const syncDb = { getBook: async () => restored, restoreBook: async book => { restored = book; } };
 await Sync.restoreBook(syncDb, { bookUrl: 'book', origin: 'source' });
@@ -184,4 +187,27 @@ playingBook = 'trial'; db.getBook = async () => ({ pendingAddToShelf: true });
 detail.pendingAddToShelfBookUrl = 'trial'; await detail.removePendingReadBook();
 Cleanup.cancel('trial'); playingBook = ''; released('trial'); await flush();
 assert.equal(deleted, 2, 'reopening the trial from its detail page hands deletion back to the detail page');
-console.log('PASS: recent-update ordering and persistence, current discovery group, declined trials keep playing and are removed after playback');
+
+// 书架检查更新：没取到目录、书源不存在都算失败（标出原因），不能当成“检查过、没有新章节”写回检查时间。
+const ShelfToc = compile(`class ShelfToc { ${method(shelfFile, 'refreshShelfBookToc')} }; ShelfToc`,
+  { BookshelfSortHelper: Helper, SHELF_UPDATE_BADGE_VARIABLE: 'shelfHasUpdate', SHELF_REFRESH_ERROR_VARIABLE: 'err' });
+const shelfToc = new ShelfToc(); shelfToc.hasShelfBookUpdate = () => false;
+let shelfTocWrites = 0;
+const shelfTocDb = { getBook: async () => shelfBook('serial'), updateBook: async () => { shelfTocWrites++; } };
+const tocEngine = (source, chapters, error) => ({ source, chapters, lastTocRefreshError: '',
+  openBook: async () => {}, refreshToc: async function () { this.lastTocRefreshError = error; } });
+await assert.rejects(shelfToc.refreshShelfBookToc(tocEngine(null, [chapter(1)], ''), shelfTocDb, shelfBook('serial'), 0),
+  /书源不存在/);
+await assert.rejects(shelfToc.refreshShelfBookToc(tocEngine({}, [chapter(1)], '目录请求失败：HTTP 503'), shelfTocDb,
+  shelfBook('serial'), 0), /HTTP 503/);
+await assert.rejects(shelfToc.refreshShelfBookToc(tocEngine({}, [], ''), shelfTocDb, shelfBook('serial'), 0), /没有取到目录/);
+assert.equal(shelfTocWrites, 0, 'a failed catalog check does not record a successful check');
+
+// 书架检查用的后台引擎要求目录分页取全：某页失败就抛错，不返回半截目录去覆盖库里的完整目录。
+const webBookSource = read('core/book/WebBookService.ts');
+assert.match(read('core/book/ReadBookEngine.ts'),
+  /static createShelfRefreshWorker\(\)[^}]*new WebBookService\(null, false, true\)/);
+assert.match(read(shelfFile), /let engine = ReadBookEngine\.createShelfRefreshWorker\(\);/);
+assert.equal((webBookSource.match(/this\.rejectIncompleteCatalog\(/g) || []).length, 4,
+  'every page failure / verification stop in getChapterList rejects an incomplete catalog');
+console.log('PASS: recent-update ordering and persistence, current discovery group, declined trials keep playing and are removed after playback, shelf catalog checks fail instead of keeping a partial or missing catalog');

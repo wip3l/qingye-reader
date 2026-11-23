@@ -12,6 +12,7 @@ import { ThemeIds, ThemeStartupTextStyle } from '../theme/ThemeModels';
 import { AppThemeSettingsStore } from '../utils/AppThemeSettingsStore';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { CloudAutoSync } from '../account/CloudAutoSync';
+import { ShelfPreload } from '../utils/ShelfPreload';
 
 @Entry
 @Component
@@ -37,6 +38,7 @@ struct StartupPage {
     if (this.jumpTimer >= 0) {
       return;
     }
+    ShelfPreload.start(getContext(this));
     ReaderSystemFontHelper.applyToStorage(this.getUIContext());
     ReaderFontBootstrap.registerFromSettings(getContext(this), this.getUIContext(), 'startup-aboutToAppear');
     const startupDelay = RecentReadShortcut.isPending() || this.hasPendingBookSourceImport() ||
@@ -159,6 +161,8 @@ struct StartupPage {
 
   async replaceToIndex(): Promise<void> {
     try {
+      // 等书架数据读好再进首页，首页第一帧就带着书；读得慢时到上限就不等了。
+      await ShelfPreload.wait();
       await HomeRoute.replaceWithHome(this.getUIContext().getRouter());
     } catch (e) {
       console.error('跳转首页失败:', e);

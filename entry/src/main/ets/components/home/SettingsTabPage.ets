@@ -13,6 +13,8 @@ import { MembershipIcons } from '../../account/MembershipIcons';
 import { AppThemeModeStore } from '../../utils/AppThemeModeStore';
 import { AppColorModeApplier } from '../../utils/AppColorModeApplier';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
+import { SettingsSearchLayer } from './SettingsSearchLayer';
+import { ImmersiveMaterialSurface } from '../ImmersiveMaterialSurface';
 
 class ThemeModeOption {
   mode: string = '';
@@ -46,7 +48,14 @@ export struct SettingsPage {
   @StorageLink('cloudSyncPendingCount') cloudSyncPendingCount: number = 0;
   @StorageLink('cloudSyncStatus') cloudSyncStatus: string = CloudSyncSettingsStore.STATUS_DISABLED;
   @StorageLink('appThemeMode') appThemeMode: string = 'system';
+  /** 设置搜索层是否打开；首页据此收起底栏、让返回键先关掉它。 */
+  @StorageLink('mineSearchActive') mineSearchActive: boolean = false;
+  /** 外观设置里的“显示设置项搜索框”；关闭后标题下不放搜索栏。 */
+  @StorageProp('mineSearchEntryVisible') mineSearchEntryVisible: boolean = true;
   @State showThemeModeMenu: boolean = false;
+  /** 搜索栏的实测宽度；沉浸光感底板要具体数值。 */
+  @State searchEntryWidth: number = 0;
+  private static readonly SEARCH_ENTRY_HEIGHT: number = 40;
   private readonly themeModeOptions: ThemeModeOption[] = [
     { mode: 'light', label: '浅色', icon: $r('sys.symbol.sun_max') },
     { mode: 'dark', label: '深色', icon: $r('sys.symbol.moon') },
@@ -63,6 +72,10 @@ export struct SettingsPage {
             .width('100%')
             .height(56 + this.statusBarHeight)
 
+          if (this.mineSearchEntryVisible) {
+            this.searchEntry()
+          }
+
           this.accountSummaryCard()
 
           Column() {
@@ -70,8 +83,11 @@ export struct SettingsPage {
             this.menuItem($r('sys.symbol.timer'), '阅读统计', true, () => {
               router.pushUrl({ url: 'pages/ReadingStats' });
             }, this.readStatsRecording ? '' : '已暂停')
-            this.menuItem($r('sys.symbol.star'), '我的标记', false, () => {
+            this.menuItem($r('sys.symbol.star'), '我的标记', true, () => {
               router.pushUrl({ url: 'pages/BookMarkList' });
+            })
+            this.menuItem($r('sys.symbol.coupon'), '票夹', false, () => {
+              router.pushUrl({ url: 'pages/TicketAlbum' });
             })
           }
           .width('100%')
@@ -208,11 +224,60 @@ export struct SettingsPage {
         this.onHeaderCollapseChange((56 + this.statusBarHeight - Number(newArea.height)) /
           CollapsingHeader.DISTANCE);
       })
+
+      if (this.mineSearchActive) {
+        SettingsSearchLayer({ statusBarHeight: this.statusBarHeight, navBarHeight: this.navBarHeight })
+          .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ y: 16 }))
+            .animation({ duration: 220, curve: Curve.FastOutSlowIn }))
+      }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(this.pageColor())
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+  }
+
+  /** 标题下的搜索栏：沉浸光感胶囊（与搜索层里的输入框同款），点开设置搜索层。悬浮栏材质只接受具体宽度，先量出行宽。 */
+  @Builder
+  searchEntry() {
+    Row() {
+      if (this.searchEntryWidth > 0) {
+        ImmersiveMaterialSurface({
+          surfaceWidth: this.searchEntryWidth,
+          surfaceHeight: SettingsPage.SEARCH_ENTRY_HEIGHT,
+          darkMode: this.appDarkMode,
+          fallbackColor: this.glassCardColor(),
+          glowColor: `#40${this.accentColor().substring(1)}`
+        }) {
+          Row({ space: AppSpacing.MD }) {
+            SymbolGlyph($r('sys.symbol.magnifyingglass'))
+              .fontSize(18)
+              .fontColor([this.subTextColor()])
+            Text('搜索设置，如 字号、息屏、音量键')
+              .fontSize(AppFontSize.BODY)
+              .fontColor(this.subTextColor())
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .height('100%')
+          .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+          .alignItems(VerticalAlign.Center)
+        }
+      }
+    }
+    .width('100%')
+    .height(SettingsPage.SEARCH_ENTRY_HEIGHT)
+    .onAreaChange((_oldValue: Area, newValue: Area) => {
+      const width = Math.floor(Number(newValue.width));
+      if (Number.isFinite(width) && width > 0 && width !== this.searchEntryWidth) this.searchEntryWidth = width;
+    })
+    .accessibilityGroup(true)
+    .accessibilityText('搜索设置')
+    .onClick(() => {
+      this.mineSearchActive = true;
+    })
   }
 
   @Builder

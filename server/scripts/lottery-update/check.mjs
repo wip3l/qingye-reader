@@ -19,7 +19,7 @@ assert.equal(policy.membershipCouponPoints({ SUPER_LIFETIME: 600 }, 'SUPER_LIFET
 assert.equal(policy.membershipCouponPoints({ LIFETIME: 100 }, 'MONTHLY', 60), 0);
 const plan = policy.planMembershipPurchase(null, [], 'LIFETIME', Date.now(), 'p', undefined, { id: 'c', points: 100 });
 assert.equal(plan.payablePoints, 1190);
-assert.equal(plan.next.permanentCreditPoints, 1190);
+assert.equal(plan.next.permanentCreditPoints, 1290);
 
 const service = await load('membershipService.js');
 assert.equal(service.CLOUD_BASE_QUOTA_BYTES, 1024 ** 3);

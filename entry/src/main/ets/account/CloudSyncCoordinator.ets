@@ -30,7 +30,7 @@ import { AppDatabase } from '../model/data/AppDatabase';
 import { BookAnnotation } from '../model/reader/BookAnnotation';
 import { BookMark, BookMarkRules } from '../model/book/BookMark';
 import { BookMarkService } from '../core/mark/BookMarkService';
-import { Book, BookGroup, BookInfoRule, BookListRule, BookSource, Bookmark, ContentRule, ExploreRule, ReadConfig, SearchRule, TocRule } from '@legado/sourceengine';
+import { Book, BookGroup, BookInfoRule, BookTypeSupport, BookListRule, BookSource, Bookmark, ContentRule, ExploreRule, ReadConfig, SearchRule, TocRule } from '@legado/sourceengine';
 import { ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { jsonbSafeJson } from '../utils/JsonbSafeText';
 import { ReaderPreferencesSync, ReaderPreferencesSyncPayload } from './ReaderPreferencesSync';
@@ -71,6 +71,11 @@ class BookshelfSyncPayload {
   customIntro: string = '';
   charset: string = '';
   type: number = 0;
+  /**
+   * 视频（短剧）没有 type 位，只靠书籍变量里的 tab=video 认出来，而书籍变量整体不上云。
+   * 这里单独带上这一项；旧版本上传的记录没有这个字段，缺省时不动本机的书籍变量。
+   */
+  mediaTab?: string;
   groupName: string = '';
   isPinned: boolean = false;
   latestChapterTitle: string = '';
@@ -272,6 +277,7 @@ export class CloudSyncCoordinator {
   // operation envelope while staying well below the server's 2 MiB request limit.
   private static readonly MAX_BATCH_BYTES: number = 768 * 1024;
   private static readonly MAX_EXCHANGE_PAGES: number = 1000;
+  private static readonly MIN_BOOK_SOURCE_LIMIT_BYTES: number = 512 * 1024;
   private static readonly MAX_RATE_LIMIT_RETRIES: number = 3;
   private static protectedLocalBooksDuringSync: number = 0;
   private static protectedLocalBookEntityIdsDuringSync: Set<string> = new Set<string>();
@@ -704,6 +710,7 @@ export class CloudSyncCoordinator {
       shelf.customIntro = book.customIntro;
       shelf.charset = book.charset;
       shelf.type = book.type;
+      if (BookTypeSupport.isVideo(book)) shelf.mediaTab = BookTypeSupport.CATEGORY_VIDEO;
       shelf.groupName = groupNames[String(book.group)] || '';
       shelf.isPinned = book.isPinned;
       shelf.latestChapterTitle = book.latestChapterTitle;
@@ -1469,6 +1476,9 @@ export class CloudSyncCoordinator {
     book.customIntro = payload.customIntro || '';
     book.charset = payload.charset || '';
     book.type = Math.floor(Number(payload.type) || 0);
+    if (payload.mediaTab === BookTypeSupport.CATEGORY_VIDEO && !BookTypeSupport.isVideo(book)) {
+      book.putVariable('tab', BookTypeSupport.CATEGORY_VIDEO);
+    }
     book.isPinned = payload.isPinned === true;
     book.latestChapterTitle = payload.latestChapterTitle || '';
     book.updateTime = payload.updateTime || '';
@@ -1826,7 +1836,10 @@ export class CloudSyncCoordinator {
       sized.push(new OversizedSyncItem(operation, entity, encoder.encodeInto(entity.payloadJson).byteLength,
         message, false));
     }
-    const result = sized.filter((item: OversizedSyncItem) => limitBytes > 0 && item.bytes > limitBytes);
+    // 服务端书源上限从来不低于 512KB（终身超级会员 960KB），报更小的上限说的是批里的其他数据，
+    // 书源再大也不是这次的原因，不能跟着跳过。
+    const result = sized.filter((item: OversizedSyncItem) => limitBytes > 0 && item.bytes > limitBytes &&
+      (item.entity.entityType !== 'book_source' || limitBytes >= CloudSyncCoordinator.MIN_BOOK_SOURCE_LIMIT_BYTES));
     if (result.length === 0 && sized.length > 0) {
       // Limit unknown or every item measured under it: the largest item is the cause, certainly
       // so when the batch holds only that one item.

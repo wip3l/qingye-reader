@@ -15,7 +15,6 @@ const pages = [
   ['pages/ReadingStatsShare', 'previewScroller', false, 0],
   ['pages/ReadingStatsShare', 'settingsScroller', false, 1],
   ['pages/ReadingStatsShare', 'headerScroller', false, 2],
-  ['pages/ThemeSettings', 'themeListScroller', true],
   ['pages/SyncDevices', 'headerScroller', true],
   ['pages/SyncIssues', 'headerScroller', true],
   ['pages/LocalBookSettings', 'headerScroller', true],

@@ -16,6 +16,9 @@ import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { ReaderComicProcessing } from '../../core/reader/ReaderComicProcessing';
 import { ReaderComicProcessingBadge } from './ReaderComicProcessingBadge';
+import { ComicTrimRect } from '../../core/reader/ReaderComicTrimDetect';
+import { ReaderComicTrim } from '../../core/reader/ReaderComicTrim';
+import { ReaderComicTrimMode } from '../../core/reader/ReaderComicSettings';
 
 /** 图片宽高比缓存与本地文件尺寸探测，漫画视图和小说滚动模式里的整页插图共用。 */
 export class ReaderComicImageSizes {
@@ -178,6 +181,10 @@ export struct ReaderComicImageItem {
   @Prop @Watch('onSuperResolutionChanged') superResolution: boolean = false;
   /** 在屏幕上时识别图中文字，把繁体改写成简体叠在图上（调用方已判断系统能力）。 */
   @Prop @Watch('onTextConvertChanged') textConvert: boolean = false;
+  /** 去白边（ReaderComicTrimMode 的取值）。 */
+  @Prop @Watch('onTrimChanged') trimMode: string = 'off';
+  /** 双页并排时另一页的图片标记：两页取相同的上下裁剪，缩放才一致。 */
+  @Prop @Watch('onTrimChanged') trimPartner: string = '';
   retryRegistry: ReaderComicRetryRegistry | null = null;
   processing: ReaderComicProcessing | null = null;
   private processingOwner: number = ReaderComicProcessing.owner();
@@ -209,6 +216,12 @@ export struct ReaderComicImageItem {
   @State private textImageHeight: number = 0;
   private textTicket: number = 0;
   private textAttempted: boolean = false;
+  /** 白边检测结果（已与并排的另一页合并）；null 为不裁。 */
+  @State private trimRect: ComicTrimRect | null = null;
+  /** 去白边打开时等检测结果出来再显示图片层，免得先按原图出来再跳一下。 */
+  @State private trimReady: boolean = true;
+  private trimTicket: number = 0;
+  private unsubscribeTrimPartner: (() => void) | null = null;
   private visible: boolean = false;
   /** 仍在列表里（屏幕上或列表预先挂载的相邻项）；超分在此期间都可以进行。 */
   private mounted: boolean = false;
@@ -260,6 +273,9 @@ export struct ReaderComicImageItem {
     this.releasePending();
     this.enhanceTicket++;
     this.textTicket++;
+    this.trimTicket++;
+    this.unsubscribeTrimPartner?.();
+    this.unsubscribeTrimPartner = null;
     this.unregisterRetry();
     if (this.registeredReloadKey && this.retryRegistry) {
       this.retryRegistry.unregisterReload(this.registeredReloadKey, this.reloadHandler);
@@ -310,6 +326,131 @@ export struct ReaderComicImageItem {
     this.maybeConvertText();
   }
 
+  onTrimChanged(): void {
+    this.refreshTrim();
+  }
+
+  /** 重新取白边检测结果；已缓存时同步生效，否则先藏起图片层等结果。 */
+  private refreshTrim(): void {
+    const ticket = ++this.trimTicket;
+    this.unsubscribeTrimPartner?.();
+    this.unsubscribeTrimPartner = null;
+    const source = this.source;
+    if (ReaderComicTrimMode.normalize(this.trimMode) === ReaderComicTrimMode.OFF || !source || this.failure ||
+      !ReaderComicTrim.supported(source)) {
+      this.trimRect = null;
+      this.trimReady = true;
+      return;
+    }
+    const paired = !!this.trimPartner;
+    const partner = paired ? this.trimPartnerSource(ticket) : '';
+    const own = ReaderComicTrim.cached(source);
+    const other = partner ? ReaderComicTrim.cached(partner) : null;
+    if (own !== undefined && other !== undefined) {
+      this.trimRect = ReaderComicImageItem.mergeTrim(own, other, paired);
+      this.trimReady = true;
+      return;
+    }
+    this.trimReady = false;
+    const requests: Promise<ComicTrimRect | null>[] = [ReaderComicTrim.request(source)];
+    if (partner) requests.push(ReaderComicTrim.request(partner));
+    Promise.all(requests).then((rects: (ComicTrimRect | null)[]): void => {
+      if (ticket !== this.trimTicket) return;
+      this.trimRect = ReaderComicImageItem.mergeTrim(rects[0], partner ? rects[1] : null, paired);
+      this.trimReady = true;
+    }).catch((_: Error): void => {
+      if (ticket !== this.trimTicket) return;
+      this.trimRect = null;
+      this.trimReady = true;
+    });
+  }
+
+  /**
+   * 并排另一页的本地图片来源；没有可检测的图返回空串（这一页就不裁上下）。
+   * 另一页还在渐进加载时先按空串处理，等它有结果再重新取一次。
+   */
+  private trimPartnerSource(ticket: number): string {
+    const info = ReaderImageMarker.parse(this.trimPartner);
+    const raw = ReaderImageMarker.pendingRaw(info.source);
+    let source = info.source;
+    if (raw) {
+      source = ReaderImageResults.current(raw);
+      if (!source && ReaderImageResults.isAlive(raw)) {
+        this.unsubscribeTrimPartner = ReaderImageResults.subscribe(raw, (_: string): void => {
+          if (ticket === this.trimTicket) this.refreshTrim();
+        });
+      }
+    }
+    return source && !ReaderImageMarker.failureReason(source) ? source : '';
+  }
+
+  /** 双页并排时上下取两页里较少的那份，左右各按各的；单页直接用自己的结果。 */
+  static mergeTrim(own: ComicTrimRect | null, other: ComicTrimRect | null, paired: boolean): ComicTrimRect | null {
+    if (!own || !paired) return own;
+    const rect = new ComicTrimRect(own.left, Math.min(own.top, other ? other.top : 0), own.right,
+      Math.min(own.bottom, other ? other.bottom : 0));
+    return rect.isEmpty() ? null : rect;
+  }
+
+  /**
+   * 当前生效的裁剪 [左, 上, 右, 下]（占原图的比例），不裁时为 null。
+   * 条漫长图（高超过宽两倍，多是一页切成的几段）不裁上下，免得切断相接的画面。
+   */
+  private activeCut(): number[] | null {
+    const rect = this.trimRect;
+    if (!rect || this.ratio <= 0) return null;
+    const sidesOnly = this.ratio > 2;
+    const top = sidesOnly ? 0 : rect.top;
+    const bottom = sidesOnly ? 0 : rect.bottom;
+    if (rect.left <= 0 && rect.right <= 0 && top <= 0 && bottom <= 0) return null;
+    return [rect.left, top, rect.right, bottom];
+  }
+
+  /** 显示用的高宽比：裁掉白边后的比例，不裁时等于原图比例。 */
+  private viewRatio(): number {
+    const cut = this.activeCut();
+    if (!cut) return this.ratio;
+    return this.ratio * (1 - cut[1] - cut[3]) / (1 - cut[0] - cut[2]);
+  }
+
+  /** 整张原图画出来的宽度：裁剪时比显示区域宽，多出的部分被裁掉。 */
+  private fullWidth(): number {
+    const cut = this.activeCut();
+    return cut ? this.displayWidth() / (1 - cut[0] - cut[2]) : this.displayWidth();
+  }
+
+  private fullHeight(): number {
+    const cut = this.activeCut();
+    const height = this.displayHeight() + this.overlap();
+    return cut ? height / (1 - cut[1] - cut[3]) : height;
+  }
+
+  /** 图片层（原图、超分、着色）的尺寸与平移；裁剪时整张图放大后挪到被裁区域的位置。 */
+  private layerWidth(): Length {
+    if (this.activeCut()) return this.fullWidth();
+    return this.boxed() ? '100%' : this.imageWidth();
+  }
+
+  private layerHeight(): Length {
+    if (this.activeCut()) return this.fullHeight();
+    return this.boxed() ? '100%' : this.imageHeight() + this.overlap();
+  }
+
+  /** 图层在裁剪框里居中排列，平移量把它从居中挪到左上角对齐被裁掉的那块。 */
+  private layerShiftX(): number {
+    const cut = this.activeCut();
+    return cut ? this.fullWidth() * (cut[2] - cut[0]) / 2 : 0;
+  }
+
+  private layerShiftY(): number {
+    const cut = this.activeCut();
+    return cut ? this.fullHeight() * (cut[3] - cut[1]) / 2 : -this.overlap() / 2;
+  }
+
+  private layerFit(contain: boolean): ImageFit {
+    return !this.activeCut() && contain ? ImageFit.Contain : ImageFit.Fill;
+  }
+
   private resetTextLayer(): void {
     this.translating = false;
     this.syncProcessing();
@@ -346,7 +487,7 @@ export struct ReaderComicImageItem {
   /** 图片实际显示高度（vp）。 */
   private displayHeight(): number {
     if (!this.boxed()) return this.imageHeight();
-    return this.ratio > 0 ? this.displayWidth() * this.ratio : this.boxHeight;
+    return this.ratio > 0 ? this.displayWidth() * this.viewRatio() : this.boxHeight;
   }
 
   private showEnhancedBadge(): void {
@@ -373,7 +514,7 @@ export struct ReaderComicImageItem {
     const ticket = ++this.enhanceTicket;
     const source = this.source;
     const active = (): boolean => this.mounted && this.superResolution && ticket === this.enhanceTicket;
-    ReaderComicSuperResolution.enhance(source, vp2px(this.displayWidth()), active,
+    ReaderComicSuperResolution.enhance(source, vp2px(this.fullWidth()), active,
       (): boolean => this.visible).then((uri: string): void => {
       if (uri && ticket === this.enhanceTicket && this.superResolution) {
         this.releaseEnhancedCache?.(); this.releaseEnhancedCache = ReaderCacheCoordinator.retainFile(uri);
@@ -395,7 +536,7 @@ export struct ReaderComicImageItem {
   /** 图片实际显示宽度（vp）。 */
   private displayWidth(): number {
     if (!this.boxed()) return this.imageWidth();
-    return this.ratio > 0 ? Math.min(this.boxWidth, this.boxHeight / this.ratio) : this.boxWidth;
+    return this.ratio > 0 ? Math.min(this.boxWidth, this.boxHeight / this.viewRatio()) : this.boxWidth;
   }
 
   onMarkerChanged(): void {
@@ -463,6 +604,7 @@ export struct ReaderComicImageItem {
     this.resetEnhancement();
     this.resetTextLayer();
     this.unregisterRetry();
+    this.refreshTrim();
     if (this.failure) {
       this.ratio = 0;
       return;
@@ -532,14 +674,14 @@ export struct ReaderComicImageItem {
   private imageWidth(): number {
     const width = Math.max(1, this.viewWidth);
     if (!this.fitScreen || this.ratio <= 0 || this.viewHeight <= 0) return width;
-    return Math.min(width, this.viewHeight / this.ratio);
+    return Math.min(width, this.viewHeight / this.viewRatio());
   }
 
   private imageHeight(): number {
     // 尺寸未知时使用接近图片宽度的短占位，避免解码失败时每张图片都遗留整屏空白。
     if (this.ratio <= 0 || this.viewWidth <= 0) return Math.max(240, this.viewWidth);
     // 条漫常把一页切成很短的图片，已知尺寸后不能再套用占位图的最小高度。
-    const height = Math.min(24000, this.imageWidth() * this.ratio);
+    const height = Math.min(24000, this.imageWidth() * this.viewRatio());
     // ListItem 会分别把浮点 vp 高度转换为物理像素；先对齐到整数像素，避免相邻项反向取整后露底。
     return px2vp(Math.max(1, Math.round(vp2px(height))));
   }
@@ -575,46 +717,73 @@ export struct ReaderComicImageItem {
         .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
         .hitTestBehavior(HitTestMode.None)
       } else {
-        ForEach(this.source ? [this.loadToken] : [], (_token: number) => {
-          Image(ReaderComicImageSizes.uri(this.source))
-            .width(this.boxed() ? '100%' : this.imageWidth())
-            .height(this.boxed() ? '100%' : this.imageHeight() + this.overlap())
-            .translate({ y: -this.overlap() / 2 })
-            // 原图比例尚未返回时保持 Contain；比例已知后容器严格等比，Fill 只消除边缘 letterbox。
-            .objectFit(this.boxed() || this.ratio <= 0 ? ImageFit.Contain : ImageFit.Fill)
-            .draggable(false)
-            .onComplete((event) => {
-              if (!event) return;
-              if (event.width > 0 && event.height > 0) {
-                const ratio = ReaderComicImageSizes.remember(this.source, event.width, event.height);
-                if (ratio > 0 && Math.abs(ratio - this.ratio) >= 0.0001) this.ratio = ratio;
-                this.loaded = true;
-                this.maybeEnhance();
-                this.maybeConvertText();
-              }
-            })
-            .onError((error: ImageError) => this.markBroken(error))
-            .id(this.retryKey ? ReaderComicImageItem.snapshotId(this.retryKey) : '')
-        }, (token: number) => `${token}`)
+        // 图片层统一放进一个框：去白边时框按裁后的大小裁切，里面整张图放大后错开，原图、超分、着色、文字层一起对齐。
+        Stack() {
+          ForEach(this.source ? [this.loadToken] : [], (_token: number) => {
+            Image(ReaderComicImageSizes.uri(this.source))
+              .width(this.layerWidth())
+              .height(this.layerHeight())
+              .translate({ x: this.layerShiftX(), y: this.layerShiftY() })
+              // 原图比例尚未返回时保持 Contain；比例已知后容器严格等比，Fill 只消除边缘 letterbox。
+              .objectFit(this.layerFit(this.boxed() || this.ratio <= 0))
+              .draggable(false)
+              .onComplete((event) => {
+                if (!event) return;
+                if (event.width > 0 && event.height > 0) {
+                  const ratio = ReaderComicImageSizes.remember(this.source, event.width, event.height);
+                  if (ratio > 0 && Math.abs(ratio - this.ratio) >= 0.0001) this.ratio = ratio;
+                  this.loaded = true;
+                  this.maybeEnhance();
+                  this.maybeConvertText();
+                }
+              })
+              .onError((error: ImageError) => this.markBroken(error))
+              .id(this.retryKey ? ReaderComicImageItem.snapshotId(this.retryKey) : '')
+          }, (token: number) => `${token}`)
+
+          if (this.enhancedUri && this.loaded && !this.broken) {
+            Image(this.enhancedUri)
+              .width(this.layerWidth())
+              .height(this.layerHeight())
+              .translate({ x: this.layerShiftX(), y: this.layerShiftY() })
+              .objectFit(this.layerFit(this.boxed()))
+              .draggable(false)
+              .opacity(this.enhancedShown ? 1 : 0)
+              .animation({ duration: 220, curve: Curve.EaseOut })
+              .hitTestBehavior(HitTestMode.None)
+              .onComplete((event) => {
+                if (event && event.width > 0 && event.height > 0) this.showEnhancedBadge();
+              })
+              .onError((_: ImageError) => {
+                this.enhancedUri = '';
+                this.enhancedShown = false;
+              })
+          }
+
+          if (this.colorUri && this.loaded && !this.broken) {
+            Image(this.colorUri)
+              .width(this.layerWidth())
+              .height(this.layerHeight())
+              .translate({ x: this.layerShiftX(), y: this.layerShiftY() })
+              .objectFit(this.layerFit(this.boxed()))
+              .draggable(false)
+              .opacity(this.colorShown ? 1 : 0)
+              .hitTestBehavior(HitTestMode.None)
+              .onComplete(() => { this.colorDecoded = true; this.syncColor(); })
+              .onError(() => { this.colorSession?.failed(this.source); this.colorUri = ''; })
+          }
+
+          if (this.textPatches.length > 0 && this.loaded && !this.broken) {
+            this.textLayerOverlay()
+          }
+        }
+        .width(this.activeCut() ? this.displayWidth() : '100%')
+        .height(this.activeCut() ? this.displayHeight() + this.overlap() : '100%')
+        .translate({ y: this.activeCut() ? -this.overlap() / 2 : 0 })
+        .clip(!!this.activeCut())
+        .opacity(this.trimReady ? 1 : 0)
 
         if (this.enhancedUri && this.loaded && !this.broken) {
-          Image(this.enhancedUri)
-            .width(this.boxed() ? '100%' : this.imageWidth())
-            .height(this.boxed() ? '100%' : this.imageHeight() + this.overlap())
-            .translate({ y: -this.overlap() / 2 })
-            .objectFit(this.boxed() ? ImageFit.Contain : ImageFit.Fill)
-            .draggable(false)
-            .opacity(this.enhancedShown ? 1 : 0)
-            .animation({ duration: 220, curve: Curve.EaseOut })
-            .hitTestBehavior(HitTestMode.None)
-            .onComplete((event) => {
-              if (event && event.width > 0 && event.height > 0) this.showEnhancedBadge();
-            })
-            .onError((_: ImageError) => {
-              this.enhancedUri = '';
-              this.enhancedShown = false;
-            })
-
           Text('AI 超分')
             .fontSize(AppFontSize.CAPTION)
             .fontColor('#FFFFFF')
@@ -628,23 +797,6 @@ export struct ReaderComicImageItem {
             .visibility(this.readerAiProcessingIndicatorEnabled ? Visibility.Visible : Visibility.None)
             .animation({ duration: 300, curve: Curve.EaseOut })
             .hitTestBehavior(HitTestMode.None)
-        }
-
-        if (this.colorUri && this.loaded && !this.broken) {
-          Image(this.colorUri)
-            .width(this.boxed() ? '100%' : this.imageWidth())
-            .height(this.boxed() ? '100%' : this.imageHeight() + this.overlap())
-            .translate({ y: -this.overlap() / 2 })
-            .objectFit(this.boxed() ? ImageFit.Contain : ImageFit.Fill)
-            .draggable(false)
-            .opacity(this.colorShown ? 1 : 0)
-            .hitTestBehavior(HitTestMode.None)
-            .onComplete(() => { this.colorDecoded = true; this.syncColor(); })
-            .onError(() => { this.colorSession?.failed(this.source); this.colorUri = ''; })
-        }
-
-        if (this.textPatches.length > 0 && this.loaded && !this.broken) {
-          this.textLayerOverlay()
         }
 
         if (this.broken) {
@@ -726,17 +878,27 @@ export struct ReaderComicImageItem {
           .padding(0)
       }, (patch: ComicTextPatch) => patch.id)
     }
-    .width(this.displayWidth())
-    .height(this.displayHeight())
+    .width(this.textLayerWidth())
+    .height(this.textLayerHeight())
+    .translate({ x: this.activeCut() ? this.layerShiftX() : 0, y: this.activeCut() ? this.layerShiftY() : 0 })
     .hitTestBehavior(HitTestMode.None)
   }
 
+  /** 文字层跟整张原图一样大；去白边时和图片层一起放大错开。 */
+  private textLayerWidth(): number {
+    return this.activeCut() ? this.fullWidth() : this.displayWidth();
+  }
+
+  private textLayerHeight(): number {
+    return this.activeCut() ? this.fullHeight() : this.displayHeight();
+  }
+
   private textScaleX(): number {
-    return this.textImageWidth > 0 ? this.displayWidth() / this.textImageWidth : 0;
+    return this.textImageWidth > 0 ? this.textLayerWidth() / this.textImageWidth : 0;
   }
 
   private textScaleY(): number {
-    return this.textImageHeight > 0 ? this.displayHeight() / this.textImageHeight : 0;
+    return this.textImageHeight > 0 ? this.textLayerHeight() / this.textImageHeight : 0;
   }
 }
 
@@ -912,9 +1074,13 @@ export struct ReaderComicView {
   @Prop autoScrollActive: boolean = false;
   onAutoScrollToggle: () => void = () => {};
   onManualInteraction: () => void = () => {};
+  /** 自动滚动中拖动画面：true 按住不推进，false 松手后从新位置继续。未放大时由 onPanStart/onPanEnd 处理。 */
+  onDragHold: (holding: boolean) => void = () => {};
   /** 漫画超分（会员功能）。 */
   @Prop superResolution: boolean = false;
   @Prop textConvert: boolean = false;
+  /** 去白边（ReaderComicTrimMode 的取值）。 */
+  @Prop trimMode: string = 'off';
   @Prop surfaceColor: string = '#000000';
   @Prop textColor: string = '#E6E6E6';
   @Prop hintColor: string = '#99FFFFFF';
@@ -1142,7 +1308,7 @@ export struct ReaderComicView {
   }
 
   private handlePanStart(): void {
-    this.onManualInteraction();
+    // 拖动不再暂停自动滚动：松手后从拖到的位置接着滚。
     this.panInProgress = true;
     this.touchDragged = true;
     this.panLastX = 0;
@@ -1150,6 +1316,7 @@ export struct ReaderComicView {
     this.panResync = false;
     this.zoomPanActive = this.zoomed() || this.pinching;
     if (!this.zoomPanActive) this.onPanStart();
+    else this.onDragHold(true);
   }
 
   private handlePanUpdate(event: GestureEvent): void {
@@ -1182,6 +1349,7 @@ export struct ReaderComicView {
     if (!this.pinching && this.zoomed() && Math.abs(event.velocityY) > 120) {
       this.scroller.fling(event.velocityY / this.zoomScale);
     }
+    this.onDragHold(false);
   }
 
   private handlePanCancel(): void {
@@ -1189,6 +1357,7 @@ export struct ReaderComicView {
     this.panInProgress = false;
     this.zoomPanActive = false;
     if (!zoomPan) this.onPanCancel();
+    else this.onDragHold(false);
   }
 
   /**
@@ -1337,6 +1506,7 @@ export struct ReaderComicView {
                 retryKey: item.key,
                 superResolution: this.superResolution,
                 textConvert: this.textConvert,
+                trimMode: this.trimMode,
                 retryRegistry: this.retryRegistry,
                 processing: this.processing,
                 onDenied: (): void => this.onImageDenied(item.chapterIndex)

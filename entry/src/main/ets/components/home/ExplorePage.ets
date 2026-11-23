@@ -195,6 +195,8 @@ export struct ExplorePage {
   private hasRestoredExploreSelection: boolean = false;
   private shelfStatusVersion: number = 0;
   private exploreLoadVersion: number = 0;
+  /** 筛选面板每点选一次加一，用来丢掉晚到的联动结果。 */
+  private exploreFilterDraftSeq: number = 0;
   private exploreContentLoadedAt: number = 0;
   private explorePage: number = 1;
   private exploreMetadataQueue: ExploreMetadataTask[] = [];
@@ -485,7 +487,9 @@ export struct ExplorePage {
       const merged = this.mergeExploreBooks(this.books, nextBooks);
       const addedCount = merged.length - this.books.length;
       if (nextBooks.length === 0 || addedCount === 0) {
-        const notice = this.coordinator.getNoticeMessage();
+        // 第 2 页以后返回 404/410：站点分页到头了（例如分类固定 10 页），按“已加载全部”处理，不提示失败。
+        const notice = this.isPastLastPageNotice(this.coordinator.getNoticeMessage()) ? '' :
+          this.coordinator.getNoticeMessage();
         // Network/verification failures should remain retryable; a genuinely empty or duplicate
         // next page means the source has reached its end (or does not implement pagination).
         this.hasMoreExploreBooks = nextBooks.length === 0 && this.isRetryableExploreNotice(notice);
@@ -522,6 +526,10 @@ export struct ExplorePage {
       }
     }
     return merged;
+  }
+
+  isPastLastPageNotice(notice: string): boolean {
+    return /HTTP\s*(?:404|410)(?!\d)/i.test(notice || '');
   }
 
   isRetryableExploreNotice(notice: string): boolean {
@@ -2518,6 +2526,23 @@ export struct ExplorePage {
       });
     }
     this.exploreFilterDrafts = next;
+    this.refreshLinkedFilterDrafts(next);
+  }
+
+  /** 原生书源的筛选项可以互相联动（选了模式，源站换成那个模式的一组）：按草稿重新取一次要显示的项。 */
+  private refreshLinkedFilterDrafts(drafts: ExploreFilterGroup[]): void {
+    const sourceUrl = this.selectedSourceUrl;
+    if (!sourceUrl) return;
+    // 用序号判断结果是否过时：状态变量读回来的是代理对象，和传进来的数组比较永远不相等。
+    const seq = ++this.exploreFilterDraftSeq;
+    this.coordinator.previewExploreFilters(sourceUrl, drafts).then((groups: ExploreFilterGroup[] | null) => {
+      // 面板已关、换了书源，或用户又点了别的选项时，这次结果作废。
+      if (!groups || !this.showExploreFilterPanel || this.selectedSourceUrl !== sourceUrl ||
+        seq !== this.exploreFilterDraftSeq) return;
+      this.exploreFilterDrafts = groups;
+    }).catch((e: Error) => {
+      console.warn('刷新联动筛选项失败:', e);
+    });
   }
 
   async applyExploreFilterDrafts(): Promise<void> {
@@ -2526,7 +2551,8 @@ export struct ExplorePage {
     for (const draft of drafts) {
       const applied = this.exploreFilters.find((filter: ExploreFilterGroup): boolean =>
         filter.title === draft.title);
-      if (applied && applied.selected !== draft.selected) changed.push(draft);
+      // 联动后才出现的项（草稿里有、原来没有）也要保存。
+      if (applied ? applied.selected !== draft.selected : true) changed.push(draft);
     }
     this.closeExploreFilterPanel();
     if (changed.length === 0 || this.isLoading || !this.selectedSourceUrl) return;

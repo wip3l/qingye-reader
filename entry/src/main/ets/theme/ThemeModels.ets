@@ -1,3 +1,5 @@
+import { ThemePackageChapterHead, ThemePackageCommentBubble } from './share/ThemePackageFormat';
+
 export class ThemeIds {
   static readonly CUSTOM: string = 'custom';
   static readonly PLAIN_DEFAULT: string = 'plain-default';
@@ -20,6 +22,31 @@ export class ThemeIds {
   static readonly OBSIDIAN_ARCHIVE: string = 'obsidian-archive';
   static readonly NEON_HARBOR: string = 'neon-harbor';
   static readonly CELESTIAL_VAULT: string = 'celestial-vault';
+  /** 晨雾：光晕背景与玻璃卡片，和默认主题一样免费。 */
+  static readonly MORNING_MIST: string = 'morning-mist';
+  /**
+   * 默认主题改成“素笺”之前的样子（灰白、无封面边框、无章首饰图），不在主题列表里出现。
+   * 只给改版前做的自定义方案和主题包打底：它们没单独设置的部件原本取自旧默认主题。
+   */
+  static readonly PLAIN_BASE: string = 'plain-base';
+}
+
+/**
+ * 自定义方案、主题包记录与清单里 plain-default 的含义版本。缺这个标记（或小于 2）的旧数据里，
+ * plain-default 指的是素笺之前的默认主题，读取时换成 ThemeIds.PLAIN_BASE。
+ */
+export class DefaultBaseRevision {
+  static readonly CURRENT: number = 2;
+
+  static isLegacy(value: number | undefined | null): boolean {
+    return typeof value !== 'number' || value < DefaultBaseRevision.CURRENT;
+  }
+
+  /** 旧数据里的 plain-default（或空）换成 plain-base，其他主题原样返回。 */
+  static upgradeId(themeId: string): string {
+    const normalized = (themeId || '').trim();
+    return !normalized || normalized === ThemeIds.PLAIN_DEFAULT ? ThemeIds.PLAIN_BASE : normalized;
+  }
 }
 
 /**
@@ -110,12 +137,30 @@ export class ThemeColorOverrides {
   dangerColor: string = '';
 }
 
+/**
+ * 标题强调。mode 为空表示主题不设置（标题保持原样）；bubbleStyle 为 'emphasis' 时和正文强调用同一套气泡，
+ * pack:<id>:title 是主题包里的标题气泡（端饰与边框），空串按所选强调方式推导。方案覆盖里 mode 还可以是 'off'：
+ * 来源主题设了标题强调时强制改回不设置。
+ */
+export class ThemeTitleEmphasisTokens {
+  mode: string = '';
+  bubbleStyle: string = '';
+  color: string = '';
+  textColor: string = '';
+}
+
 /** 自定义方案对“强调气泡”来源的覆盖：mode / bubbleStyle / 颜色为空都表示跟随所选主题。 */
 export class ThemeEmphasisOverrides {
   mode: string = '';
   bubbleStyle: string = '';
   color: string = '';
   textColor: string = '';
+  // 段评气泡的逐项覆盖，字段为空跟随来源主题；本机旧设置里没有。
+  comment: ThemePackageCommentBubble = new ThemePackageCommentBubble();
+  // 标题强调的逐项覆盖，字段为空跟随来源主题；本机旧设置里没有。
+  title: ThemeTitleEmphasisTokens = new ThemeTitleEmphasisTokens();
+  // 章首装饰：空串跟随来源主题，'none' 不用，pack:<id> 用那个主题包这个模式的整套章首装饰；本机旧设置里没有。
+  chapterHead: string = '';
 }
 
 /** 自定义方案对圆角的逐项覆盖：-1 表示跟随所选主题。 */
@@ -199,6 +244,12 @@ export class ThemeRegexEmphasisTokens {
   bubbleStyle: string = ThemeBubbleStyles.QQ_SOFT;
   emphasisColor: string = '#D9ECFF';
   emphasisTextColor: string = '#1B4168';
+  // 段评气泡外观，空字段沿用气泡样式推出的样子（见 ReaderCommentBubbleStyles.resolveThemed）。
+  commentBubble: ThemePackageCommentBubble = new ThemePackageCommentBubble();
+  // 标题强调，跟着强调气泡的来源走；内置主题都不设置。
+  title: ThemeTitleEmphasisTokens = new ThemeTitleEmphasisTokens();
+  // 章首装饰（标题饰图、序号行颜色），同样跟着强调气泡的来源走；内置主题都不设置。饰图是本机 URI。
+  chapterHead: ThemePackageChapterHead = new ThemePackageChapterHead();
 }
 
 export class ThemeVariant {

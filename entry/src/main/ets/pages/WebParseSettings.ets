@@ -87,7 +87,7 @@ struct WebParseSettingsPage {
       Column() {
         SettingNavRow({
           title: '导入安卓阅读备份',
-          description: '导入安卓版阅读导出的 ZIP 备份，恢复书源、书架、阅读进度和记录',
+          description: '导入安卓版阅读的 ZIP 备份，恢复书源、书架、进度和记录',
           showDivider: false,
           onTap: () => {
             this.getUIContext().getRouter().pushUrl({

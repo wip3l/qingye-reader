@@ -37,6 +37,10 @@ interface ExploreUrlItem {
   action?: string;
 }
 
+// The result-list rule runs synchronously on the main thread; past this budget its remaining per-element JS is
+// skipped and the page fails with a notice, well before the 6-second freeze kill (AnalyzeRule.setDeadline).
+const EXPLORE_LIST_RULE_DEADLINE_MS = 3000;
+
 class ExplorePlatformSelector {
   labels: string[] = [];
   values: string[] = [];
@@ -176,7 +180,7 @@ export class ExploreCoordinator {
     }
     try {
       VerificationSupport.clearVerification();
-      const au = new AnalyzeUrl(source, this.http).setCancelCheck(cancelled);
+      const au = new AnalyzeUrl(source, this.http).trustSourceAuthoredUrl().setCancelCheck(cancelled);
       const reqUrl = await this.buildUrl(source, entry.url, page, debugContext);
       if (cancelled()) return [];
       if (!reqUrl || /^\s*@?js:/i.test(reqUrl) ||
@@ -233,8 +237,13 @@ export class ExploreCoordinator {
         exploreRule.bookList || '', SourceRuntimeStage.EXPLORE, '', 8 * 1024 * 1024,
         16 * 1024 * 1024, encodedVariables);
       const typedItems = stageItems === null ?
-        rule.execute(exploreRule.bookList || '', RuleExecutionTarget.ELEMENTS) :
+        rule.setDeadline(EXPLORE_LIST_RULE_DEADLINE_MS).execute(exploreRule.bookList || '', RuleExecutionTarget.ELEMENTS) :
         stageItems.map((item: string): RuleValue => RuleValue.fromExternal(item));
+      if (rule.deadlineExceeded()) {
+        this.noticeMessage = `发现列表规则执行超过 ${EXPLORE_LIST_RULE_DEADLINE_MS / 1000} 秒，已停止（规则对每条结果运行的脚本过慢）`;
+        console.warn('[ExploreCoordinator] list rule over main-thread budget:', source.bookSourceName);
+        return [];
+      }
       const items = typedItems.map((item: RuleValue): string => item.asString());
       if (items.length === 0) this.noticeMessage = '发现接口已有响应，但列表规则未匹配到内容';
       console.info('[ExploreCoordinator] parsed list:', source.bookSourceName, 'rule:', exploreRule.bookList, 'count:', items.length);
@@ -563,13 +572,31 @@ export class ExploreCoordinator {
       const variable = NativeSourceService.variableAfterSelect(source, title, selection);
       console.info('[ExploreCoordinator] native filter:', source.bookSourceName, `${title}=${selection}`,
         variable ? 'saved' : 'unchanged-or-invalid');
-      if (!variable) return false;
+      // 联动的筛选项：前一项（如模式）保存后，这一项换成了另一组选项，面板里旧的选择不再适用，跳过而不算失败。
+      if (!variable) {
+        return !NativeSourceService.filters(source).some((group): boolean =>
+          group.title === title && group.options.indexOf(selection) >= 0 && group.selected !== selection);
+      }
       await appDb.updateBookSourceVariable(sourceUrl, variable);
       selector.currentLabel = selection;
       this.clearExploreMenuCache();
       return true;
     }
     return await this.executeExploreSelector(source, selector, selection);
+  }
+
+  /**
+   * 筛选面板里的草稿会让原生书源的筛选项变成什么样（带显示条件的变量互相联动）；不保存。
+   * 不是原生书源或书源不在时返回 null，面板保持原样。
+   */
+  async previewExploreFilters(sourceUrl: string, drafts: ExploreFilterGroup[]): Promise<ExploreFilterGroup[] | null> {
+    const source = await appDb.getBookSource(sourceUrl);
+    if (!source || !NativeSourceService.isNative(source)) return null;
+    return NativeSourceService.filtersWith(source, drafts.map((draft: ExploreFilterGroup) => ({
+      title: draft.title, options: draft.options.slice(), selected: draft.selected
+    }))).map((group): ExploreFilterGroup => ({
+      title: group.title, options: group.options.slice(), selected: group.selected
+    }));
   }
 
   /** 原生书源的发现分类：筛选项来自定义里的变量，分类列表不经过脚本引擎。 */

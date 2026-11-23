@@ -7,12 +7,16 @@ export const CLOUD_CHUNK_BYTES = 1024 ** 2;
 /** Largest single file and the monthly download allowance; storage per account comes from cloudQuotaBytes. */
 export const CLOUD_QUOTA_BYTES = 1024 ** 3;
 type Transaction = <T>(fn: (db: MembershipDb) => Promise<T>) => Promise<T>;
-interface FileRow { id: string; user_id: string; kind: string; name: string; bytes: string; state: string; manifest_hash: string | null; expected_manifest_hash: string | null; meta: CloudFileMeta | null; }
+interface FileRow { id: string; user_id: string; kind: string; name: string; bytes: string; state: string; manifest_hash: string | null; expected_manifest_hash: string | null; meta: CloudFileMeta | null; created_at: Date; }
 interface ChunkRow { chunk_index: number; bytes: number; sha256: string; object_key: string; ready: boolean; upload_md5: string | null; upload_expires_at: Date | null; }
 export interface CloudPrepare { requestId: string; kind: string; name: string; bytes: number; manifestHash?: string; meta?: unknown; }
 export type CloudFileMeta = Record<string, string>;
 export type CloudRemoveReason = 'REMOVED' | 'DETACHED';
-const META_KEYS = new Set(['title', 'author', 'format', 'contentHash', 'fontName', 'mediaCategory']);
+const META_KEYS = new Set(['title', 'author', 'format', 'contentHash', 'fontName', 'mediaCategory', 'packageId', 'schemeId']);
+/** Files a device uploads itself. SOURCE is listed for old rows only; sources sync as data. */
+const FILE_KINDS = ['BOOK', 'FONT', 'SOURCE', 'THEME'];
+/** Custom themes: a theme pack (packageId) or one scheme's startup/preview images (schemeId). */
+const THEME_KEY = /^[a-zA-Z0-9:_-]{1,160}$/;
 const TOMBSTONE_DAYS = 180;
 
 /** Only short display strings and a fingerprint; anything else is rejected rather than stored. */
@@ -27,6 +31,9 @@ function normalizeMeta(value: unknown): CloudFileMeta | null {
     if (item) meta[key] = item as string;
     if (key === 'mediaCategory' && !['novel', 'comic'].includes(item as string)) {
       fail(400, 'CLOUD_INVALID_FILE', '书籍内容分类无效');
+    }
+    if ((key === 'packageId' || key === 'schemeId') && !THEME_KEY.test(item as string)) {
+      fail(400, 'CLOUD_INVALID_FILE', '主题标识无效');
     }
   }
   return Object.keys(meta).length ? meta : null;
@@ -97,8 +104,10 @@ export class CloudFileService {
       const rows = (await db.query<FileRow>(`SELECT * FROM cloud_files WHERE user_id=$1
         AND ($2='' OR id::text>$2) ORDER BY id LIMIT 101`, [userId, after])).rows;
       const page = rows.slice(0, 100);
+      // createdAt lets devices keep the newest copy when a theme was uploaded again.
       return { files: page.map(row => ({ id: row.id, kind: row.kind, name: row.name,
-        bytes: Number(row.bytes), state: row.state, manifestHash: row.manifest_hash, meta: row.meta ?? null })),
+        bytes: Number(row.bytes), state: row.state, manifestHash: row.manifest_hash, meta: row.meta ?? null,
+        createdAt: new Date(row.created_at).getTime() })),
         nextCursor: rows.length > 100 ? page[99]!.id : '' };
     });
   }
@@ -106,13 +115,16 @@ export class CloudFileService {
   async prepare(userId: string, input: CloudPrepare) {
     this.configured();
     if (input?.kind === 'SOURCE') fail(400, 'CLOUD_SOURCE_SYNC_ONLY', '书源请通过数据同步管理，无需上传到云文件');
-    if (!input || !/^[a-zA-Z0-9_-]{8,100}$/.test(input.requestId) || !['BOOK','FONT','SOURCE'].includes(input.kind)
+    if (!input || !/^[a-zA-Z0-9_-]{8,100}$/.test(input.requestId) || !FILE_KINDS.includes(input.kind)
       || typeof input.name !== 'string' || !input.name.trim() || input.name.length > 200
       || /[\\/\x00-\x1f]/.test(input.name) || !Number.isSafeInteger(input.bytes) || input.bytes < 1 || input.bytes > CLOUD_QUOTA_BYTES) {
       fail(400, 'CLOUD_INVALID_FILE', '文件名称、大小或上传标识无效');
     }
     if (input.manifestHash !== undefined && !/^[0-9a-f]{64}$/.test(input.manifestHash)) fail(400, 'CLOUD_INVALID_FILE', '文件校验标识无效');
     const meta = normalizeMeta(input.meta);
+    if (input.kind === 'THEME' && !meta?.packageId === !meta?.schemeId) {
+      fail(400, 'CLOUD_INVALID_FILE', '主题文件需要主题包或方案标识');
+    }
     return this.tx(async db => {
       await this.lock(db, userId); await this.member(db, userId);
       const old = (await db.query<FileRow>('SELECT * FROM cloud_files WHERE user_id=$1 AND request_id=$2', [userId, input.requestId])).rows[0];

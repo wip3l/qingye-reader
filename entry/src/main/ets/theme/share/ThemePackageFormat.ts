@@ -30,6 +30,14 @@ export class ThemePackageFeatures {
   static readonly READER_SINGLE_CORNER: string = 'reader-single-corner-v1';
   // covers 超过 8 张（现在最多 16 张）；老版本最多收 8 张，多了导入直接报错，所以只在用到时写进 requires。
   static readonly BOOK_COVERS_16: string = 'book-covers-16-v1';
+  // 气泡边框用了位图（PNG / WebP / JPG），或只有边框没有端饰；老版本只收 SVG 边框且要求端饰，导入会直接报错，
+  // 所以只在用到时写进 requires。拉伸设置（frameSlice 等）老版本会忽略，不用声明。
+  static readonly BUBBLE_FRAME: string = 'bubble-frame-v1';
+  // 气泡端饰或书架边框用了位图（浅色、深色任意一张）；老版本这两处只收 SVG，导入会直接报错，
+  // 所以只在用到时写进 requires。
+  static readonly BITMAP_CAP_SHELF_FRAME: string = 'bitmap-cap-shelf-frame-v1';
+  // 素材超过 64 个（现在最多 128 个）；老版本最多收 64 个，多了导入直接报错，所以只在用到时写进 requires。
+  static readonly ASSETS_128: string = 'assets-128-v1';
   static readonly KNOWN: string[] = [
     ThemePackageFeatures.CUSTOM_SCHEME,
     ThemePackageFeatures.READER_LAYOUT,
@@ -38,7 +46,10 @@ export class ThemePackageFeatures {
     ThemePackageFeatures.THEME_PARTS,
     ThemePackageFeatures.SCHEME_OVERRIDES,
     ThemePackageFeatures.READER_SINGLE_CORNER,
-    ThemePackageFeatures.BOOK_COVERS_16
+    ThemePackageFeatures.BOOK_COVERS_16,
+    ThemePackageFeatures.BUBBLE_FRAME,
+    ThemePackageFeatures.BITMAP_CAP_SHELF_FRAME,
+    ThemePackageFeatures.ASSETS_128
   ];
 }
 
@@ -48,11 +59,14 @@ export class ThemePackageLimits {
   /** 不小于 AnimatedImagePolicy.MAX_PLAY_BYTES，能上传播放的动图也能随主题包导出。 */
   static readonly MAX_IMAGE_BYTES: number = 25 * 1024 * 1024;
   static readonly MAX_FONT_BYTES: number = 40 * 1024 * 1024;
-  static readonly MAX_VECTOR_BYTES: number = 1024 * 1024;
+  static readonly MAX_VECTOR_BYTES: number = 5 * 1024 * 1024;
   static readonly MAX_JSON_BYTES: number = 1024 * 1024;
-  // 封面从 8 张放宽到 16 张（浅色、深色各一套）时一并放宽：两套都放满也还装得下其余部件的素材。
-  static readonly MAX_ASSETS: number = 64;
-  static readonly MAX_ZIP_ENTRIES: number = 80;
+  // 素材总数上限。超过 LEGACY_MAX_ASSETS 时清单要声明 assets-128-v1。
+  static readonly MAX_ASSETS: number = 128;
+  // 老版本应用的素材上限。
+  static readonly LEGACY_MAX_ASSETS: number = 64;
+  // 素材之外还有 manifest.json、theme.json 和目录条目，留出余量。
+  static readonly MAX_ZIP_ENTRIES: number = 144;
   static readonly MAX_RULES: number = 200;
   static readonly MAX_NAME_LENGTH: number = 24;
   static readonly MAX_AUTHOR_LENGTH: number = 24;
@@ -63,6 +77,20 @@ export class ThemePackageLimits {
   // 老版本应用的封面上限：covers 超过它时清单要声明 book-covers-16-v1。
   static readonly LEGACY_MAX_COVERS: number = 8;
   static readonly MAX_STARTUP_TEXT_LENGTH: number = 40;
+}
+
+/** 这份清单允许的素材个数：声明了 assets-128-v1 才放到 128 个，否则按老版本的 64 个。 */
+export function maxAssetsFor(requires: string[]): number {
+  return requires.includes(ThemePackageFeatures.ASSETS_128) ? ThemePackageLimits.MAX_ASSETS :
+    ThemePackageLimits.LEGACY_MAX_ASSETS;
+}
+
+/** 素材数量超出时的提示：超过 64 个没声明 assets-128-v1 要单独说明。 */
+export function tooManyAssetsMessage(count: number, requires: string[]): string {
+  if (count <= ThemePackageLimits.MAX_ASSETS && !requires.includes(ThemePackageFeatures.ASSETS_128)) {
+    return `主题包素材超过 ${ThemePackageLimits.LEGACY_MAX_ASSETS} 个时 requires 要包含 ${ThemePackageFeatures.ASSETS_128}`;
+  }
+  return '主题包素材数量超出上限';
 }
 
 export class ThemePackageAssetKinds {
@@ -106,6 +134,8 @@ export class ThemePackageManifest {
   version: string = '';
   description: string = '';
   baseTheme: string = '';
+  // baseTheme 里 plain-default 的含义版本：2 是素笺；没写（素笺之前导出的包、旧版编辑器）指原默认主题。
+  baseRevision: number = 0;
   credits: ThemePackageCredits | null = null;
   // 清单里是否写了 assets；没写时由导入方枚举 assets/ 目录补全。
   assetsDeclared: boolean = true;
@@ -155,10 +185,22 @@ export class ThemePackagePartReader {
   // 老版本不认得这两个字段，按 1 显示。
   leadingScale: number = 1;
   trailingScale: number = 1;
+  // 左上、右下角饰各自离屏幕边缘的距离，相对默认边距（短边 × 0.025，夹在 8–22vp）的倍数，0 是贴边；
+  // 老版本不认得这两个字段，按 1 显示。
+  leadingInset: number = 1;
+  trailingInset: number = 1;
 }
 
 export const READER_ORNAMENT_SCALE_MIN: number = 0.5;
 export const READER_ORNAMENT_SCALE_MAX: number = 2;
+export const READER_ORNAMENT_INSET_MAX: number = 3;
+
+/** 角饰边距倍数：缺省或非法值当 1，0 是贴边；其余夹在 0–3，保留两位小数。 */
+export function normalizeOrnamentInset(value: number | null | undefined): number {
+  if (typeof value !== 'number' || !isFinite(value)) return 1;
+  const clamped = Math.max(0, Math.min(READER_ORNAMENT_INSET_MAX, value));
+  return Math.round(clamped * 100) / 100;
+}
 
 /** 缺省、0 或非法值都当 1；其余夹在 0.5–2，保留两位小数。 */
 export function normalizeOrnamentScale(value: number | null | undefined): number {
@@ -186,10 +228,357 @@ export class ThemePackagePartEmphasis {
   textColor: string = '';
 }
 
+/**
+ * 段评气泡（含本章说）的外观，写在每个模式自己的部件里。字段都可以空着：空着的沿用强调气泡样式推出来的样子。
+ * 书源设置了段评颜色时仍以书源为准。旧版本应用不认这一节，段评照旧跟强调气泡样式走。
+ */
+export class ThemePackageCommentBubble {
+  /** COMMENT_BUBBLE_SHAPES 之一；空串跟随强调气泡样式。 */
+  shape: string = '';
+  /** 圆角占气泡高的比例 0–0.5，只对 rounded 有效；负数用默认值。 */
+  radius: number = -1;
+  fill: string = '';
+  stroke: string = '';
+  text: string = '';
+  /** COMMENT_BUBBLE_ORNAMENTS 之一（'none' 表示不画，'custom' 用 ornamentImage）；空串跟随强调气泡样式。 */
+  ornament: string = '';
+  ornamentColor: string = '';
+  /**
+   * 气泡图：整只气泡（含尾巴）的一张透明底图片。包里是素材引用；运行时是本机 URI。'none' 表示这个模式不用图片
+   * （另一模式的图不沿用过来）。方案覆盖里只会是 'none' 或 pack:<packageId>（取那个包同一模式的气泡图与拉伸设置）。
+   * 写了图片时形状、圆角、描边不再生效，底色只在 imageTint 时用来染色。旧版本应用不认，照旧画形状。
+   */
+  image: string = '';
+  /** 左右拉伸线（占图宽的比例 0–0.49）；只用 left / right，图片按比例缩放，竖直方向不拉伸。null 用默认位置。 */
+  imageSlice: ThemePackageBubbleSlice | null = null;
+  /** 文字区离四边的比例；文字区的高度对齐气泡高（字号 × 1.32）。null 用默认位置。 */
+  imageText: ThemePackageBubbleSlice | null = null;
+  /** 中间部分：空串拉伸，'round' 平铺。 */
+  imageRepeat: string = '';
+  /** 气泡折到两行时前一段：空串裁到文字区底边（不画尾巴），'full' 画整图。 */
+  imageBreak: string = '';
+  /** 整张图染成底色（fill，没写时用推导出的底色）。 */
+  imageTint: boolean = false;
+  /** ornament 为 'custom' 时的角标图；方案覆盖里同样写 pack:<packageId>。 */
+  ornamentImage: string = '';
+  /** 'topLeft' / 'bottomRight'；空串是右上。 */
+  ornamentCorner: string = '';
+  /** 角标大小倍数 0.5–1.5；负数为 1。 */
+  ornamentSize: number = -1;
+}
+
+/** outline 是默认的透明描边（颜色跟正文墨色），其余三种是实心气泡。 */
+export const COMMENT_BUBBLE_SHAPES: string[] = ['outline', 'pill', 'rounded', 'cut'];
+export const COMMENT_BUBBLE_SHAPE_NAMES: string[] = ['描边', '胶囊', '圆角', '切角'];
+export const COMMENT_BUBBLE_DEFAULT_RADIUS: number = 0.2;
+export const COMMENT_BUBBLE_RADIUS_MAX: number = 0.5;
+/** 阅读页内置的小图形，与 ReaderCommentBubblePainter 画得出的一致。 */
+export const COMMENT_BUBBLE_ORNAMENTS: string[] = [
+  'none', 'star', 'sparkle', 'dot', 'moon', 'leaf', 'sprig', 'rose', 'paw', 'seal', 'diamond', 'pendant', 'scroll',
+  'cord', 'signal', 'frame', 'sketch', 'postcard', 'folio', 'custom'
+];
+export const COMMENT_BUBBLE_ORNAMENT_NAMES: string[] = [
+  '无', '星', '小星', '圆点', '月', '叶', '枝', '花', '爪印', '印章', '菱形', '坠饰', '卷轴',
+  '绳结', '信号', '内框', '描影', '信封', '书签', '自定义图片'
+];
+/** 自定义角标图的位置；空串（右上）不写进包。 */
+export const COMMENT_ORNAMENT_CORNERS: string[] = ['topLeft', 'topRight', 'bottomRight'];
+export const COMMENT_ORNAMENT_CORNER_NAMES: string[] = ['左上', '右上', '右下'];
+export const COMMENT_ORNAMENT_SIZE_MIN: number = 0.5;
+export const COMMENT_ORNAMENT_SIZE_MAX: number = 1.5;
+/** 气泡图在文字区上方、下方最多超出气泡高的比例；超过时编辑器提示可能压到上下行。 */
+export const COMMENT_IMAGE_OVERHANG_TOP: number = 0.38;
+export const COMMENT_IMAGE_OVERHANG_BOTTOM: number = 0.6;
+export const COMMENT_IMAGE_NONE: string = 'none';
+export class CommentImageRepeat {
+  static readonly ROUND: string = 'round';
+}
+export class CommentImageBreak {
+  static readonly FULL: string = 'full';
+}
+
+/** 这份段评设置用的是气泡图（不是 'none'、也不是空串）。 */
+export function commentBubbleHasImage(source: ThemePackageCommentBubble | null | undefined): boolean {
+  return !!source && typeof source.image === 'string' && !!source.image && source.image !== COMMENT_IMAGE_NONE;
+}
+
+/** 默认拉伸线：左右各“图高 × 0.6”，最多各占图宽的 30%（和强调气泡边框一样）。aspect 是图宽 / 图高。 */
+export function defaultCommentImageSlice(aspect: number): ThemePackageBubbleSlice {
+  const slice = new ThemePackageBubbleSlice();
+  const ratio = aspect > 0 && isFinite(aspect) ? aspect : 3;
+  const end = Math.round(Math.min(0.6 / ratio, 0.3) * 100) / 100;
+  slice.left = end;
+  slice.right = end;
+  return slice;
+}
+
+/** 默认文字区：左右各“图高 × 0.35”最多 25%，上 12%、下 20%（尾巴一般画在下方）。 */
+export function defaultCommentImageText(aspect: number): ThemePackageBubbleSlice {
+  const box = new ThemePackageBubbleSlice();
+  const ratio = aspect > 0 && isFinite(aspect) ? aspect : 3;
+  const end = Math.round(Math.min(0.35 / ratio, 0.25) * 100) / 100;
+  box.left = end;
+  box.right = end;
+  box.top = 0.12;
+  box.bottom = 0.2;
+  return box;
+}
+
+export function commentImageSliceOrDefault(source: ThemePackageCommentBubble, aspect: number): ThemePackageBubbleSlice {
+  const slice = normalizeBubbleFrameSlice(source.imageSlice);
+  if (!slice) return defaultCommentImageSlice(aspect);
+  slice.top = 0;
+  slice.bottom = 0;
+  return slice;
+}
+
+export function commentImageTextOrDefault(source: ThemePackageCommentBubble, aspect: number): ThemePackageBubbleSlice {
+  return normalizeBubbleFrameSlice(source.imageText) || defaultCommentImageText(aspect);
+}
+
+/** 文字区上方、下方超出气泡高的比例 [上, 下]；编辑器用它提示可能压到上下行。 */
+export function commentImageOverhang(text: ThemePackageBubbleSlice): number[] {
+  const body = Math.max(0.02, 1 - text.top - text.bottom);
+  return [text.top / body, text.bottom / body];
+}
+
+const COMMENT_BUBBLE_COLOR: RegExp = /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+/** 不认得的形状、图形和颜色都清成空串（沿用），圆角夹到 0–0.5；读包、读本机设置和编辑器都走它。 */
+export function normalizeCommentBubble(source: ThemePackageCommentBubble | null | undefined): ThemePackageCommentBubble {
+  const result = new ThemePackageCommentBubble();
+  if (!source || typeof source !== 'object') return result;
+  const text = (value: string | undefined): string => typeof value === 'string' ? value.trim() : '';
+  const color = (value: string | undefined): string => {
+    const raw = text(value);
+    return COMMENT_BUBBLE_COLOR.test(raw) ? raw.toUpperCase() : '';
+  };
+  const shape = text(source.shape);
+  result.shape = COMMENT_BUBBLE_SHAPES.includes(shape) ? shape : '';
+  const radius = typeof source.radius === 'number' && isFinite(source.radius) ? source.radius : -1;
+  result.radius = radius < 0 ? -1 : Math.round(Math.min(COMMENT_BUBBLE_RADIUS_MAX, radius) * 100) / 100;
+  result.fill = color(source.fill);
+  result.stroke = color(source.stroke);
+  result.text = color(source.text);
+  const ornament = text(source.ornament);
+  result.ornament = COMMENT_BUBBLE_ORNAMENTS.includes(ornament) ? ornament : '';
+  result.ornamentColor = color(source.ornamentColor);
+  // 素材引用、本机 URI、'none' 或 pack:<id>，都原样保留；读包时已经校验过引用。
+  result.image = limitChars(text(source.image), 2000);
+  if (result.image && result.image !== COMMENT_IMAGE_NONE) {
+    result.imageSlice = normalizeBubbleFrameSlice(source.imageSlice);
+    if (result.imageSlice) {
+      result.imageSlice.top = 0;
+      result.imageSlice.bottom = 0;
+    }
+    result.imageText = normalizeBubbleFrameSlice(source.imageText);
+    result.imageRepeat = source.imageRepeat === CommentImageRepeat.ROUND ? CommentImageRepeat.ROUND : '';
+    result.imageBreak = source.imageBreak === CommentImageBreak.FULL ? CommentImageBreak.FULL : '';
+    result.imageTint = source.imageTint === true;
+  }
+  result.ornamentImage = limitChars(text(source.ornamentImage), 2000);
+  const corner = text(source.ornamentCorner);
+  result.ornamentCorner = corner === 'topLeft' || corner === 'bottomRight' ? corner : '';
+  const size = typeof source.ornamentSize === 'number' && isFinite(source.ornamentSize) ? source.ornamentSize : -1;
+  result.ornamentSize = size < 0 ? -1 : Math.round(Math.max(COMMENT_ORNAMENT_SIZE_MIN,
+    Math.min(COMMENT_ORNAMENT_SIZE_MAX, size)) * 20) / 20;
+  return result;
+}
+
+export function commentBubbleIsEmpty(source: ThemePackageCommentBubble | null | undefined): boolean {
+  const value = normalizeCommentBubble(source);
+  return !value.shape && value.radius < 0 && !value.fill && !value.stroke && !value.text && !value.ornament &&
+    !value.ornamentColor && !value.image && !value.ornamentImage && !value.ornamentCorner && value.ornamentSize < 0;
+}
+
+/** 气泡图与它的拉伸设置（image 起的六项）从 source 抄到 target。 */
+export function copyCommentImage(target: ThemePackageCommentBubble, source: ThemePackageCommentBubble): void {
+  target.image = source.image || '';
+  target.imageSlice = source.imageSlice ? normalizeBubbleFrameSlice(source.imageSlice) : null;
+  target.imageText = source.imageText ? normalizeBubbleFrameSlice(source.imageText) : null;
+  target.imageRepeat = source.imageRepeat || '';
+  target.imageBreak = source.imageBreak || '';
+  target.imageTint = source.imageTint === true;
+}
+
+/**
+ * 包里某个模式实际用的段评设置：气泡图、角标图各自取这个模式的，没有就用另一种模式的（只给了一种模式时两种都用），
+ * 这个模式写了 'none' 时不沿用。其余字段只看这个模式。两种模式都没有任何设置时返回 null。
+ */
+export function commentBubbleFor(parts: ThemePackageParts | null | undefined,
+  dark: boolean): ThemePackageCommentBubble | null {
+  if (!parts) return null;
+  const ownVariant = dark ? parts.dark : parts.light;
+  const otherVariant = dark ? parts.light : parts.dark;
+  const own = ownVariant && ownVariant.commentBubble ? normalizeCommentBubble(ownVariant.commentBubble) : null;
+  const other = otherVariant && otherVariant.commentBubble ? normalizeCommentBubble(otherVariant.commentBubble) : null;
+  if (!own && !other) return null;
+  const result = own || new ThemePackageCommentBubble();
+  if (!result.image && other && commentBubbleHasImage(other)) copyCommentImage(result, other);
+  if (!result.ornamentImage && other && other.ornamentImage) {
+    result.ornamentImage = other.ornamentImage;
+    if (!result.ornament && other.ornament === 'custom') result.ornament = 'custom';
+    if (!result.ornamentCorner) result.ornamentCorner = other.ornamentCorner;
+    if (result.ornamentSize < 0) result.ornamentSize = other.ornamentSize;
+  }
+  return commentBubbleIsEmpty(result) ? null : result;
+}
+
+/** 只写设了的字段。 */
+export function encodeCommentBubble(source: ThemePackageCommentBubble): Record<string, Object> {
+  const value = normalizeCommentBubble(source);
+  const record: Record<string, Object> = {};
+  if (value.shape) record['shape'] = value.shape;
+  if (value.radius >= 0) record['radius'] = value.radius;
+  if (value.fill) record['fill'] = value.fill;
+  if (value.stroke) record['stroke'] = value.stroke;
+  if (value.text) record['text'] = value.text;
+  if (value.ornament) record['ornament'] = value.ornament;
+  if (value.ornamentColor) record['ornamentColor'] = value.ornamentColor;
+  if (value.image) {
+    record['image'] = value.image;
+    if (value.image !== COMMENT_IMAGE_NONE) {
+      if (value.imageSlice) {
+        const slice: Record<string, Object> = {};
+        slice['left'] = value.imageSlice.left;
+        slice['right'] = value.imageSlice.right;
+        record['imageSlice'] = slice;
+      }
+      if (value.imageText) record['imageText'] = JSON.parse(JSON.stringify(value.imageText)) as Object;
+      if (value.imageRepeat) record['imageRepeat'] = value.imageRepeat;
+      if (value.imageBreak) record['imageBreak'] = value.imageBreak;
+      if (value.imageTint) record['imageTint'] = true;
+    }
+  }
+  if (value.ornamentImage) record['ornamentImage'] = value.ornamentImage;
+  if (value.ornamentCorner) record['ornamentCorner'] = value.ornamentCorner;
+  if (value.ornamentSize >= 0) record['ornamentSize'] = value.ornamentSize;
+  return record;
+}
+
 export class ThemePackageVariantParts {
   colors: ThemePackagePartColors = new ThemePackagePartColors();
   reader: ThemePackagePartReader = new ThemePackagePartReader();
   emphasis: ThemePackagePartEmphasis = new ThemePackagePartEmphasis();
+  // 本机旧记录里没有。
+  commentBubble: ThemePackageCommentBubble | null = null;
+  /** 标题强调；null 表示主题不设置（标题保持原样）。本机旧记录里没有，旧版本应用不认。 */
+  titleEmphasis: ThemePackagePartEmphasis | null = null;
+  // 章首装饰，整节不写表示这个模式不设置；本机旧记录里没有。
+  chapterHead: ThemePackageChapterHead | null = null;
+}
+
+/** 标题强调的气泡样式写成它时，和正文强调用同一套样式与素材。 */
+export const TITLE_BUBBLE_SAME_AS_EMPHASIS: string = 'emphasis';
+/** 方案自己的标题气泡（包里 titleBubble 那套素材）作为气泡样式时的 ID 后缀：pack:<packageId>:title。 */
+export const PACK_TITLE_BUBBLE_SUFFIX: string = ':title';
+
+export function packTitleBubbleStyleId(packThemeIdValue: string): string {
+  return `${packThemeIdValue}${PACK_TITLE_BUBBLE_SUFFIX}`;
+}
+
+export function isPackTitleBubbleStyle(styleId: string): boolean {
+  return isPackThemeId(styleId) && styleId.endsWith(PACK_TITLE_BUBBLE_SUFFIX);
+}
+
+export function titleEmphasisIsEmpty(value: ThemePackagePartEmphasis | null | undefined): boolean {
+  return !value || !(value.mode || value.bubbleStyle || value.color || value.textColor);
+}
+
+/**
+ * 章首装饰：章节标题旁的饰图、分段标题第一段（“第十二章”那一行）的颜色，和首字装饰（放大占几行，可垫印章图）。
+ * 写在每个模式自己的部件里，字段都可以空着。旧版本应用不认这一节，标题和正文照旧显示。
+ */
+export class ThemePackageChapterHead {
+  /**
+   * 饰图：包里是素材引用，运行时是本机 URI。这个模式没写时沿用另一种模式的那张（连同位置和大小，
+   * 见 chapterHeadFor）。
+   */
+  image: string = '';
+  /** CHAPTER_HEAD_PLACEMENTS 之一；空串是标题左侧。 */
+  placement: string = '';
+  /** 饰图大小倍数 0.5–2。左侧时 1 表示和整组标题一样高，上方、下方时 1 表示约一个标题字高。 */
+  scale: number = 1;
+  /** 分段标题第一段的颜色（可带透明度）；空串和标题同色。读者没开标题分段时不生效。 */
+  numberColor: string = '';
+  /**
+   * 首字装饰占几行：0 不处理，2 或 3。这个模式没设时沿用另一种模式的整套首字设置（行数、印章图、字占比，
+   * 颜色没另写时也跟着），见 chapterHeadFor。
+   */
+  dropCapLines: number = 0;
+  /** 首字底下的印章图（包里是素材引用，运行时是本机 URI）；空串只放大不垫图。 */
+  dropCapImage: string = '';
+  /** 首字颜色（可带透明度）；空串和正文同色。 */
+  dropCapColor: string = '';
+  /** 垫印章图时字高占印章边长的比例 0.4–0.9。 */
+  dropCapRatio: number = DROP_CAP_RATIO_DEFAULT;
+}
+
+export const DROP_CAP_RATIO_DEFAULT: number = 0.62;
+export const DROP_CAP_RATIO_MIN: number = 0.4;
+export const DROP_CAP_RATIO_MAX: number = 0.9;
+
+export function normalizeDropCapRatio(value: number | null | undefined): number {
+  if (typeof value !== 'number' || !isFinite(value) || value <= 0) return DROP_CAP_RATIO_DEFAULT;
+  return Math.round(Math.max(DROP_CAP_RATIO_MIN, Math.min(DROP_CAP_RATIO_MAX, value)) * 100) / 100;
+}
+
+/** side：贴版心左边、上下居中于整组标题；top / bottom：在标题上方、下方单独占一行，跟着标题的对齐方式。 */
+export const CHAPTER_HEAD_PLACEMENTS: string[] = ['side', 'top', 'bottom'];
+export const CHAPTER_HEAD_PLACEMENT_NAMES: string[] = ['标题左侧', '标题上方', '标题下方'];
+/** 方案覆盖里表示“不用章首装饰”（来源主题带了也不显示）。 */
+export const CHAPTER_HEAD_NONE: string = 'none';
+
+export function normalizeChapterHead(value: ThemePackageChapterHead | null | undefined): ThemePackageChapterHead {
+  const result = new ThemePackageChapterHead();
+  if (!value || typeof value !== 'object') return result;
+  result.image = typeof value.image === 'string' ? value.image : '';
+  result.placement = value.placement === 'top' || value.placement === 'bottom' ? value.placement : '';
+  result.scale = normalizeOrnamentScale(value.scale);
+  result.numberColor = typeof value.numberColor === 'string' && HEX_COLOR.test(value.numberColor) ?
+    value.numberColor.toUpperCase() : '';
+  // 本机旧记录里没有首字这几项。只写了印章图没写行数时按 2 行。
+  result.dropCapImage = typeof value.dropCapImage === 'string' ? value.dropCapImage : '';
+  // 桌面编辑器的工程里行数可能是字符串。
+  const capLines = Number(value.dropCapLines);
+  result.dropCapLines = capLines === 3 ? 3 : (capLines === 2 || result.dropCapImage ? 2 : 0);
+  result.dropCapColor = typeof value.dropCapColor === 'string' && HEX_COLOR.test(value.dropCapColor) ?
+    value.dropCapColor.toUpperCase() : '';
+  result.dropCapRatio = normalizeDropCapRatio(value.dropCapRatio);
+  return result;
+}
+
+export function chapterHeadIsEmpty(value: ThemePackageChapterHead | null | undefined): boolean {
+  return !value || !(value.image || value.numberColor || value.dropCapLines > 0 || value.dropCapImage ||
+    value.dropCapColor);
+}
+
+/**
+ * 某个模式下实际用的章首装饰：饰图取这个模式的，没有就用另一种模式的（位置、大小跟着那张图）；
+ * 序号行颜色各模式用各的。什么都没有时返回 null。
+ */
+export function chapterHeadFor(parts: ThemePackageParts | null | undefined, dark: boolean): ThemePackageChapterHead | null {
+  if (!parts) return null;
+  const ownVariant = dark ? parts.dark : parts.light;
+  const otherVariant = dark ? parts.light : parts.dark;
+  const own = normalizeChapterHead(ownVariant ? ownVariant.chapterHead : null);
+  const other = normalizeChapterHead(otherVariant ? otherVariant.chapterHead : null);
+  const result = new ThemePackageChapterHead();
+  const imageSource = own.image ? own : (other.image ? other : null);
+  if (imageSource) {
+    result.image = imageSource.image;
+    result.placement = imageSource.placement;
+    result.scale = imageSource.scale;
+  }
+  result.numberColor = own.numberColor;
+  const capSource = own.dropCapLines > 0 ? own : (other.dropCapLines > 0 ? other : null);
+  if (capSource) {
+    result.dropCapLines = capSource.dropCapLines;
+    result.dropCapImage = capSource.dropCapImage;
+    result.dropCapRatio = capSource.dropCapRatio;
+    result.dropCapColor = own.dropCapColor || capSource.dropCapColor;
+  }
+  return chapterHeadIsEmpty(result) ? null : result;
 }
 
 export class ThemePackageTtsPanel {
@@ -227,6 +616,13 @@ export const NAVIGATION_ICON_KEYS: string[] = [
   'listen', 'footprint', 'listenSelected', 'footprintSelected'
 ];
 
+/** 一个图标都没有（labels 不算）。 */
+export function navigationIsEmpty(navigation: ThemePackageNavigation | null | undefined): boolean {
+  if (!navigation) return true;
+  const record = navigation as Object as Record<string, string>;
+  return !NAVIGATION_ICON_KEYS.some((key: string): boolean => !!record[key]);
+}
+
 /**
  * 位图素材的显示区域：图片文件不改，显示时把 (x, y, width, height) 这块放大铺满素材位，多出来的部分裁掉。
  * 动图取景用它保住动画（重新编码只能存单帧）。坐标是相对 imageWidth × imageHeight 的像素，只看比例，
@@ -248,6 +644,8 @@ export class ThemePackageBook {
   // 深色模式单独的一套封面，可选：空着时深色也用 covers。旧版本应用不认这个字段，两种模式都显示 covers。
   coversDark: string[] = [];
   shelfFrame: string = '';
+  // 深色模式单独的书架边框，可选，规则同文件夹插画。旧版本应用不认，两种模式都显示 shelfFrame。
+  shelfFrameDark: string = '';
   shelfFolder: string = '';
   // 深色模式单独的文件夹插画，可选：空着时深色也用 shelfFolder。旧版本应用不认，两种模式都显示 shelfFolder。
   shelfFolderDark: string = '';
@@ -257,6 +655,12 @@ export class ThemePackageBook {
   coverCropsDark: ThemeImageCrop[] = [];
   shelfFolderCrop: ThemeImageCrop | null = null;
   shelfFolderCropDark: ThemeImageCrop | null = null;
+  // 这个模式不用书架边框 / 文件夹插画，而不是没给图就沿用基底主题的那张；只在这个模式没有自己的图时起作用。
+  // 深色没有自己的图、也没单独选“不用”时跟着浅色。旧版本应用不认，照旧显示基底主题的那张。
+  noShelfFrame: boolean = false;
+  noShelfFrameDark: boolean = false;
+  noShelfFolder: boolean = false;
+  noShelfFolderDark: boolean = false;
 }
 
 /**
@@ -284,18 +688,58 @@ export function partsUseManyCovers(parts: ThemePackageParts | null | undefined):
   return !!parts && !!parts.book && bookCoversFor(parts.book, false).length > ThemePackageLimits.LEGACY_MAX_COVERS;
 }
 
-/** 某个模式下显示的文件夹插画，规则同封面：深色优先用 shelfFolderDark，没有就用 shelfFolder；只给了深色那张时浅色也用它。 */
+/**
+ * 某个模式下这一项选了“不用”：这个模式没有自己的图，并且自己选了不用；深色没单独设时跟着浅色
+ * （浅色既没图又选了不用，深色也不用）。
+ */
+function shelfPartOff(light: string, night: string, lightOff: boolean, nightOff: boolean, dark: boolean): boolean {
+  if (dark) return !night && (nightOff || (!light && lightOff));
+  return !light && lightOff;
+}
+
+/** 某个模式下不显示文件夹插画（选了“不用”），书架上的分组照普通样式画。 */
+export function bookFolderOff(book: ThemePackageBook | null | undefined, dark: boolean): boolean {
+  return !!book && shelfPartOff(book.shelfFolder || '', book.shelfFolderDark || '', !!book.noShelfFolder,
+    !!book.noShelfFolderDark, dark);
+}
+
+/** 某个模式下不显示书架边框（选了“不用”）。 */
+export function bookShelfFrameOff(book: ThemePackageBook | null | undefined, dark: boolean): boolean {
+  return !!book && shelfPartOff(book.shelfFrame || '', book.shelfFrameDark || '', !!book.noShelfFrame,
+    !!book.noShelfFrameDark, dark);
+}
+
+/**
+ * 某个模式下显示的文件夹插画，规则同封面：深色优先用 shelfFolderDark，没有就用 shelfFolder；只给了深色那张时浅色也用它。
+ * 选了“不用”时为空（见 bookFolderOff）。
+ */
 export function bookFolderFor(book: ThemePackageBook | null | undefined, dark: boolean): string {
-  if (!book) return '';
+  if (!book || bookFolderOff(book, dark)) return '';
   const light = book.shelfFolder || '';
   const night = book.shelfFolderDark || '';
   if (dark) return night || light;
   return light || night;
 }
 
-/** 封面、边框、文件夹插画一样都没有：整节可以去掉。 */
+/** 某个模式下的书架边框，规则同文件夹插画。 */
+export function bookShelfFrameFor(book: ThemePackageBook | null | undefined, dark: boolean): string {
+  if (!book || bookShelfFrameOff(book, dark)) return '';
+  const light = book.shelfFrame || '';
+  const night = book.shelfFrameDark || '';
+  if (dark) return night || light;
+  return light || night;
+}
+
+/** 有边框或文件夹插画选了“不用”（任一模式）。 */
+export function bookHasOffParts(book: ThemePackageBook | null | undefined): boolean {
+  return !!book && (bookShelfFrameOff(book, false) || bookShelfFrameOff(book, true) ||
+    bookFolderOff(book, false) || bookFolderOff(book, true));
+}
+
+/** 封面、边框、文件夹插画一样都没有，也没有选“不用”的：整节可以去掉。 */
 export function bookIsEmpty(book: ThemePackageBook | null | undefined): boolean {
-  return !book || (bookHasNoCovers(book) && !book.shelfFrame && !bookFolderFor(book, false));
+  return !book || (bookHasNoCovers(book) && !book.shelfFrame && !book.shelfFrameDark && !book.shelfFolder &&
+    !book.shelfFolderDark && !bookHasOffParts(book));
 }
 
 /** 书架的四种布局，取值同应用的 bookshelfLayoutMode。 */
@@ -344,9 +788,158 @@ export class ThemePackageStartup {
   subtitle: string = '';
 }
 
+/**
+ * 气泡边框的拉伸线，都是占原图宽或高的比例：left / right 是两端不拉伸的宽度，top / bottom 是文字行上下
+ * 留在外面的高度。阅读页把 top–bottom 之间对齐强调文字那一行，线外的部分照样画出；left–right 之间是中段，
+ * 按长度拉伸或平铺，两端按比例缩放保持原样。
+ */
+export class ThemePackageBubbleSlice {
+  left: number = 0;
+  right: number = 0;
+  top: number = 0;
+  bottom: number = 0;
+}
+
+export class BubbleFrameRepeat {
+  static readonly STRETCH: string = 'stretch';
+  static readonly ROUND: string = 'round';
+}
+
+export class BubbleFrameBreak {
+  /** 换行处每行都画两端。 */
+  static readonly FULL: string = 'full';
+  /** 换行处不画端头，边框在断开处平切。 */
+  static readonly CUT: string = 'cut';
+}
+
 export class ThemePackageBubble {
   frame: string = '';
   cap: string = '';
+  // 以下四项只对边框有效；缺省时用 bubbleFrameSliceOrDefault 的位置、拉伸、每行两端、保留原色。
+  frameSlice: ThemePackageBubbleSlice | null = null;
+  frameRepeat: string = '';
+  frameBreak: string = '';
+  /** 染成气泡底色（强调设置里的底色，浅深各用各的）。 */
+  frameTint: boolean = false;
+}
+
+/** 拉伸线每一项允许的范围：两端合起来、上下合起来都不能吃掉整张图。 */
+export const BUBBLE_FRAME_SLICE_MAX: number = 0.49;
+
+/**
+ * 没设拉伸线时的默认位置：上下贴图边，左右各留“图高 × 0.6”，最多各占图宽的 30%。aspect 是原图宽 / 高。
+ */
+export function defaultBubbleFrameSlice(aspect: number): ThemePackageBubbleSlice {
+  const slice = new ThemePackageBubbleSlice();
+  const ratio = aspect > 0 && isFinite(aspect) ? aspect : 3;
+  const end = Math.min(0.6 / ratio, 0.3);
+  slice.left = end;
+  slice.right = end;
+  return slice;
+}
+
+export function normalizeBubbleFrameSlice(slice: ThemePackageBubbleSlice | null | undefined): ThemePackageBubbleSlice | null {
+  if (!slice) return null;
+  const clamp = (value: number): number =>
+    typeof value === 'number' && isFinite(value) ? Math.max(0, Math.min(BUBBLE_FRAME_SLICE_MAX, value)) : 0;
+  const result = new ThemePackageBubbleSlice();
+  result.left = Math.round(clamp(slice.left) * 10000) / 10000;
+  result.right = Math.round(clamp(slice.right) * 10000) / 10000;
+  result.top = Math.round(clamp(slice.top) * 10000) / 10000;
+  result.bottom = Math.round(clamp(slice.bottom) * 10000) / 10000;
+  return result;
+}
+
+export function bubbleFrameSliceOrDefault(slice: ThemePackageBubbleSlice | null | undefined,
+  aspect: number): ThemePackageBubbleSlice {
+  return normalizeBubbleFrameSlice(slice) || defaultBubbleFrameSlice(aspect);
+}
+
+function copyBubbleFrame(target: ThemePackageBubble, source: ThemePackageBubble): void {
+  target.frame = source.frame;
+  target.frameSlice = source.frameSlice ? normalizeBubbleFrameSlice(source.frameSlice) : null;
+  target.frameRepeat = source.frameRepeat || '';
+  target.frameBreak = source.frameBreak || '';
+  target.frameTint = source.frameTint === true;
+}
+
+/**
+ * 某个模式下实际用的气泡素材：端饰、边框各自取这个模式的，没有就用另一种模式的（只给了一种模式时两种都用它）。
+ * 拉伸线、平铺、换行方式、染色跟着所属的那张边框走。两种模式都没有时返回 null。
+ */
+export function bubbleFor(parts: ThemePackageParts | null | undefined, dark: boolean): ThemePackageBubble | null {
+  if (!parts) return null;
+  return bubblePairFor(parts.bubble, parts.bubbleDark, dark);
+}
+
+/** 标题气泡（titleBubble / titleBubbleDark），规则同 bubbleFor。 */
+export function titleBubbleFor(parts: ThemePackageParts | null | undefined, dark: boolean): ThemePackageBubble | null {
+  if (!parts) return null;
+  return bubblePairFor(parts.titleBubble || null, parts.titleBubbleDark || null, dark);
+}
+
+export function titleBubbleDarkDifference(parts: ThemePackageParts | null | undefined): ThemePackageBubble | null {
+  return bubblePairDifference(titleBubbleFor(parts, false), titleBubbleFor(parts, true));
+}
+
+function bubblePairFor(lightBubble: ThemePackageBubble | null, darkBubble: ThemePackageBubble | null,
+  dark: boolean): ThemePackageBubble | null {
+  const own = dark ? darkBubble : lightBubble;
+  const other = dark ? lightBubble : darkBubble;
+  const result = new ThemePackageBubble();
+  result.cap = (own && own.cap) || (other && other.cap) || '';
+  const frameSource = own && own.frame ? own : (other && other.frame ? other : null);
+  if (frameSource) copyBubbleFrame(result, frameSource);
+  return result.cap || result.frame ? result : null;
+}
+
+function sameBubbleFrame(a: ThemePackageBubble, b: ThemePackageBubble): boolean {
+  return a.frame === b.frame && JSON.stringify(normalizeBubbleFrameSlice(a.frameSlice)) ===
+    JSON.stringify(normalizeBubbleFrameSlice(b.frameSlice)) && (a.frameRepeat || '') === (b.frameRepeat || '') &&
+    (a.frameBreak || '') === (b.frameBreak || '') && (a.frameTint === true) === (b.frameTint === true);
+}
+
+/**
+ * 写进包的深色气泡：只留与浅色不同的那几项（浅色写成 bubble，见 bubbleFor）。两种模式一样时为 null。
+ */
+export function bubbleDarkDifference(parts: ThemePackageParts | null | undefined): ThemePackageBubble | null {
+  return bubblePairDifference(bubbleFor(parts, false), bubbleFor(parts, true));
+}
+
+function bubblePairDifference(light: ThemePackageBubble | null, dark: ThemePackageBubble | null): ThemePackageBubble | null {
+  if (!light || !dark) return null;
+  const result = new ThemePackageBubble();
+  if (dark.cap && dark.cap !== light.cap) result.cap = dark.cap;
+  if (dark.frame && !sameBubbleFrame(dark, light)) copyBubbleFrame(result, dark);
+  return result.cap || result.frame ? result : null;
+}
+
+/** 气泡边框是位图，或只有边框没有端饰：导出时清单要声明 bubble-frame-v1。看的是写成 bubble 的浅色那套。 */
+export function partsUseBubbleFrameFeature(parts: ThemePackageParts | null | undefined): boolean {
+  const bubble = bubbleFor(parts, false);
+  if (!bubble || !bubble.frame) return false;
+  if (!bubble.cap) return true;
+  const extension = assetPathExtension(bubble.frame) || fileExtensionOf(bubble.frame);
+  return kindForExtension(extension) === ThemePackageAssetKinds.IMAGE;
+}
+
+/**
+ * 气泡端饰或书架边框是位图（浅色、深色任意一张）：导出时清单要声明 bitmap-cap-shelf-frame-v1。
+ * 认得深色那套字段的老版本同样只收 SVG，所以深色那张是位图也要声明。
+ */
+export function partsUseBitmapCapOrShelfFrame(parts: ThemePackageParts | null | undefined): boolean {
+  if (!parts) return false;
+  const bitmap = (path: string): boolean => !!path &&
+    kindForExtension(assetPathExtension(path) || fileExtensionOf(path)) === ThemePackageAssetKinds.IMAGE;
+  return (!!parts.bubble && bitmap(parts.bubble.cap)) || (!!parts.bubbleDark && bitmap(parts.bubbleDark.cap)) ||
+    (!!parts.book && (bitmap(parts.book.shelfFrame) || bitmap(parts.book.shelfFrameDark)));
+}
+
+function fileExtensionOf(path: string): string {
+  const match = /\.([A-Za-z0-9]{2,5})$/.exec(path || '');
+  if (!match) return '';
+  const extension = match[1].toLowerCase();
+  return extension === 'jpeg' ? 'jpg' : extension;
 }
 
 /** 主题包自带的部件。素材字段存 qytheme-asset:<id> 引用；为空或为 null 的部件回退到基底主题。 */
@@ -360,6 +953,13 @@ export class ThemePackageParts {
   startupLight: ThemePackageStartup | null = null;
   startupDark: ThemePackageStartup | null = null;
   bubble: ThemePackageBubble | null = null;
+  // 深色模式单独的气泡素材，可选；端饰、边框按项沿用 bubble（见 bubbleFor）。旧版本应用不认，两种模式都用 bubble。
+  bubbleDark: ThemePackageBubble | null = null;
+  // 标题强调用的端饰与边框（标题气泡），深色那套按项沿用浅色（见 titleBubbleFor）。本机旧记录里没有，旧版本应用不认。
+  titleBubble: ThemePackageBubble | null = null;
+  titleBubbleDark: ThemePackageBubble | null = null;
+  // 深色模式单独的导航图标，可选；没给的图标沿用 navigation，labels 只看 navigation。旧版本应用不认。
+  navigationDark: ThemePackageNavigation | null = null;
   // 首页三个页签顶部的背景图；只写了一种模式时另一种模式不显示背景。
   homeBackdropLight: string = '';
   homeBackdropDark: string = '';
@@ -640,6 +1240,7 @@ export function encodeManifest(manifest: ThemePackageManifest): string {
     if (manifest.version) record['version'] = manifest.version;
     if (manifest.description) record['description'] = manifest.description;
     if (manifest.baseTheme) record['baseTheme'] = manifest.baseTheme;
+    if (manifest.baseRevision > 0) record['baseRevision'] = manifest.baseRevision;
     if (manifest.credits) record['credits'] = manifest.credits;
   }
   record['assets'] = manifest.assets;
@@ -690,6 +1291,7 @@ export function decodeManifest(text: string): ThemePackageManifest {
       ThemePackageLimits.MAX_VERSION_LENGTH);
     manifest.description = sanitizeDescription(stringField(record, 'description'));
     manifest.baseTheme = limitChars(stringField(record, 'baseTheme'), 64);
+    manifest.baseRevision = Math.max(0, Math.floor(numberField(record, 'baseRevision')));
     const credits = objectField(record, 'credits');
     if (credits) {
       manifest.credits = new ThemePackageCredits();
@@ -706,8 +1308,11 @@ export function decodeManifest(text: string): ThemePackageManifest {
     manifest.assetsDeclared = false;
     return manifest;
   }
-  if (!Array.isArray(assets) || assets.length > ThemePackageLimits.MAX_ASSETS) {
-    throw new Error('主题包素材数量超出上限');
+  if (!Array.isArray(assets)) {
+    throw new Error('主题包清单已损坏');
+  }
+  if (assets.length > maxAssetsFor(manifest.requires)) {
+    throw new Error(tooManyAssetsMessage(assets.length, manifest.requires));
   }
   const ids = new Set<string>();
   const paths = new Set<string>();
@@ -916,6 +1521,16 @@ export function replaceSelfPackId(settings: Record<string, Object>, ownThemeId: 
   for (const key of ['customLightEmphasis', 'customDarkEmphasis']) {
     const override = objectField(settings, key);
     if (override && override['bubbleStyle'] === PACK_SELF_THEME_ID) override['bubbleStyle'] = ownThemeId;
+    const comment = override ? objectField(override, 'comment') : null;
+    if (comment) {
+      if (comment['image'] === PACK_SELF_THEME_ID) comment['image'] = ownThemeId;
+      if (comment['ornamentImage'] === PACK_SELF_THEME_ID) comment['ornamentImage'] = ownThemeId;
+    }
+    const title = override ? objectField(override, 'title') : null;
+    if (title && title['bubbleStyle'] === `${PACK_SELF_THEME_ID}${PACK_TITLE_BUBBLE_SUFFIX}`) {
+      title['bubbleStyle'] = `${ownThemeId}${PACK_TITLE_BUBBLE_SUFFIX}`;
+    }
+    if (override && override['chapterHead'] === PACK_SELF_THEME_ID) override['chapterHead'] = ownThemeId;
   }
 }
 
@@ -938,6 +1553,16 @@ export function replaceOwnPackIdWithSelf(settings: Record<string, Object>, ownTh
   for (const key of ['customLightEmphasis', 'customDarkEmphasis']) {
     const override = objectField(settings, key);
     if (override && override['bubbleStyle'] === ownThemeId) override['bubbleStyle'] = PACK_SELF_THEME_ID;
+    const comment = override ? objectField(override, 'comment') : null;
+    if (comment) {
+      if (comment['image'] === ownThemeId) comment['image'] = PACK_SELF_THEME_ID;
+      if (comment['ornamentImage'] === ownThemeId) comment['ornamentImage'] = PACK_SELF_THEME_ID;
+    }
+    const title = override ? objectField(override, 'title') : null;
+    if (title && title['bubbleStyle'] === `${ownThemeId}${PACK_TITLE_BUBBLE_SUFFIX}`) {
+      title['bubbleStyle'] = `${PACK_SELF_THEME_ID}${PACK_TITLE_BUBBLE_SUFFIX}`;
+    }
+    if (override && override['chapterHead'] === ownThemeId) override['chapterHead'] = PACK_SELF_THEME_ID;
   }
 }
 
@@ -1009,6 +1634,9 @@ function decodeVariantParts(record: Record<string, Object>, manifest: ThemePacka
     result.reader.imageFit = fit === 'contain' || fit === 'fill' ? fit : 'cover';
     result.reader.leadingScale = normalizeOrnamentScale(numberField(reader, 'leadingScale'));
     result.reader.trailingScale = normalizeOrnamentScale(numberField(reader, 'trailingScale'));
+    // 0 是贴边，不能和“没写”混在一起，所以不走 numberField。
+    result.reader.leadingInset = normalizeOrnamentInset(reader['leadingInset'] as number | undefined);
+    result.reader.trailingInset = normalizeOrnamentInset(reader['trailingInset'] as number | undefined);
     if (mode === 'image' && !result.reader.image) {
       throw new Error(`主题包的${readerLabel} 整图模式需要 image`);
     }
@@ -1037,7 +1665,128 @@ function decodeVariantParts(record: Record<string, Object>, manifest: ThemePacka
     result.emphasis.color = colorField(emphasis, 'color', emphasisLabel, true);
     result.emphasis.textColor = colorField(emphasis, 'textColor', emphasisLabel, true);
   }
+  const title = objectField(record, 'titleEmphasis');
+  if (title) {
+    const titleLabel = `${label}.titleEmphasis`;
+    const mode = stringField(title, 'mode').trim();
+    if (mode && mode !== 'none' && mode !== 'text' && mode !== 'highlight' && mode !== 'bubble') {
+      throw new Error(`主题包的${titleLabel}.mode 只能是 none、text、highlight 或 bubble`);
+    }
+    const parsed = new ThemePackagePartEmphasis();
+    parsed.mode = mode;
+    parsed.bubbleStyle = limitChars(stringField(title, 'bubbleStyle').trim(), 40);
+    parsed.color = colorField(title, 'color', titleLabel, true);
+    parsed.textColor = colorField(title, 'textColor', titleLabel, true);
+    result.titleEmphasis = titleEmphasisIsEmpty(parsed) ? null : parsed;
+  }
+  const head = objectField(record, 'chapterHead');
+  if (head) {
+    const headLabel = `${label}.chapterHead`;
+    // 位置不认得时按标题左侧处理（以后的版本可能加新位置）；颜色、素材写错照样报错。
+    const parsed = new ThemePackageChapterHead();
+    parsed.image = partAssetRef(head, 'image', manifest,
+      [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE], headLabel);
+    const placement = stringField(head, 'placement').trim();
+    parsed.placement = placement === 'top' || placement === 'bottom' ? placement : '';
+    parsed.scale = normalizeOrnamentScale(numberField(head, 'scale'));
+    parsed.numberColor = colorField(head, 'numberColor', headLabel, true);
+    parsed.dropCapImage = partAssetRef(head, 'dropCapImage', manifest,
+      [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE], headLabel);
+    const capLines = numberField(head, 'dropCapLines');
+    parsed.dropCapLines = capLines === 3 ? 3 : (capLines === 2 || parsed.dropCapImage ? 2 : 0);
+    parsed.dropCapColor = colorField(head, 'dropCapColor', headLabel, true);
+    parsed.dropCapRatio = normalizeDropCapRatio(numberField(head, 'dropCapRatio'));
+    result.chapterHead = chapterHeadIsEmpty(parsed) ? null : parsed;
+  }
+  const comment = objectField(record, 'commentBubble');
+  if (comment) {
+    const commentLabel = `${label}.commentBubble`;
+    // 形状和图形不认得时按沿用处理（以后的版本可能加新样式）；颜色写错照样报错。
+    const parsed = new ThemePackageCommentBubble();
+    parsed.shape = stringField(comment, 'shape').trim();
+    parsed.radius = typeof comment['radius'] === 'number' ? numberField(comment, 'radius') : -1;
+    parsed.fill = colorField(comment, 'fill', commentLabel, true);
+    parsed.stroke = colorField(comment, 'stroke', commentLabel, true);
+    parsed.text = colorField(comment, 'text', commentLabel, true);
+    parsed.ornament = stringField(comment, 'ornament').trim();
+    parsed.ornamentColor = colorField(comment, 'ornamentColor', commentLabel, true);
+    // 气泡图与角标图：SVG 或位图；旧版本应用不认这些字段，照旧画形状，所以不用声明 requires。
+    const artwork: string[] = [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE];
+    parsed.image = stringField(comment, 'image').trim() === COMMENT_IMAGE_NONE ? COMMENT_IMAGE_NONE :
+      partAssetRef(comment, 'image', manifest, artwork, commentLabel);
+    const readBox = (key: string): ThemePackageBubbleSlice | null => {
+      const box = objectField(comment, key);
+      if (!box) return null;
+      const parsedBox = new ThemePackageBubbleSlice();
+      parsedBox.left = typeof box['left'] === 'number' ? numberField(box, 'left') : 0;
+      parsedBox.right = typeof box['right'] === 'number' ? numberField(box, 'right') : 0;
+      parsedBox.top = typeof box['top'] === 'number' ? numberField(box, 'top') : 0;
+      parsedBox.bottom = typeof box['bottom'] === 'number' ? numberField(box, 'bottom') : 0;
+      return parsedBox;
+    };
+    parsed.imageSlice = readBox('imageSlice');
+    parsed.imageText = readBox('imageText');
+    parsed.imageRepeat = stringField(comment, 'imageRepeat').trim();
+    parsed.imageBreak = stringField(comment, 'imageBreak').trim();
+    parsed.imageTint = comment['imageTint'] === true;
+    parsed.ornamentImage = partAssetRef(comment, 'ornamentImage', manifest, artwork, commentLabel);
+    parsed.ornamentCorner = stringField(comment, 'ornamentCorner').trim();
+    parsed.ornamentSize = typeof comment['ornamentSize'] === 'number' ? numberField(comment, 'ornamentSize') : -1;
+    const normalized = normalizeCommentBubble(parsed);
+    result.commentBubble = commentBubbleIsEmpty(normalized) ? null : normalized;
+  }
   return result;
+}
+
+/** 气泡端饰、书架边框能用的素材：清单声明了 bitmap-cap-shelf-frame-v1 才收位图，否则只收 SVG。 */
+function bitmapCapShelfFrameKinds(manifest: ThemePackageManifest): string[] {
+  return manifest.requires.includes(ThemePackageFeatures.BITMAP_CAP_SHELF_FRAME) ?
+    [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE] : [ThemePackageAssetKinds.VECTOR];
+}
+
+function decodeBubble(bubble: Record<string, Object>, manifest: ThemePackageManifest,
+  label: string = 'parts.bubble', darkVariant: boolean = false, anyArtwork: boolean = false): ThemePackageBubble {
+  const result = new ThemePackageBubble();
+  // 认得 bubbleDark 的版本都会画位图边框，深色那套不用另外声明。标题气泡是新字段，旧版本整节忽略，素材类型不限。
+  const frameFeature = anyArtwork || darkVariant || manifest.requires.includes(ThemePackageFeatures.BUBBLE_FRAME);
+  const frameKinds: string[] = frameFeature ? [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE] :
+    [ThemePackageAssetKinds.VECTOR];
+  result.frame = partAssetRef(bubble, 'frame', manifest, frameKinds, label);
+  result.cap = partAssetRef(bubble, 'cap', manifest, anyArtwork ?
+    [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE] : bitmapCapShelfFrameKinds(manifest), label);
+  if (!result.cap && !(frameFeature && result.frame)) {
+    throw new Error(frameFeature ? `主题包的 ${label} 至少要有 cap 或 frame` : `主题包的 ${label} 需要 cap`);
+  }
+  const slice = objectField(bubble, 'frameSlice');
+  if (slice) {
+    const parsed = new ThemePackageBubbleSlice();
+    parsed.left = numberField(slice, 'left');
+    parsed.right = numberField(slice, 'right');
+    parsed.top = numberField(slice, 'top');
+    parsed.bottom = numberField(slice, 'bottom');
+    result.frameSlice = normalizeBubbleFrameSlice(parsed);
+  }
+  const repeat = stringField(bubble, 'frameRepeat');
+  result.frameRepeat = repeat === BubbleFrameRepeat.ROUND || repeat === BubbleFrameRepeat.STRETCH ? repeat : '';
+  const lineBreak = stringField(bubble, 'frameBreak');
+  result.frameBreak = lineBreak === BubbleFrameBreak.CUT || lineBreak === BubbleFrameBreak.FULL ? lineBreak : '';
+  result.frameTint = bubble['frameTint'] === true;
+  return result;
+}
+
+/** 只写用到的字段；没有边框时拉伸设置也不写。 */
+export function encodeBubble(bubble: ThemePackageBubble): Record<string, Object> {
+  const record: Record<string, Object> = {};
+  if (bubble.cap) record['cap'] = bubble.cap;
+  if (bubble.frame) {
+    record['frame'] = bubble.frame;
+    const slice = normalizeBubbleFrameSlice(bubble.frameSlice);
+    if (slice) record['frameSlice'] = JSON.parse(JSON.stringify(slice)) as Object;
+    if (bubble.frameRepeat === BubbleFrameRepeat.ROUND) record['frameRepeat'] = BubbleFrameRepeat.ROUND;
+    if (bubble.frameBreak === BubbleFrameBreak.CUT) record['frameBreak'] = BubbleFrameBreak.CUT;
+    if (bubble.frameTint) record['frameTint'] = true;
+  }
+  return record;
 }
 
 function decodeTtsPanel(record: Record<string, Object> | null, manifest: ThemePackageManifest,
@@ -1185,6 +1934,16 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
     if (!parts.navigation.bookshelf || !parts.navigation.explore || !parts.navigation.mine) {
       throw new Error('主题包的 parts.navigation 需要 bookshelf、explore、mine 三个图标');
     }
+    // 深色那套每个图标都可选，没给的沿用上面这套；没有 navigation 时整节不读。
+    const navigationDark = objectField(record, 'navigationDark');
+    if (navigationDark) {
+      const dark = new ThemePackageNavigation();
+      const darkResult = dark as Object as Record<string, string>;
+      for (const key of NAVIGATION_ICON_KEYS) {
+        darkResult[key] = partAssetRef(navigationDark, key, manifest, icon, 'parts.navigationDark');
+      }
+      parts.navigationDark = navigationIsEmpty(dark) ? null : dark;
+    }
   }
   const book = objectField(record, 'book');
   if (book) {
@@ -1224,7 +1983,9 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
       throw new Error(`主题包的 parts.book.covers 超过 ${ThemePackageLimits.LEGACY_MAX_COVERS} 张时 requires 要包含 ` +
         ThemePackageFeatures.BOOK_COVERS_16);
     }
-    parts.book.shelfFrame = partAssetRef(book, 'shelfFrame', manifest, [ThemePackageAssetKinds.VECTOR], 'parts.book');
+    const shelfFrameKinds = bitmapCapShelfFrameKinds(manifest);
+    parts.book.shelfFrame = partAssetRef(book, 'shelfFrame', manifest, shelfFrameKinds, 'parts.book');
+    parts.book.shelfFrameDark = partAssetRef(book, 'shelfFrameDark', manifest, shelfFrameKinds, 'parts.book');
     parts.book.shelfFolder = partAssetRef(book, 'shelfFolder', manifest, [ThemePackageAssetKinds.IMAGE], 'parts.book');
     parts.book.shelfFolderDark = partAssetRef(book, 'shelfFolderDark', manifest, [ThemePackageAssetKinds.IMAGE],
       'parts.book');
@@ -1233,6 +1994,10 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
     parts.book.shelfFolderCrop = decodeImageCrop(book['shelfFolderCrop'], manifest, 'parts.book.shelfFolderCrop');
     parts.book.shelfFolderCropDark = decodeImageCrop(book['shelfFolderCropDark'], manifest,
       'parts.book.shelfFolderCropDark');
+    parts.book.noShelfFrame = book['noShelfFrame'] === true && !parts.book.shelfFrame;
+    parts.book.noShelfFrameDark = book['noShelfFrameDark'] === true && !parts.book.shelfFrameDark;
+    parts.book.noShelfFolder = book['noShelfFolder'] === true && !parts.book.shelfFolder;
+    parts.book.noShelfFolderDark = book['noShelfFolderDark'] === true && !parts.book.shelfFolderDark;
     if (bookIsEmpty(parts.book)) {
       parts.book = null;
     }
@@ -1247,12 +2012,19 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
   }
   const bubble = objectField(record, 'bubble');
   if (bubble) {
-    parts.bubble = new ThemePackageBubble();
-    parts.bubble.frame = partAssetRef(bubble, 'frame', manifest, [ThemePackageAssetKinds.VECTOR], 'parts.bubble');
-    parts.bubble.cap = partAssetRef(bubble, 'cap', manifest, [ThemePackageAssetKinds.VECTOR], 'parts.bubble');
-    if (!parts.bubble.cap) {
-      throw new Error('主题包的 parts.bubble 需要 cap');
-    }
+    parts.bubble = decodeBubble(bubble, manifest);
+  }
+  const bubbleDark = objectField(record, 'bubbleDark');
+  if (bubbleDark) {
+    parts.bubbleDark = decodeBubble(bubbleDark, manifest, 'parts.bubbleDark', true);
+  }
+  const titleBubble = objectField(record, 'titleBubble');
+  if (titleBubble) {
+    parts.titleBubble = decodeBubble(titleBubble, manifest, 'parts.titleBubble', true, true);
+  }
+  const titleBubbleDark = objectField(record, 'titleBubbleDark');
+  if (titleBubbleDark) {
+    parts.titleBubbleDark = decodeBubble(titleBubbleDark, manifest, 'parts.titleBubbleDark', true, true);
   }
   const homeBackdrop = objectField(record, 'homeBackdrop');
   if (homeBackdrop) {
@@ -1317,6 +2089,37 @@ function encodeVariantParts(variant: ThemePackageVariantParts): Record<string, O
   record['colors'] = JSON.parse(JSON.stringify(variant.colors)) as Object;
   record['reader'] = JSON.parse(JSON.stringify(variant.reader)) as Object;
   record['emphasis'] = JSON.parse(JSON.stringify(variant.emphasis)) as Object;
+  if (variant.commentBubble && !commentBubbleIsEmpty(variant.commentBubble)) {
+    record['commentBubble'] = encodeCommentBubble(variant.commentBubble);
+  }
+  const title = variant.titleEmphasis;
+  if (title && !titleEmphasisIsEmpty(title)) {
+    const titleRecord: Record<string, Object> = {};
+    if (title.mode) titleRecord['mode'] = title.mode;
+    if (title.bubbleStyle) titleRecord['bubbleStyle'] = title.bubbleStyle;
+    if (title.color) titleRecord['color'] = title.color;
+    if (title.textColor) titleRecord['textColor'] = title.textColor;
+    record['titleEmphasis'] = titleRecord;
+  }
+  const head = variant.chapterHead ? normalizeChapterHead(variant.chapterHead) : null;
+  if (head && !chapterHeadIsEmpty(head)) {
+    const headRecord: Record<string, Object> = {};
+    if (head.image) {
+      headRecord['image'] = head.image;
+      if (head.placement) headRecord['placement'] = head.placement;
+      if (head.scale !== 1) headRecord['scale'] = head.scale;
+    }
+    if (head.numberColor) headRecord['numberColor'] = head.numberColor;
+    if (head.dropCapLines > 0) {
+      headRecord['dropCapLines'] = head.dropCapLines;
+      if (head.dropCapImage) {
+        headRecord['dropCapImage'] = head.dropCapImage;
+        if (head.dropCapRatio !== DROP_CAP_RATIO_DEFAULT) headRecord['dropCapRatio'] = head.dropCapRatio;
+      }
+    }
+    if (head.dropCapColor) headRecord['dropCapColor'] = head.dropCapColor;
+    record['chapterHead'] = headRecord;
+  }
   return record;
 }
 
@@ -1338,6 +2141,14 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
       if (!navigation.searchSelected) navigation.searchSelected = navigation.exploreSelected;
     }
     record['navigation'] = navigation as Object;
+    if (parts.navigationDark && !navigationIsEmpty(parts.navigationDark)) {
+      const dark: Record<string, Object> = {};
+      const source = parts.navigationDark as Object as Record<string, string>;
+      for (const key of NAVIGATION_ICON_KEYS) {
+        if (source[key]) dark[key] = source[key];
+      }
+      record['navigationDark'] = dark;
+    }
   }
   if (parts.book) {
     const book: Record<string, Object> = {};
@@ -1355,9 +2166,18 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
     };
     book['covers'] = covers.slice();
     if (coversDark.length > 0) book['coversDark'] = coversDark.slice();
-    if (parts.book.shelfFrame) book['shelfFrame'] = parts.book.shelfFrame;
-    // 文件夹插画同理：只有深色那张时写成 shelfFolder。
-    const onlyDarkFolder = !parts.book.shelfFolder;
+    // 书架边框、文件夹插画同理：只有深色那张时写成 shelfFrame / shelfFolder（浅色选了“不用”时除外）。
+    const frameLightOff = !parts.book.shelfFrame && !!parts.book.noShelfFrame;
+    const folderLightOff = !parts.book.shelfFolder && !!parts.book.noShelfFolder;
+    const shelfFrame = bookShelfFrameFor(parts.book, false);
+    const shelfFrameDark = parts.book.shelfFrame || frameLightOff ? (parts.book.shelfFrameDark || '') : '';
+    if (shelfFrame) book['shelfFrame'] = shelfFrame;
+    if (shelfFrameDark && shelfFrameDark !== shelfFrame) book['shelfFrameDark'] = shelfFrameDark;
+    if (frameLightOff) book['noShelfFrame'] = true;
+    if (!parts.book.shelfFrameDark && parts.book.noShelfFrameDark) book['noShelfFrameDark'] = true;
+    if (folderLightOff) book['noShelfFolder'] = true;
+    if (!parts.book.shelfFolderDark && parts.book.noShelfFolderDark) book['noShelfFolderDark'] = true;
+    const onlyDarkFolder = !parts.book.shelfFolder && !folderLightOff;
     const shelfFolder = bookFolderFor(parts.book, false);
     const shelfFolderDark = onlyDarkFolder ? '' : (parts.book.shelfFolderDark || '');
     if (shelfFolder) book['shelfFolder'] = shelfFolder;
@@ -1382,7 +2202,15 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
     if (parts.startupDark) startup['dark'] = JSON.parse(JSON.stringify(parts.startupDark)) as Object;
     record['startup'] = startup;
   }
-  if (parts.bubble) record['bubble'] = JSON.parse(JSON.stringify(parts.bubble)) as Object;
+  // 浅色那套写成 bubble（只给了深色时就是深色那套），深色只写不同的那几项。
+  const lightBubble = bubbleFor(parts, false);
+  if (lightBubble) record['bubble'] = encodeBubble(lightBubble);
+  const darkBubble = bubbleDarkDifference(parts);
+  if (darkBubble) record['bubbleDark'] = encodeBubble(darkBubble);
+  const lightTitleBubble = titleBubbleFor(parts, false);
+  if (lightTitleBubble) record['titleBubble'] = encodeBubble(lightTitleBubble);
+  const darkTitleBubble = titleBubbleDarkDifference(parts);
+  if (darkTitleBubble) record['titleBubbleDark'] = encodeBubble(darkTitleBubble);
   if (parts.homeBackdropLight || parts.homeBackdropDark) {
     const homeBackdrop: Record<string, Object> = {};
     if (parts.homeBackdropLight) homeBackdrop['light'] = parts.homeBackdropLight;
@@ -1436,6 +2264,15 @@ export function partsAssetRefs(parts: ThemePackageParts): string[] {
     add(variant.reader.leading);
     add(variant.reader.trailing);
     add(variant.reader.image);
+    const comment = variant.commentBubble;
+    if (comment) {
+      if (comment.image && comment.image !== COMMENT_IMAGE_NONE) add(comment.image);
+      add(comment.ornamentImage || '');
+    }
+    if (variant.chapterHead) {
+      add(variant.chapterHead.image || '');
+      add(variant.chapterHead.dropCapImage || '');
+    }
   }
   for (const tts of [parts.ttsPanelLight, parts.ttsPanelDark]) {
     if (tts) add(tts.artwork);
@@ -1445,20 +2282,26 @@ export function partsAssetRefs(parts: ThemePackageParts): string[] {
     const navigation = parts.navigation as Object as Record<string, string>;
     for (const key of NAVIGATION_ICON_KEYS) add(navigation[key] || '');
   }
+  if (parts.navigationDark) {
+    const navigation = parts.navigationDark as Object as Record<string, string>;
+    for (const key of NAVIGATION_ICON_KEYS) add(navigation[key] || '');
+  }
   if (parts.book) {
     for (const cover of parts.book.covers) add(cover);
     // 本机旧版记录里没有深色封面字段。
     for (const cover of parts.book.coversDark || []) add(cover);
     add(parts.book.shelfFrame);
+    add(parts.book.shelfFrameDark || '');
     add(parts.book.shelfFolder);
     add(parts.book.shelfFolderDark || '');
   }
   for (const startup of [parts.startupLight, parts.startupDark]) {
     if (startup) add(startup.image);
   }
-  if (parts.bubble) {
-    add(parts.bubble.frame);
-    add(parts.bubble.cap);
+  for (const bubble of [parts.bubble, parts.bubbleDark, parts.titleBubble || null, parts.titleBubbleDark || null]) {
+    if (!bubble) continue;
+    add(bubble.frame);
+    add(bubble.cap);
   }
   // 本机旧版记录里没有这两个字段。
   add(parts.homeBackdropLight || '');
@@ -1482,6 +2325,19 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
     variant.reader.leading = swap(variant.reader.leading);
     variant.reader.trailing = swap(variant.reader.trailing);
     variant.reader.image = swap(variant.reader.image);
+    const comment = variant.commentBubble;
+    if (comment) {
+      // 本机旧记录里没有这两个字段。
+      if (comment.image && comment.image !== COMMENT_IMAGE_NONE) comment.image = swap(comment.image);
+      comment.ornamentImage = swap(comment.ornamentImage || '');
+    }
+    // 本机旧记录里没有章首装饰。
+    if (variant.chapterHead) {
+      variant.chapterHead.image = swap(variant.chapterHead.image || '');
+      variant.chapterHead.dropCapImage = swap(variant.chapterHead.dropCapImage || '');
+    } else {
+      variant.chapterHead = null;
+    }
   }
   for (const tts of [copy.ttsPanelLight, copy.ttsPanelDark]) {
     if (tts) tts.artwork = swap(tts.artwork);
@@ -1490,10 +2346,17 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
     const navigation = copy.navigation as Object as Record<string, string>;
     for (const key of NAVIGATION_ICON_KEYS) navigation[key] = swap(navigation[key] || '');
   }
+  if (copy.navigationDark) {
+    const navigation = copy.navigationDark as Object as Record<string, string>;
+    for (const key of NAVIGATION_ICON_KEYS) navigation[key] = swap(navigation[key] || '');
+  } else {
+    copy.navigationDark = null;
+  }
   if (copy.book) {
     copy.book.covers = copy.book.covers.map((cover: string): string => swap(cover));
     copy.book.coversDark = (copy.book.coversDark || []).map((cover: string): string => swap(cover));
     copy.book.shelfFrame = swap(copy.book.shelfFrame);
+    copy.book.shelfFrameDark = swap(copy.book.shelfFrameDark || '');
     copy.book.shelfFolder = swap(copy.book.shelfFolder);
     copy.book.shelfFolderDark = swap(copy.book.shelfFolderDark || '');
     // 本机旧记录里没有这两个字段。
@@ -1514,6 +2377,23 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
   if (copy.bubble) {
     copy.bubble.frame = swap(copy.bubble.frame);
     copy.bubble.cap = swap(copy.bubble.cap);
+  }
+  if (copy.bubbleDark) {
+    copy.bubbleDark.frame = swap(copy.bubbleDark.frame);
+    copy.bubbleDark.cap = swap(copy.bubbleDark.cap);
+  } else {
+    copy.bubbleDark = null;
+  }
+  // 本机旧记录里没有标题气泡。
+  for (const key of ['titleBubble', 'titleBubbleDark']) {
+    const holder = copy as Object as Record<string, ThemePackageBubble | null | undefined>;
+    const bubble = holder[key];
+    if (bubble) {
+      bubble.frame = swap(bubble.frame);
+      bubble.cap = swap(bubble.cap);
+    } else {
+      holder[key] = null;
+    }
   }
   copy.homeBackdropLight = swap(copy.homeBackdropLight || '');
   copy.homeBackdropDark = swap(copy.homeBackdropDark || '');
@@ -1555,20 +2435,48 @@ export function describeParts(parts: ThemePackageParts): string[] {
   }
   if (readerModes.length > 0) items.push(`阅读背景（${readerModes.join('、')}）`);
   if (parts.ttsPanelLight || parts.ttsPanelDark) items.push('朗读/有声书面板插画');
-  if (parts.navigation) items.push('导航图标');
+  if (parts.navigation) items.push(parts.navigationDark ? '导航图标（含深色）' : '导航图标');
   if (parts.book) {
     const book: string[] = [];
     const lightCovers = bookCoversFor(parts.book, false).length;
     const darkCovers = parts.book.covers.length > 0 ? (parts.book.coversDark || []).length : 0;
     if (lightCovers > 0 && darkCovers > 0) book.push(`封面 浅色 ${lightCovers} 张、深色 ${darkCovers} 张`);
     else if (lightCovers > 0) book.push(`封面 ${lightCovers} 张`);
-    if (parts.book.shelfFrame) book.push('书架边框');
+    if (parts.book.shelfFrame && parts.book.shelfFrameDark) book.push('书架边框（浅色、深色）');
+    else if (parts.book.shelfFrame || parts.book.shelfFrameDark) book.push('书架边框');
     if (parts.book.shelfFolder && parts.book.shelfFolderDark) book.push('文件夹插画（浅色、深色）');
-    else if (bookFolderFor(parts.book, false)) book.push('文件夹插画');
-    items.push(book.join('、'));
+    else if (parts.book.shelfFolder || parts.book.shelfFolderDark) book.push('文件夹插画');
+    if (bookShelfFrameOff(parts.book, false) || bookShelfFrameOff(parts.book, true)) book.push('不用书架边框');
+    if (bookFolderOff(parts.book, false) || bookFolderOff(parts.book, true)) book.push('不用文件夹插画');
+    if (book.length > 0) items.push(book.join('、'));
   }
   if (parts.startupLight || parts.startupDark) items.push('启动封面');
-  if (parts.bubble) items.push('强调气泡端饰');
+  const bubble = bubbleFor(parts, false);
+  if (bubble) {
+    const name = bubble.cap && bubble.frame ? '强调气泡端饰与边框' : (bubble.frame ? '强调气泡边框' : '强调气泡端饰');
+    items.push(bubbleDarkDifference(parts) ? `${name}（含深色）` : name);
+  }
+  if ((parts.light && parts.light.titleEmphasis) || (parts.dark && parts.dark.titleEmphasis) || titleBubbleFor(parts, false)) {
+    const titleBubble = titleBubbleFor(parts, false);
+    items.push(titleBubble ? (titleBubbleDarkDifference(parts) ? '标题强调与标题气泡（含深色）' : '标题强调与标题气泡') :
+      '标题强调');
+  }
+  const lightHead = chapterHeadFor(parts, false);
+  const darkHead = chapterHeadFor(parts, true);
+  if (lightHead || darkHead) {
+    const hasImage = !!((lightHead && lightHead.image) || (darkHead && darkHead.image));
+    const hasColor = !!((lightHead && lightHead.numberColor) || (darkHead && darkHead.numberColor));
+    const hasCap = !!((lightHead && lightHead.dropCapLines > 0) || (darkHead && darkHead.dropCapLines > 0));
+    const names: string[] = [];
+    if (hasImage) names.push('标题饰图');
+    if (hasColor) names.push('序号行颜色');
+    if (hasCap) names.push('首字装饰');
+    items.push(`章首装饰（${names.join('、')}）`);
+  }
+  if ((parts.light && parts.light.commentBubble) || (parts.dark && parts.dark.commentBubble)) {
+    items.push(commentBubbleHasImage(commentBubbleFor(parts, false)) || commentBubbleHasImage(commentBubbleFor(parts, true)) ?
+      '段评气泡（含气泡图）' : '段评气泡');
+  }
   if (parts.homeBackdropLight || parts.homeBackdropDark) {
     const modes: string[] = [];
     if (parts.homeBackdropLight) modes.push('浅色');

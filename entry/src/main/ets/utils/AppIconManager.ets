@@ -52,6 +52,7 @@ export class AppIconManager {
     AppIconManager.themeOption(ThemeIds.OBSIDIAN_ARCHIVE, 'theme_obsidian_archive', $r('app.media.ic_app_theme_obsidian_archive')),
     AppIconManager.themeOption(ThemeIds.NEON_HARBOR, 'theme_neon_harbor', $r('app.media.ic_app_theme_neon_harbor')),
     AppIconManager.themeOption(ThemeIds.CELESTIAL_VAULT, 'theme_celestial_vault', $r('app.media.ic_app_theme_celestial_vault')),
+    AppIconManager.themeOption(ThemeIds.MORNING_MIST, 'theme_morning_mist', $r('app.media.ic_app_theme_morning_mist')),
     AppIconManager.themeOption(ThemeIds.CUSTOM, 'theme_custom', $r('app.media.ic_app_theme_custom'))
   ];
   private static changeRevision: number = 0;

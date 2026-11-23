@@ -122,6 +122,8 @@ class BookSourceCheckUiUpdate {
 class BookSourceImportParseResult {
   sources: BookSource[] = [];
   nativeProblem: string = '';
+  // 导入成功但写法会静默失效的提示，只列第一份书源的第一条。
+  nativeWarning: string = '';
 }
 
 // 头部里类型分段和兼容书源提示条的高度，列表顶部避让按它们计算。
@@ -166,6 +168,8 @@ struct BookSourcePage {
   @State visibleSources: BookSource[] = [];
   /** 正在消散的书源 URL，见 ListDissolve。 */
   @State dissolvingSourceUrls: string[] = [];
+  /** dissolvingSourceUrls 的普通集合副本：批量删除时可能上千项，查找和追加都走它，不去逐项读状态代理。 */
+  private dissolvingSourceSet: Set<string> = new Set<string>();
   @State deleteParticleBursts: DeleteParticleBurst[] = [];
   private sourceDeleteInFlight: boolean = false;
   private sourceListDataSource: BookSourceListDataSource = new BookSourceListDataSource();
@@ -216,7 +220,11 @@ struct BookSourcePage {
   @State @Watch('syncImportUrlDialog') showImportUrlDialog: boolean = false;
   @State @Watch('onSystemDialogFlagChanged') showImportSourceSelectionDialog: boolean = false;
   @State pendingImportSources: BookSource[] = [];
-  @State selectedImportSourceUrls: string[] = [];
+  // 导入选择弹窗：一次可能几千个书源，列表懒加载，勾选状态放 Set 按地址查。
+  // Set 本身不被观察，改动后递增 importSelectionRevision，读勾选状态的地方都经过它才会刷新。
+  private importSourceDataSource: BookSourceListDataSource = new BookSourceListDataSource();
+  private importSelectedUrls: Set<string> = new Set<string>();
+  @State importSelectionRevision: number = 0;
   // 导入时是否沿用书源文件里的分组；一次导入（含一次多选的多个文件）只问一次，本页内记住上次的选择。
   @State importKeepSourceGroups: boolean = true;
   @State selectionMode: boolean = false;
@@ -231,6 +239,9 @@ struct BookSourcePage {
   /** 登录弹窗标题与底部按钮的实测高度（随字体缩放变化），用来给中间表单留出剩余高度。 */
   @State sourceLoginTitleHeight: number = 30;
   @State sourceLoginFooterHeight: number = 42;
+  /** 导入选择弹窗列表上方、下方两段的实测高度（随字体与显示缩放变化），用来给中间列表留出剩余高度。 */
+  @State importSelectionHeaderHeight: number = 110;
+  @State importSelectionFooterHeight: number = 110;
   @State loginRuntimeActive: boolean = false;
   @State @Watch('onSystemDialogFlagChanged') showSourceDeleteDialog: boolean = false;
   @State showSourceGroupToolsMenu: boolean = false;
@@ -279,6 +290,7 @@ struct BookSourcePage {
   private sourceListScroller: Scroller = new Scroller();
   private sourceScrollbarPointerAnchor: number = 0;
   private sourceScrollbarPendingIndex: number = -1;
+  private sourceScrollbarPendingAtEnd: boolean = false;
   private sourceScrollbarUpdateTimer: number = -1;
   private hasShownOnce: boolean = false;
   private sourceOrderSaving: boolean = false;
@@ -291,6 +303,8 @@ struct BookSourcePage {
   private checkCancelSubscriber: commonEventManager.CommonEventSubscriber | null = null;
   private checkUiUpdates: BookSourceCheckUiUpdate[] = [];
   private checkUiFlushTimer: number = -1;
+  // 校验状态随界面刷新一起成批写库；收尾刷新书源列表前要等它写完。
+  private checkStatusWrite: Promise<void> = Promise.resolve();
   private pageVisible: boolean = true;
   private selectedSourceUrlsSnapshot: string[] = [];
   private selectedSourceUrlLookup: Set<string> = new Set<string>();
@@ -2220,14 +2234,18 @@ struct BookSourcePage {
     const offset = VirtualListScrollbar.clampThumbOffset(viewportHeight, thumbLength,
       pointerY - this.sourceScrollbarPointerAnchor);
     this.sourceScrollbarDragOffset = offset;
-    const targetIndex = VirtualListScrollbar.firstVisibleIndex(viewportHeight, thumbLength,
-      this.sources.length, this.sourceVisibleItemCount, offset);
+    // 滑块到底时直接滚到列表底部，否则按首行定位。
+    const atEnd = VirtualListScrollbar.reachesEnd(viewportHeight, thumbLength, offset);
+    const targetIndex = atEnd ? Math.max(0, this.sources.length - 1) :
+      VirtualListScrollbar.firstVisibleIndex(viewportHeight, thumbLength,
+        this.sources.length, this.sourceVisibleItemCount, offset);
     this.sourceFirstVisibleIndex = targetIndex;
-    this.queueSourceScrollbarTarget(targetIndex);
+    this.queueSourceScrollbarTarget(targetIndex, atEnd);
   }
 
-  queueSourceScrollbarTarget(targetIndex: number): void {
+  queueSourceScrollbarTarget(targetIndex: number, atEnd: boolean = false): void {
     this.sourceScrollbarPendingIndex = targetIndex;
+    this.sourceScrollbarPendingAtEnd = atEnd;
     if (this.sourceScrollbarUpdateTimer >= 0) return;
     this.sourceScrollbarUpdateTimer = setTimeout(() => {
       this.sourceScrollbarUpdateTimer = -1;
@@ -2236,6 +2254,10 @@ struct BookSourcePage {
       if (pending < 0 || this.sources.length === 0) return;
       const target = Math.max(0, Math.min(pending, this.sources.length - 1));
       try {
+        if (this.sourceScrollbarPendingAtEnd) {
+          this.sourceListScroller.scrollEdge(Edge.Bottom);
+          return;
+        }
         // 顶部 spacer 按列数占满一整行，源条目索引与 ListItem 索引相差一个列数。
         this.sourceListScroller.scrollToIndex(target + this.sourceListLaneCount(), false, ScrollAlign.START);
       } catch (e) {
@@ -2335,41 +2357,47 @@ struct BookSourcePage {
   @Builder
   importSourceSelectionDialogContent() {
     Column({ space: AppSpacing.LG }) {
-      Text('选择要导入的书源')
-        .fontSize(AppFontSize.SUBTITLE)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(this.primaryTextColor())
-        .width('100%')
-        .textAlign(TextAlign.Center)
+      Column({ space: AppSpacing.LG }) {
+        Text('选择要导入的书源')
+          .fontSize(AppFontSize.SUBTITLE)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.primaryTextColor())
+          .width('100%')
+          .textAlign(TextAlign.Center)
 
-      Text(`共 ${this.pendingImportSources.length} 个书源，已选择 ${this.selectedImportSourceUrls.length} 个`)
-        .fontSize(AppFontSize.BODY)
-        .fontColor(this.secondaryTextColor())
-        .width('100%')
-        .textAlign(TextAlign.Center)
-
-      Row() {
-        Toggle({ type: ToggleType.Checkbox, isOn: this.areAllImportSourcesSelected() })
-          .selectedColor(this.buttonColor())
-          .onChange((isOn: boolean) => {
-            // ArkUI may invoke onChange again while the controlled `isOn`
-            // value is being refreshed. Only handle a genuine user change;
-            // otherwise a single-item toggle could clear every selection.
-            if (isOn !== this.areAllImportSourcesSelected()) {
-              this.selectAllImportSources(isOn);
-            }
-          })
-        Text(this.areAllImportSourcesSelected() ? '取消全选' : '全选')
+        Text(`共 ${this.pendingImportSources.length} 个书源，已选择 ${this.importSelectedCount()} 个`)
           .fontSize(AppFontSize.BODY)
-          .fontColor(this.accentColor())
-          .margin({ left: AppSpacing.MD })
-        Blank().layoutWeight(1)
+          .fontColor(this.secondaryTextColor())
+          .width('100%')
+          .textAlign(TextAlign.Center)
+
+        Row() {
+          Toggle({ type: ToggleType.Checkbox, isOn: this.areAllImportSourcesSelected() })
+            .selectedColor(this.buttonColor())
+            .onChange((isOn: boolean) => {
+              // ArkUI may invoke onChange again while the controlled `isOn`
+              // value is being refreshed. Only handle a genuine user change;
+              // otherwise a single-item toggle could clear every selection.
+              if (isOn !== this.areAllImportSourcesSelected()) {
+                this.selectAllImportSources(isOn);
+              }
+            })
+          Text(this.areAllImportSourcesSelected() ? '取消全选' : '全选')
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.accentColor())
+            .margin({ left: AppSpacing.MD })
+          Blank().layoutWeight(1)
+        }
+        .width('100%')
       }
       .width('100%')
+      .onSizeChange((_oldValue: SizeOptions, newValue: SizeOptions) => {
+        this.importSelectionHeaderHeight = Number(newValue.height);
+      })
 
-      Scroll() {
-        Column({ space: AppSpacing.SM }) {
-          ForEach(this.pendingImportSources, (source: BookSource) => {
+      List({ space: AppSpacing.SM }) {
+        LazyForEach(this.importSourceDataSource, (source: BookSource) => {
+          ListItem() {
             Row() {
               Toggle({ type: ToggleType.Checkbox, isOn: this.isImportSourceSelected(source) })
                 .selectedColor(this.buttonColor())
@@ -2400,64 +2428,77 @@ struct BookSourcePage {
             .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: AppSpacing.MD, bottom: AppSpacing.MD })
             .borderRadius(ThemeRuntime.mediumRadius())
             .backgroundColor(this.inputColor())
-          }, (source: BookSource) => source.bookSourceUrl)
-        }
-        .width('100%')
+          }
+        }, (source: BookSource) => source.bookSourceUrl)
       }
       .width('100%')
-      .constraintSize({ maxHeight: 360 })
+      // 系统对话框超高会直接裁掉底部，所以按窗口高度减去上下两段的实测高度给列表定上限。
+      .constraintSize({ maxHeight: this.importSelectionListMaxHeight() })
+      .cachedCount(4)
       .scrollBar(BarState.Off)
 
-      if (this.importSourceGroupNames(this.pendingImportSources).length > 0) {
-        Row() {
-          Toggle({ type: ToggleType.Checkbox, isOn: this.importKeepSourceGroups })
-            .selectedColor(this.buttonColor())
-            .onChange((isOn: boolean) => {
-              if (isOn !== this.importKeepSourceGroups) {
-                this.importKeepSourceGroups = isOn;
-              }
-            })
-          Column() {
-            Text('保留书源自带的分组')
-              .fontSize(AppFontSize.BODY)
-              .fontColor(this.primaryTextColor())
-            Text(this.importSourceGroupSummary(this.pendingImportSources))
-              .fontSize(AppFontSize.CAPTION)
-              .fontColor(this.subTextColor())
-              .maxLines(2)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .margin({ top: AppSpacing.XXS })
+      Column({ space: AppSpacing.LG }) {
+        if (this.importSourceGroupNames(this.pendingImportSources).length > 0) {
+          Row() {
+            Toggle({ type: ToggleType.Checkbox, isOn: this.importKeepSourceGroups })
+              .selectedColor(this.buttonColor())
+              .onChange((isOn: boolean) => {
+                if (isOn !== this.importKeepSourceGroups) {
+                  this.importKeepSourceGroups = isOn;
+                }
+              })
+            Column() {
+              Text('保留书源自带的分组')
+                .fontSize(AppFontSize.BODY)
+                .fontColor(this.primaryTextColor())
+              Text(this.importSourceGroupSummary(this.pendingImportSources))
+                .fontSize(AppFontSize.CAPTION)
+                .fontColor(this.subTextColor())
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .margin({ top: AppSpacing.XXS })
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+            .margin({ left: AppSpacing.MD })
           }
-          .alignItems(HorizontalAlign.Start)
-          .layoutWeight(1)
-          .margin({ left: AppSpacing.MD })
+          .width('100%')
+          .onClick(() => {
+            this.importKeepSourceGroups = !this.importKeepSourceGroups;
+          })
+        }
+
+        Row({ space: AppSpacing.MD }) {
+          Button('取消', { type: ButtonType.Normal })
+            .layoutWeight(1)
+            .height(42)
+            .borderRadius(ThemeRuntime.buttonRadius())
+            .backgroundColor(this.glassCardColor())
+            .fontColor(this.primaryTextColor())
+            .onClick(() => this.cancelImportSourceSelection())
+          Button('导入所选', { type: ButtonType.Normal })
+            .layoutWeight(1)
+            .height(42)
+            .borderRadius(ThemeRuntime.buttonRadius())
+            .enabled(this.importSelectedCount() > 0 && !this.isImporting)
+            .backgroundColor(this.buttonColor())
+            .fontColor(ThemeRuntime.onAccentColor())
+            .onClick(() => this.confirmImportSourceSelection())
         }
         .width('100%')
-        .onClick(() => {
-          this.importKeepSourceGroups = !this.importKeepSourceGroups;
-        })
-      }
-
-      Row({ space: AppSpacing.MD }) {
-        Button('取消', { type: ButtonType.Normal })
-          .layoutWeight(1)
-          .height(42)
-          .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.glassCardColor())
-          .fontColor(this.primaryTextColor())
-          .onClick(() => this.cancelImportSourceSelection())
-        Button('导入所选', { type: ButtonType.Normal })
-          .layoutWeight(1)
-          .height(42)
-          .borderRadius(ThemeRuntime.buttonRadius())
-          .enabled(this.selectedImportSourceUrls.length > 0 && !this.isImporting)
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
-          .onClick(() => this.confirmImportSourceSelection())
       }
       .width('100%')
+      .onSizeChange((_oldValue: SizeOptions, newValue: SizeOptions) => {
+        this.importSelectionFooterHeight = Number(newValue.height);
+      })
     }    .constraintSize({ maxWidth: 520 })
     .padding(AppSpacing.XXL)
+  }
+
+  importSelectionListMaxHeight(): number {
+    const available = ImmersiveMaterialRuntime.dialogContentMaxHeight() - AppSpacing.XXL * 2 -
+      this.importSelectionHeaderHeight - AppSpacing.LG - this.importSelectionFooterHeight - AppSpacing.LG;
+    return Math.max(96, Math.min(360, Math.floor(available)));
   }
 
 
@@ -5510,7 +5551,13 @@ struct BookSourcePage {
   }
 
   isSourceDissolving(source: BookSource): boolean {
-    return this.dissolvingSourceUrls.length > 0 && this.dissolvingSourceUrls.indexOf(source.bookSourceUrl) >= 0;
+    // 读 length 是为了让条目依赖这个状态，判定本身查集合。
+    return this.dissolvingSourceUrls.length > 0 && this.dissolvingSourceSet.has(source.bookSourceUrl);
+  }
+
+  private setDissolvingSourceUrls(next: string[]): void {
+    this.dissolvingSourceSet = new Set<string>(next);
+    this.dissolvingSourceUrls = next;
   }
 
   /**
@@ -5520,14 +5567,14 @@ struct BookSourcePage {
   async dissolveSources(urls: string[], work?: () => Promise<void>): Promise<void> {
     const ui = this.getUIContext();
     // 三个入口都是从弹窗里确认的（删除确认、批量进度、校验结果），等弹窗退场再开始。
-    const fade = ListDissolve.fadeOut(ui, urls, (url: string) => {
-      this.dissolvingSourceUrls = [...this.dissolvingSourceUrls, url];
+    const fade = ListDissolve.fadeOutBatch(ui, urls, (batch: string[]) => {
+      this.setDissolvingSourceUrls(Array.from(this.dissolvingSourceSet).concat(batch));
     }, this.sourceDeleteParticles(), ListDissolve.AFTER_DIALOG_MS);
     try {
       if (work) await work();
     } catch (e) {
       await fade;
-      this.dissolvingSourceUrls = ListDissolve.without(this.dissolvingSourceUrls, urls);
+      this.setDissolvingSourceUrls(ListDissolve.without(Array.from(this.dissolvingSourceSet), urls));
       throw e as Error;
     }
     await fade;
@@ -5538,7 +5585,7 @@ struct BookSourcePage {
       this.sources = this.sources.filter((item: BookSource) => !removed.has(item.bookSourceUrl));
       this.visibleSources = this.visibleSources.filter((item: BookSource) => !removed.has(item.bookSourceUrl));
     }, () => {
-      this.dissolvingSourceUrls = ListDissolve.without(this.dissolvingSourceUrls, urls);
+      this.setDissolvingSourceUrls(ListDissolve.without(Array.from(this.dissolvingSourceSet), urls));
     });
   }
 
@@ -6035,6 +6082,7 @@ struct BookSourcePage {
         return;
       }
       this.flushCheckedSourceUiUpdates();
+      await this.checkStatusWrite;
       const finishedInBackground = this.checkBackgroundMode;
       this.checkCoordinator = null;
       this.checkExploreValidator = null;
@@ -6279,12 +6327,6 @@ struct BookSourcePage {
     includePassedDetail: boolean = false): Promise<void> {
     source.validationStatus = result.validationStatus;
     this.recordCertificateTrustCandidate(source, result.reason || '');
-    try {
-      await AppDatabase.getInstance().updateBookSourceValidationStatus(
-        source.bookSourceUrl, source.validationStatus);
-    } catch (e) {
-      console.error('保存书源校验状态失败:', source.bookSourceName, e);
-    }
     let detail = '';
     if (source.validationStatus !== BookSource.VALIDATION_PASSED || includePassedDetail) {
       const sourceName = source.bookSourceName || source.bookSourceUrl;
@@ -6351,6 +6393,17 @@ struct BookSourcePage {
     this.checkUiFlushTimer = setTimeout(() => this.flushCheckedSourceUiUpdates(), 300);
   }
 
+  /** 接在上一批之后写，前后两批不会乱序；写失败只记日志，界面上的状态照常更新。 */
+  persistCheckedSourceStatuses(statusByUrl: Map<string, number>): void {
+    this.checkStatusWrite = this.checkStatusWrite.then(async (): Promise<void> => {
+      try {
+        await AppDatabase.getInstance().updateBookSourceValidationStatuses(statusByUrl);
+      } catch (e) {
+        console.error('保存书源校验状态失败:', e);
+      }
+    });
+  }
+
   resetCheckedSourceUiUpdates(): void {
     if (this.checkUiFlushTimer >= 0) clearTimeout(this.checkUiFlushTimer);
     this.checkUiFlushTimer = -1;
@@ -6369,6 +6422,7 @@ struct BookSourcePage {
       statusByUrl.set(update.bookSourceUrl, update.validationStatus);
       if (update.detail) details.push(update.detail);
     }
+    this.persistCheckedSourceStatuses(statusByUrl);
     this.allSources = this.allSources.map((item: BookSource) => {
       const status = statusByUrl.get(item.bookSourceUrl);
       if (status === undefined) return item;
@@ -6580,6 +6634,7 @@ struct BookSourcePage {
     const sources: BookSource[] = [];
     const failedFiles: string[] = [];
     let nativeProblem = '';
+    let nativeWarning = '';
     for (const uri of uris) {
       const name = this.importFileDisplayName(uri);
       try {
@@ -6591,6 +6646,9 @@ struct BookSourcePage {
         const result = this.parseImportSources(content);
         if (result.nativeProblem) {
           nativeProblem = result.nativeProblem;
+        }
+        if (result.nativeWarning && !nativeWarning) {
+          nativeWarning = result.nativeWarning;
         }
         if (result.sources.length === 0 && !result.nativeProblem) {
           failedFiles.push(`${name}（无有效书源）`);
@@ -6613,6 +6671,9 @@ struct BookSourcePage {
     }
     if (nativeProblem) {
       notices.push(`原生书源未导入，${nativeProblem}`);
+    }
+    if (nativeWarning) {
+      notices.push(`提示：${nativeWarning}`);
     }
     if (notices.length > 0) {
       HdsFeedback.showToast(notices.join('\n'));
@@ -7094,6 +7155,8 @@ struct BookSourcePage {
       if (result.nativeProblem) {
         HdsFeedback.showToast(`原生书源未导入，${result.nativeProblem}`);
         if (result.sources.length === 0) return;
+      } else if (result.nativeWarning) {
+        HdsFeedback.showToast(`提示：${result.nativeWarning}`);
       }
       await this.presentImportedSources(result.sources);
     } catch (e) {
@@ -7131,6 +7194,11 @@ struct BookSourcePage {
         // 原生书源在导入时就完成整份校验，写法有误的直接给出原因，不留到使用时才失败。
         try {
           result.sources.push(NativeSourceService.importObject(item));
+          const warnings = NativeSourceSpec.warningsOf(item);
+          if (warnings.length > 0 && !result.nativeWarning) {
+            result.nativeWarning = `${String(item['name'] || '原生书源')}：${warnings[0]}` +
+              (warnings.length > 1 ? `（另有 ${warnings.length - 1} 条，可在编辑页「校验」查看）` : '');
+          }
         } catch (e) {
           result.nativeProblem = `${String(item['name'] || '原生书源')}：${(e as Error).message || '定义不合法'}`;
         }
@@ -7163,7 +7231,9 @@ struct BookSourcePage {
     // unexpectedly add every source to the local database.
     if (sources.length > 1) {
       this.pendingImportSources = sources;
-      this.selectedImportSourceUrls = sources.map((source: BookSource) => source.bookSourceUrl);
+      this.importSourceDataSource.replace(sources, true);
+      this.importSelectedUrls = new Set<string>(sources.map((source: BookSource) => source.bookSourceUrl));
+      this.importSelectionRevision++;
       this.openImportSourceSelectionDialog();
       return;
     }
@@ -7283,40 +7353,48 @@ struct BookSourcePage {
     await this.loadSources();
   }
 
+  /** 读 importSelectionRevision 让调用处随勾选变化刷新；按地址查 Set，不随书源数变慢。 */
   isImportSourceSelected(source: BookSource): boolean {
-    return this.selectedImportSourceUrls.includes(source.bookSourceUrl);
+    return this.importSelectionRevision >= 0 && this.importSelectedUrls.has(source.bookSourceUrl);
+  }
+
+  importSelectedCount(): number {
+    return this.importSelectionRevision >= 0 ? this.importSelectedUrls.size : 0;
   }
 
   setImportSourceSelected(source: BookSource, selected: boolean): void {
+    const url = source.bookSourceUrl;
+    if (selected === this.importSelectedUrls.has(url)) return;
     if (selected) {
-      if (!this.isImportSourceSelected(source)) {
-        this.selectedImportSourceUrls = this.selectedImportSourceUrls.concat([source.bookSourceUrl]);
-      }
-      return;
+      this.importSelectedUrls.add(url);
+    } else {
+      this.importSelectedUrls.delete(url);
     }
-    this.selectedImportSourceUrls = this.selectedImportSourceUrls.filter((url: string) => url !== source.bookSourceUrl);
+    this.importSelectionRevision++;
   }
 
   areAllImportSourcesSelected(): boolean {
-    return this.pendingImportSources.length > 0 &&
-      this.selectedImportSourceUrls.length === this.pendingImportSources.length;
+    return this.pendingImportSources.length > 0 && this.importSelectedCount() === this.pendingImportSources.length;
   }
 
   selectAllImportSources(selected: boolean): void {
-    this.selectedImportSourceUrls = selected ?
-      this.pendingImportSources.map((source: BookSource) => source.bookSourceUrl) : [];
+    this.importSelectedUrls = selected ?
+      new Set<string>(this.pendingImportSources.map((source: BookSource) => source.bookSourceUrl)) : new Set<string>();
+    this.importSelectionRevision++;
   }
 
   cancelImportSourceSelection(): void {
     this.showImportSourceSelectionDialog = false;
     this.pendingImportSources = [];
-    this.selectedImportSourceUrls = [];
+    this.importSourceDataSource.replace([], true);
+    this.importSelectedUrls = new Set<string>();
+    this.importSelectionRevision++;
   }
 
   async confirmImportSourceSelection(): Promise<void> {
-    if (this.selectedImportSourceUrls.length === 0 || this.isImporting) return;
+    if (this.importSelectedUrls.size === 0 || this.isImporting) return;
     const selected = this.pendingImportSources.filter((source: BookSource) =>
-      this.selectedImportSourceUrls.includes(source.bookSourceUrl));
+      this.importSelectedUrls.has(source.bookSourceUrl));
     if (selected.length === 0) return;
     this.isImporting = true;
     try {

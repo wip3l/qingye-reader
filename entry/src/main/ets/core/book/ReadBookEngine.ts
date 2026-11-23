@@ -1,7 +1,7 @@
 import { ReaderImageReferences } from './ReaderImageReferences';
 import { ReaderCacheCoordinator } from './ReaderCacheCoordinator';
 import { ReaderImageCache } from './ReaderImageCache';
-import { Book, BookChapter, BookSource, SearchBook, ReaderActionMarker, BookUrlResolver, BookTypeSupport } from '@legado/sourceengine';
+import { Book, BookChapter, BookSource, SearchBook, ReaderActionMarker, BookUrlResolver, BookTypeSupport, SourceEngineHost } from '@legado/sourceengine';
 import { AudioDownloadTask, AudioOfflineStore } from './AudioOfflineStore';
 import { AudioOfflinePolicy } from './AudioOfflinePolicy';
 import { AudioUrlResolver } from './AudioUrlResolver';
@@ -52,6 +52,8 @@ export class ReadBookEngine {
   private audioResolveChain: Promise<void> = Promise.resolve();
 
   private chapterCache: Map<number, string> = new Map();
+  /** 最近一次联网取这一章失败的原因（书源报的错），取到内容后清掉。听书页据此说明取不到音频地址的原因。 */
+  private contentErrors: Map<number, string> = new Map();
   private chapterLoading: Map<number, Promise<string>> = new Map();
   /** 正在加载的章节由谁取消；发起方取消后，后来的调用方不能共用这个会返回空串的任务。 */
   private chapterLoadingCancel: Map<number, (() => boolean) | null> = new Map();
@@ -61,6 +63,13 @@ export class ReadBookEngine {
   private preloadBackwardCount: number = 0;
   private chapterPreloads: Map<number, ReaderChapterPreloadTask> = new Map();
   private bookGeneration: number = 0;
+  /** 正在进行的目录刷新：同一本书、同样参数的重复调用共用这一次，不并发解析、不并发删表重插。 */
+  private tocRefreshTask: Promise<void> | null = null;
+  private tocRefreshKey: string = '';
+  /** 最近一次目录刷新没取到章节时的原因；取到了或还没刷新过为空。抛错的失败由调用方自己接住。 */
+  lastTocRefreshError: string = '';
+  /** 目录刷新把书签/划线挪到新序号时加一；阅读页据此重读，不必每次刷新都重读。 */
+  chapterMarksRevision: number = 0;
   private sourceInteractionIdentity: string = '';
   private openBookTask: Promise<void> | null = null;
   private openBookTaskUrl: string = '';
@@ -79,7 +88,10 @@ export class ReadBookEngine {
   /** 渐进加载中、等图片补完再写缓存的各章正文；刷新本章后旧版本补完也不再写入。 */
   private deferredChapterTexts: Map<number, Promise<string>> = new Map();
 
-  private constructor() { this.webBook = new WebBookService(); }
+  private constructor(webBook: WebBookService = new WebBookService()) {
+    // 只有阅读页的共享实例能让原生书源弹出验证网页；书架检查更新、缓存下载、后台朗读的实例改走「去验证」。
+    this.webBook = webBook.setSourceInteraction((): boolean => this.foregroundReader);
+  }
 
   static get(): ReadBookEngine {
     if (!ReadBookEngine.inst) {
@@ -92,6 +104,11 @@ export class ReadBookEngine {
 
   static createBackgroundWorker(): ReadBookEngine {
     return new ReadBookEngine();
+  }
+
+  /** 书架检查更新用：目录分页有一页没取到就整本算失败，保留库里原目录，不拿半截目录覆盖。 */
+  static createShelfRefreshWorker(): ReadBookEngine {
+    return new ReadBookEngine(new WebBookService(null, false, true));
   }
 
   /**
@@ -277,6 +294,7 @@ export class ReadBookEngine {
     this.curPos = book.durChapterPos;
     this.content = '';
     this.chapterCache.clear();
+    this.contentErrors.clear();
     this.chapterLoading.clear();
     this.preloadGeneration++;
     this.cancelChapterPreloads();
@@ -325,6 +343,24 @@ export class ReadBookEngine {
 
   /** staleCatalog：现有目录已知不可用（坏链接），和没有目录一样允许通用目录兜底。 */
   async refreshToc(expectedGeneration: number = this.bookGeneration, staleCatalog: boolean = false): Promise<void> {
+    if (!this.book || !this.source) return;
+    const key = `${expectedGeneration}|${this.book.bookUrl}|${staleCatalog ? 1 : 0}`;
+    if (this.tocRefreshTask && this.tocRefreshKey === key) return this.tocRefreshTask;
+    this.lastTocRefreshError = '';
+    const task = this.runRefreshToc(expectedGeneration, staleCatalog);
+    this.tocRefreshTask = task;
+    this.tocRefreshKey = key;
+    try {
+      await task;
+    } finally {
+      if (this.tocRefreshTask === task) {
+        this.tocRefreshTask = null;
+        this.tocRefreshKey = '';
+      }
+    }
+  }
+
+  private async runRefreshToc(expectedGeneration: number, staleCatalog: boolean): Promise<void> {
     if (!this.book || !this.source) return;
     const sessionBook = this.book;
     const sessionSource = this.source;
@@ -399,6 +435,24 @@ export class ReadBookEngine {
           await appDb.deleteBookChapters(targetBook.bookUrl);
           if (!this.isCurrentBookSession(expectedGeneration, sessionBookUrl)) return;
           await appDb.insertBookChapters(chapters);
+          // 正文按序号存：目录前面增删几章后要跟着挪，否则第 N 章读到的是旧目录第 N 章的正文。
+          try {
+            await appDb.realignCachedChapterContents(targetBook.bookUrl, chapters);
+          } catch (e) {
+            console.warn('[RE] realign cached chapters failed, drop them:', e);
+            // 删也失败时读正文那一步还会按章节地址核对，不会配错章。
+            await appDb.deleteBookCachedContent(targetBook.bookUrl).catch((err: Error): void => {
+              console.warn('[RE] drop cached chapters failed:', err);
+            });
+          }
+          // 书签、划线同样按序号存；离线音频在 syncChapterCacheDates 里按地址/章名对位。
+          try {
+            if (await appDb.realignChapterMarks(targetBook.bookUrl, previousChapters, chapters)) {
+              this.chapterMarksRevision++;
+            }
+          } catch (e) {
+            console.warn('[RE] realign bookmarks/annotations failed:', e);
+          }
           if (!this.isCurrentBookSession(expectedGeneration, sessionBookUrl)) return;
           await this.syncChapterCacheDates(expectedGeneration, sessionBookUrl);
           if (!this.isCurrentBookSession(expectedGeneration, sessionBookUrl)) return;
@@ -407,6 +461,7 @@ export class ReadBookEngine {
       } else {
         this.book.latestChapterTitle = this.book.latestChapterTitle || oldLatestChapter;
         this.book.tocUrl = this.book.tocUrl || oldTocUrl;
+        this.lastTocRefreshError = SourceEngineHost.getError(sessionSource) || '没有取到目录';
         console.warn('[RE] refreshToc returned no chapters, keep existing chapters:', this.chapters.length);
       }
     } finally {
@@ -659,7 +714,7 @@ export class ReadBookEngine {
     const chapter = this.chapters[idx];
     // “正文下一页”翻到下一章就停，见 WebBookService.getContent。
     const nextChapterUrl = this.chapters[idx + 1]?.url || '';
-    const saved = await appDb.getCachedChapterContent(sessionBookUrl, idx);
+    const saved = await appDb.getCachedChapterContent(sessionBookUrl, idx, chapter);
     let cached = ReaderImageCache.normalize(saved);
     const releaseImages = ReaderImageCache.retainText(cached);
     try {
@@ -720,11 +775,22 @@ export class ReadBookEngine {
     try {
       let text = '';
       try {
+        // 预加载的邻章、缓存全文不弹验证网页，只有读者正停在这一章时才弹。
         text = await this.webBook.getContent(sessionSource, sessionBook, chapter, shouldCancel, null, imageRequest,
-          nextChapterUrl);
+          nextChapterUrl, (): boolean => !background && this.foregroundReader && this.curIdx === idx &&
+            this.book === sessionBook);
       } catch (e) {
+        if (this.isCurrentBookSession(generation, sessionBookUrl)) {
+          this.contentErrors.set(idx, ((e as Error)?.message || '').trim());
+        }
         if (cached && this.isCurrentBookSession(generation, sessionBookUrl) && !shouldCancel?.()) return cached;
         throw e;
+      }
+      if (this.isCurrentBookSession(generation, sessionBookUrl)) {
+        // 失败原因按书源分开记，读的时候别的书源已经冲不掉；成功取到内容时清掉旧原因。
+        const reason = text ? '' : (SourceEngineHost.getError(sessionSource) || '').trim();
+        if (reason) this.contentErrors.set(idx, reason);
+        else this.contentErrors.delete(idx);
       }
       if (cached && (!text || !ReaderImageCache.complete(text, true))) return cached;
       if (shouldCancel && shouldCancel()) return '';
@@ -803,6 +869,11 @@ export class ReadBookEngine {
       this.sourceLoadedAt = Date.now();
       this.sourceLoadedOrigin = origin;
     }
+  }
+
+  /** 这一章最近一次联网取正文失败的原因；没有记录时为空串。 */
+  contentError(idx: number): string {
+    return this.contentErrors.get(idx) || '';
   }
 
   hasCachedContent(idx: number): boolean {
@@ -947,7 +1018,8 @@ export class ReadBookEngine {
       if (shouldCancel?.() || !content || this.book !== book) return null;
       const url = AudioUrlResolver.resolveAudioUrl(content, chapter.url || book.bookUrl || this.source?.bookSourceUrl || '');
       if (!url) {
-        console.warn('[RE] offline audio has no address:', idx, AudioUrlResolver.invalidAudioAddressMessage(content));
+        console.warn('[RE] offline audio has no address:', idx, AudioUrlResolver.invalidAudioAddressMessage(content,
+          this.contentError(idx)));
         return null;
       }
       const address = new AudioAddress();

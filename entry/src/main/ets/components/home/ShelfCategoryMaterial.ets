@@ -9,6 +9,8 @@ export struct ShelfCategoryMaterial {
   @Prop side: number = 24;
   @Prop top: number = 56;
   @Prop buttonTop: number = 8;
+  /** 收起时是否画分类按钮的底板；沉浸书架只留菜单按钮时没有分类按钮。 */
+  @Prop collapsedButton: boolean = true;
   @Prop darkMode: boolean = false;
   @Prop surfaceColor: string = '#FFFFFF';
   @Prop accentColor: string = '#888888';
@@ -34,7 +36,7 @@ export struct ShelfCategoryMaterial {
         .geometryTransition('bookshelf_category_surface')
         .transition(TransitionEffect.opacity(0.99))
         .position({ x: this.side, y: this.top })
-      } else {
+      } else if (this.collapsedButton) {
         Row() {
           ImmersiveMaterialSurface({
             surfaceWidth: 40, surfaceHeight: 40, darkMode: this.darkMode,

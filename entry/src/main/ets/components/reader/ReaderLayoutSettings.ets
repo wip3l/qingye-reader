@@ -47,7 +47,8 @@ export class ReaderTypographyField {
     if (field === ReaderTypographyField.LINE_HEIGHT) return 52;
     if (field === ReaderTypographyField.PARAGRAPH_SPACING) return 32;
     if (field === ReaderTypographyField.MARGIN_LEFT || field === ReaderTypographyField.MARGIN_RIGHT) return 80;
-    return 120;
+    // 上下边距：实际生效值由阅读页按可用高度等比收缩，至少留两行正文。
+    return 360;
   }
 
   static step(field: number): number {

@@ -309,6 +309,25 @@ test('cloud files: isolation, reservations, integrity, retries and quota enforce
   clock += 8 * 60 * 1000;
   await service.remove(stranger, again.id); // The cloud files page only drops the cloud copy.
   assert.equal((await service.tombstones(stranger)).tombstones.find(t => t.id === again.id)!.reason, 'DETACHED');
+  // Custom themes: a pack or a scheme's images, never both or neither; listed with their creation time.
+  await assert.rejects(service.prepare(stranger, { requestId: randomUUID(), name: 'theme.zip', kind: 'THEME', bytes: 3 }),
+    { code: 'CLOUD_INVALID_FILE' });
+  await assert.rejects(service.prepare(stranger, { requestId: randomUUID(), name: 'theme.zip', kind: 'THEME', bytes: 3,
+    meta: { packageId: 'custom-1', schemeId: 'custom_1' } }), { code: 'CLOUD_INVALID_FILE' });
+  await assert.rejects(service.prepare(stranger, { requestId: randomUUID(), name: 'theme.zip', kind: 'THEME', bytes: 3,
+    meta: { packageId: '../x' } }), { code: 'CLOUD_INVALID_FILE' });
+  const themeMeta = { packageId: 'custom-0a1b2c', contentHash: 'b'.repeat(64) };
+  const theme = await service.prepare(stranger, { requestId: randomUUID(), name: 'theme-custom-0a1b2c.zip',
+    kind: 'THEME', bytes: 3, meta: themeMeta });
+  await putChunk(stranger, theme.id, 0, Buffer.from('thm'));
+  await service.complete(stranger, theme.id);
+  const listedTheme = (await service.list(stranger)).files.find(f => f.id === theme.id)!;
+  assert.equal(listedTheme.kind, 'THEME');
+  assert.deepEqual(listedTheme.meta, themeMeta);
+  assert.ok(listedTheme.createdAt > 0);
+  clock += 8 * 60 * 1000;
+  await service.remove(stranger, theme.id, 'REMOVED');
+  assert.deepEqual((await service.tombstones(stranger)).tombstones.find(t => t.id === theme.id)!.meta, themeMeta);
   assert.equal((await new CloudFileService(tx, null).summary(owner)).configured, false);
   await assert.rejects(new CloudFileService(tx, null).prepare(owner, input), { code: 'CLOUD_NOT_CONFIGURED' });
 });

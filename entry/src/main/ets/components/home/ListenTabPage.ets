@@ -6,6 +6,7 @@ import { Book, BookTypeSupport } from '@legado/sourceengine';
 import { appDb } from '../../model/data/AppDatabase';
 import { AudioOfflineStore } from '../../core/book/AudioOfflineStore';
 import { ReaderTtsFloatingSession } from '../../utils/ReaderTtsFloatingSession';
+import { PlaybackSpeed } from '../../utils/PlaybackSpeed';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
@@ -13,6 +14,7 @@ import { CollapsingHeader } from '../../utils/CollapsingHeader';
 import { HeaderBackdrop } from '../common/HeaderBackdrop';
 import { HomeThemeBackdrop } from './HomeThemeBackdrop';
 import { BookCover } from '../book/BookCover';
+import { ReaderReplaceRuleStore } from '../../utils/ReaderReplaceRuleStore';
 
 class ListenBookItem {
   book: Book = new Book();
@@ -31,8 +33,6 @@ export struct ListenTabPage {
   static readonly SHELF_COVER_SIZE: number = 104;
   static readonly HERO_COVER_WIDTH: number = 96;
   static readonly HERO_COVER_HEIGHT: number = 128;
-  /** 和播放面板的倍速档一致，点一下换到下一档。 */
-  static readonly SPEEDS: number[] = [0.8, 1.0, 1.2, 1.5, 2.0, 3.0];
   static readonly TIMER_MINUTES: number[] = [15, 30, 60, 90];
   @Prop statusBarHeight: number = 0;
   @Prop navBarHeight: number = 0;
@@ -48,6 +48,8 @@ export struct ListenTabPage {
   @StorageProp('globalTtsBookName') ttsBookName: string = '';
   @StorageProp('globalTtsBookUrl') ttsBookUrl: string = '';
   @StorageProp('globalTtsChapterTitle') ttsChapterTitle: string = '';
+  @State titleRulesRevision: number = 0;
+  @StorageProp('readerReplaceRulesUpdateTime') @Watch('onTitleRulesChanged') titleRulesUpdateTime: number = 0;
   @StorageProp('globalTtsMode') ttsMode: string = '';
   @StorageProp('globalTtsProgress') ttsProgress: number = 0;
   @StorageProp('globalTtsCanPrevious') ttsCanPrevious: boolean = false;
@@ -79,6 +81,21 @@ export struct ListenTabPage {
   aboutToAppear(): void {
     this.alive = true;
     this.loadAudioBooks();
+    ReaderReplaceRuleStore.load(getContext(this)).then((): void => {
+      this.titleRulesRevision++;
+    }).catch((error: Error): void => {
+      console.warn('听书页载入替换净化规则失败:', error);
+    });
+  }
+
+  onTitleRulesChanged(): void {
+    this.titleRulesRevision++;
+  }
+
+  /** 章节名按替换净化规则显示，与阅读页、书架一致；读一次 revision，规则载入或改动后重算。 */
+  chapterTitle(book: Book): string {
+    const text = (book.durChapterTitle || '').trim();
+    return this.titleRulesRevision >= 0 ? ReaderReplaceRuleStore.displayTitle(text, book) : text;
   }
 
   aboutToDisappear(): void {
@@ -632,13 +649,14 @@ export struct ListenTabPage {
   heroSubtitle(): string {
     if (this.ttsActive) return this.ttsChapterTitle;
     const book = this.heroBook();
-    return book ? (book.durChapterTitle || book.author) : '';
+    return book ? (this.chapterTitle(book) || book.author) : '';
   }
 
   heroBadge(): string {
     if (!this.ttsActive) return '上次收听';
-    const state = this.ttsPaused ? '已暂停' : (this.ttsMode === 'audio' ? '收听中' : '朗读中');
-    return this.ttsMode !== 'audio' && this.ttsVoiceCode ? `${state} · ${this.ttsVoiceCode}` : state;
+    const state = this.ttsPaused ? '已暂停' :
+      (this.ttsMode === 'audio' ? '收听中' : (this.ttsMode === 'video' ? '听视频中' : '朗读中'));
+    return this.ttsMode !== 'audio' && this.ttsMode !== 'video' && this.ttsVoiceCode ? `${state} · ${this.ttsVoiceCode}` : state;
   }
 
   heroPercent(): number {
@@ -661,15 +679,12 @@ export struct ListenTabPage {
   }
 
   speedLabel(): string {
-    const speed = Math.round((this.ttsSpeed || 1) * 100) / 100;
-    const oneDecimal = Math.abs(speed * 10 - Math.round(speed * 10)) < 0.001;
-    return `${speed.toFixed(oneDecimal ? 1 : 2)}×`;
+    return `${PlaybackSpeed.label(this.ttsSpeed || 1)}×`;
   }
 
+  /** 和播放面板的倍速快捷档一致，点一下换到下一档。 */
   nextSpeed(): number {
-    const speed = this.ttsSpeed || 1;
-    const next = ListenTabPage.SPEEDS.find((value: number): boolean => value > speed + 0.01);
-    return next ?? ListenTabPage.SPEEDS[0];
+    return PlaybackSpeed.nextPreset(this.ttsSpeed || 1);
   }
 
   timerRemainingMinutes(): number {
@@ -684,7 +699,7 @@ export struct ListenTabPage {
   audioProgressText(book: Book): string {
     if (!book.durChapterTime) return '未开始';
     if (book.totalChapterNum > 0) return `${Math.min(book.durChapterIndex + 1, book.totalChapterNum)}/${book.totalChapterNum} 集`;
-    return book.durChapterTitle || '已收听';
+    return this.chapterTitle(book) || '已收听';
   }
 
   openAudioBook(book: Book): void {

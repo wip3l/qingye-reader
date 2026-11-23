@@ -13,6 +13,7 @@ export class ReaderThemeRenderCache {
   private lightText: string = '';
   private darkBackground: string = '';
   private darkText: string = '';
+  private displayRevision: number = -1;
   private regexRevision: number = -1;
   private regexResolved: boolean = false;
   private regexDark: boolean = false;
@@ -20,14 +21,16 @@ export class ReaderThemeRenderCache {
   private bubble: string = '';
 
   theme(dark: boolean, index: number, revision: number, raw: string, lightBackground: string,
-    lightText: string, darkBackground: string, darkText: string): ReaderThemeItem {
+    lightText: string, darkBackground: string, darkText: string, displayRevision: number = 0): ReaderThemeItem {
     if (this.cached && this.dark === dark && this.index === index && this.revision === revision &&
       this.raw === raw && this.lightBackground === lightBackground && this.lightText === lightText &&
-      this.darkBackground === darkBackground && this.darkText === darkText) return this.cached;
+      this.darkBackground === darkBackground && this.darkText === darkText &&
+      this.displayRevision === displayRevision) return this.cached;
     const schemes = ReaderCustomThemeHelper.parse(raw, lightBackground, lightText, darkBackground, darkText);
     const selected = ReaderCustomThemeHelper.selected(schemes, dark);
     const resolved = ReaderThemeHelper.themeAt(dark, index, selected.backgroundColor, selected.textColor,
-      selected.backgroundType === 'image' ? selected.backgroundImageUri : '', selected.backgroundImageFit);
+      selected.backgroundType === 'image' ? selected.backgroundImageUri : '', selected.backgroundImageFit,
+      selected.backgroundImagePosition, selected.backgroundImageGap);
     this.dark = dark;
     this.index = index;
     this.revision = revision;
@@ -36,6 +39,7 @@ export class ReaderThemeRenderCache {
     this.lightText = lightText;
     this.darkBackground = darkBackground;
     this.darkText = darkText;
+    this.displayRevision = displayRevision;
     this.cached = resolved;
     return resolved;
   }

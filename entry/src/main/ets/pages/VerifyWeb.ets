@@ -1,6 +1,6 @@
 import { router, promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
-import { VerificationSupport, BookSource } from '@legado/sourceengine';
+import { VerificationSupport, BookSource, NativeSourceInteraction } from '@legado/sourceengine';
 import { AppCookies } from '../platform/Cookies';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { ReadBookEngine } from '../core/book/ReadBookEngine';
@@ -366,6 +366,9 @@ struct VerifyWebPage {
     const verified = this.requireLoginCookie ? this.hasEffectiveBookSourceLoginCookie() :
       true;
     if (verified) {
+      // 用户自己去验证并完成了：之前关掉验证页留下的冷却作废，书源脚本又可以在阅读时弹出验证页。
+      const completedSource = this.verificationSourceUrl || AppStorage.get<string>('pendingVerificationSourceUrl') || '';
+      if (completedSource) NativeSourceInteraction.clearDeclined(completedSource);
       if (!this.verificationContextToken || this.verificationContextToken === (AppStorage.get<string>('pendingVerificationContextToken') || '')) {
         AppStorage.setOrCreate('pendingVerificationUrl', '');
       AppStorage.setOrCreate('pendingVerificationTitle', '');

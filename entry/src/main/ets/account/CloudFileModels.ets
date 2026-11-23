@@ -17,6 +17,9 @@ export class CloudFileMeta {
   mediaCategory?: string;
   contentHash?: string;
   fontName?: string;
+  /** 自定义主题：主题包（packageId）或某套方案的启动封面与预览图（schemeId），二者只有一个。 */
+  packageId?: string;
+  schemeId?: string;
 }
 export class CloudFileItem {
   id: string = '';
@@ -26,6 +29,19 @@ export class CloudFileItem {
   state: string = '';
   manifestHash: string = '';
   meta: CloudFileMeta | null = null;
+  /** 服务端创建时间（毫秒）；同一主题有多份时留最新的。旧服务端不返回，为 0。 */
+  createdAt: number = 0;
+}
+/** 一次自动上传：本机文件、云端名称、类型与附加信息；key 用来记住本轮失败的内容。 */
+export class CloudUploadJob {
+  path: string = '';
+  name: string = '';
+  kind: string = '';
+  meta: CloudFileMeta | null = null;
+  manifestHash: string = '';
+  key: string = '';
+  /** 失败时同步问题里显示的名称。 */
+  label: string = '';
 }
 /** 删除标记：REMOVED 表示用户移除了书或字体，DETACHED 表示只删了云端副本。 */
 export class CloudTombstone {
