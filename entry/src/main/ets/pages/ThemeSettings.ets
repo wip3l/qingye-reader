@@ -202,6 +202,7 @@ class ThemeApplyChoice {
   // 只对第一次使用的主题有意义：true 用主题预设排版，false 沿用当前排版。
   usePresetLayout: boolean = false;
   applyCover: boolean = false;
+  applyFrame: boolean = false;
   applyIcon: boolean = false;
 
   static preserve(): ThemeApplyChoice {
@@ -393,6 +394,8 @@ struct ThemeSettingsPage {
   @State applyDialogLayoutOffHint: string = '';
   @State applyDialogFirstUse: boolean = false;
   @State applyDialogHasCover: boolean = false;
+  @State applyDialogHasFrame: boolean = false;
+  @State applyDialogApplyFrame: boolean = false;
   @State applyDialogApplyLayout: boolean = false;
   @State applyDialogApplyCover: boolean = false;
   @State applyDialogApplyIcon: boolean = false;
@@ -2878,9 +2881,8 @@ struct ThemeSettingsPage {
       if (customScheme) {
         settings = AppThemeSettingsStore.applyCustomSnapshot(settings, customScheme.settings);
       }
-      // 弹窗里“应用主题封面”管封面和边框两项，应用后可在主题页分别再改。
       settings.themeBookCoverEnabled = choice.applyCover;
-      settings.themeBookFrameEnabled = choice.applyCover;
+      settings.themeBookFrameEnabled = choice.applyFrame;
       AppThemeSettingsStore.applyToStorage(settings);
       await AppThemeSettingsStore.save(getContext(this), settings);
       if (customScheme) {
@@ -2943,6 +2945,7 @@ struct ThemeSettingsPage {
     currentReader: ReaderSettings): Promise<ThemeApplyChoice | null> {
     this.applyDialogThemeName = theme.name;
     this.applyDialogHasCover = this.themeHasBookCover(theme);
+    this.applyDialogHasFrame = this.themeHasShelfFrame(theme);
     this.applyDialogFirstUse = firstUse;
     if (firstUse) {
       const preset = theme.readerLayout;
@@ -2956,6 +2959,8 @@ struct ThemeSettingsPage {
     }
     // 主题带封面时默认勾选“应用主题封面”，不再沿用上次的选择；默认主题例外，默认保留书的原封面。
     this.applyDialogApplyCover = this.applyDialogHasCover && theme.id !== ThemeIds.PLAIN_DEFAULT;
+    // 主题边框同样默认勾选，默认主题例外；两项可分开关，比如保留原封面只套边框。
+    this.applyDialogApplyFrame = this.applyDialogHasFrame && theme.id !== ThemeIds.PLAIN_DEFAULT;
     // 桌面图标默认不随主题更换，由用户主动打开。
     this.applyDialogApplyIcon = false;
     this.showThemeApplyDialog = true;
@@ -2969,6 +2974,7 @@ struct ThemeSettingsPage {
     const choice = new ThemeApplyChoice();
     choice.usePresetLayout = this.applyDialogFirstUse && this.applyDialogApplyLayout;
     choice.applyCover = this.applyDialogHasCover && this.applyDialogApplyCover;
+    choice.applyFrame = this.applyDialogHasFrame && this.applyDialogApplyFrame;
     choice.applyIcon = this.applyDialogApplyIcon;
     const resolve = this.pendingApplyChoice;
     this.closeThemeApplyDialog();
@@ -2998,6 +3004,7 @@ struct ThemeSettingsPage {
     this.applyDialogLayoutOffHint = '';
     this.applyDialogFirstUse = false;
     this.applyDialogHasCover = false;
+    this.applyDialogHasFrame = false;
   }
 
   async ensureThemeAccess(themeId: string): Promise<boolean> {
@@ -3753,8 +3760,11 @@ struct ThemeSettingsPage {
 
   /** 当前主题自带书架边框（浅深任一套）时才显示“主题边框”开关。 */
   currentHasFrameSetting(): boolean {
-    if (this.appThemeId === ThemeIds.CUSTOM) return false;
-    const frameId = BuiltinThemeRegistry.findById(this.appThemeId).book.shelfFrameAssetId;
+    return this.appThemeId !== ThemeIds.CUSTOM && this.themeHasShelfFrame(BuiltinThemeRegistry.findById(this.appThemeId));
+  }
+
+  themeHasShelfFrame(theme: ThemePack): boolean {
+    const frameId = theme.book.shelfFrameAssetId;
     return !!frameId && (!!ThemeAssetRegistry.themeShelfFrame(frameId, false) ||
       !!ThemeAssetRegistry.themeShelfFrame(frameId, true));
   }
@@ -4383,6 +4393,9 @@ struct ThemeSettingsPage {
       if (this.applyDialogHasCover) {
         this.themeApplyToggleRow('cover')
       }
+      if (this.applyDialogHasFrame) {
+        this.themeApplyToggleRow('frame')
+      }
       this.themeApplyToggleRow('icon')
       Row({ space: AppSpacing.LG }) {
         Button('取消', { type: ButtonType.Normal })
@@ -4423,12 +4436,13 @@ struct ThemeSettingsPage {
   themeApplyToggleRow(category: string) {
     Row({ space: AppSpacing.LG }) {
       Column({ space: AppSpacing.XXS }) {
-        Text(category === 'layout' ? '使用主题预设排版' : category === 'cover' ? '应用主题封面' : '应用主题图标')
+        Text(category === 'layout' ? '使用主题预设排版' : category === 'cover' ? '应用主题封面' :
+          category === 'frame' ? '应用主题边框' : '应用主题图标')
           .fontSize(AppFontSize.BODY_LARGE)
           .fontColor(this.primaryTextColor())
         Text(category === 'layout' ? (this.applyDialogApplyLayout ? this.applyDialogLayoutOnHint :
-          this.applyDialogLayoutOffHint) : category === 'cover' ?
-          '书架使用主题封面与主题边框' : AppIconManager.isSupported() ?
+          this.applyDialogLayoutOffHint) : category === 'cover' ? '书架换成主题的封面' :
+          category === 'frame' ? '书架上的封面套上主题边框，原有封面也套' : AppIconManager.isSupported() ?
           '桌面图标同步更换为主题图标' : AppIconManager.UNSUPPORTED_MESSAGE)
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
@@ -4438,12 +4452,15 @@ struct ThemeSettingsPage {
 
       AdaptiveSwitch({
         isOn: category === 'layout' ? this.applyDialogApplyLayout :
-          category === 'cover' ? this.applyDialogApplyCover : this.applyDialogApplyIcon,
+          category === 'cover' ? this.applyDialogApplyCover :
+          category === 'frame' ? this.applyDialogApplyFrame : this.applyDialogApplyIcon,
         onChange: (enabled: boolean) => {
           if (category === 'layout') {
             this.applyDialogApplyLayout = enabled;
           } else if (category === 'cover') {
             this.applyDialogApplyCover = enabled;
+          } else if (category === 'frame') {
+            this.applyDialogApplyFrame = enabled;
           } else {
             this.applyDialogApplyIcon = enabled;
           }
