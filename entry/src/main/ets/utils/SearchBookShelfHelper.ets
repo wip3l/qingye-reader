@@ -9,6 +9,7 @@ import { CoverUrlNormalizer } from './CoverUrlNormalizer';
 import { SearchExplorePendingBook } from './SearchExplorePendingBook';
 import { AppThemeSettingsStore } from './AppThemeSettingsStore';
 import { HdsFeedback } from './HdsFeedback';
+import { SourceShelfEvents } from './SourceShelfEvents';
 import { ShelfWorkDuplicatePrompt } from './ShelfWorkDuplicatePrompt';
 import { BookMarkService } from '../core/mark/BookMarkService';
 import { NewBookGroup } from './NewBookGroup';
@@ -153,6 +154,7 @@ export class SearchBookShelfHelper {
       // 试读过的书这时才真正入架，按新书套默认分组；本来就在书架的书不动分组。
       const wasPending = SearchExplorePendingBook.isPendingAddToShelf(existing);
       const groupName = wasPending ? await NewBookGroupStore.apply(context, existing) : '';
+      if (wasPending) SourceShelfEvents.added(existing);
       SearchExplorePendingBook.clearPendingAddToShelf(existing);
       await BookMarkService.carryTagsToShelfBook(existing);
       await db.updateBook(existing, true, 'search_result_explicit_add_existing');
@@ -166,6 +168,7 @@ export class SearchBookShelfHelper {
     const resolvedKey = BookIdentity.keyOfBook(book);
 
     const groupName = await NewBookGroupStore.apply(context, book);
+    SourceShelfEvents.added(book);
     await BookMarkService.carryTagsToShelfBook(book);
     await db.insertBook(book, 'search_result_explicit_add');
     const shelfKey = resolvedKey || searchKey;
@@ -186,6 +189,8 @@ export class SearchBookShelfHelper {
     const existing = await SearchBookShelfHelper.findShelfBookByKey(key, true);
     if (existing) {
       SearchBookShelfHelper.deleteBookCoverCache(context, existing);
+      // 试读占位的书没有真正入过架，移除时不通知书源。
+      if (!SearchExplorePendingBook.isPendingAddToShelf(existing)) SourceShelfEvents.removed(existing);
     }
     await db.deleteBook(existing?.bookUrl || searchBook.bookUrl, 'search_result_explicit_remove');
     SearchBookShelfHelper.markShelfChanged();

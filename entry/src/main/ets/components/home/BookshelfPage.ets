@@ -37,6 +37,7 @@ import { CollapsingHeader } from '../../utils/CollapsingHeader';
 import { HeaderBackdrop } from '../common/HeaderBackdrop';
 import { HomeThemeBackdrop } from './HomeThemeBackdrop';
 import { HdsFeedback } from '../../utils/HdsFeedback';
+import { SourceShelfEvents } from '../../utils/SourceShelfEvents';
 import { BookDisplayHelper } from '../../utils/BookDisplayHelper';
 import { ReaderReplaceRuleStore } from '../../utils/ReaderReplaceRuleStore';
 import { BookTileLayout } from '../../utils/BookTileLayout';
@@ -1189,6 +1190,7 @@ export struct BookshelfPage {
       const db = AppDatabase.getInstance();
       CloudAutoSync.onBookRemoved(getContext(this), book).catch(() => undefined);
       LocalBookService.deleteLocalBookFiles(getContext(this), book);
+      SourceShelfEvents.removed(book);
       await db.deleteBook(book.bookUrl, 'bookshelf_user_delete');
       await dissolve;
       this.commitShelfBookRemoval([book.bookUrl]);
@@ -4603,6 +4605,7 @@ export struct BookshelfPage {
       for (const book of targets) {
         await CloudAutoSync.onBookRemoved(getContext(this), book).catch(() => undefined);
         LocalBookService.deleteLocalBookFiles(getContext(this), book);
+        SourceShelfEvents.removed(book);
         await db.deleteBook(book.bookUrl, 'bookshelf_batch_delete');
       }
     } finally {

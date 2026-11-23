@@ -41,6 +41,7 @@ import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow, SettingRow, SettingScopeRow, SettingSwitchRow } from '../components/common/SettingRow';
 import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
 import { WatchRemoteBridge, WatchRemoteStatus, WatchRemoteStatusKind } from '../utils/WatchRemoteBridge';
+import { WATCH_TURN_AVAILABLE } from '../utils/WatchTurnFeature';
 import { ReaderComicSettings, ReaderComicSettingsStore } from '../core/reader/ReaderComicSettings';
 import { ReaderPdfSettingsStore } from '../core/book/pdf/ReaderPdfSettingsStore';
 import { ScreenTimeoutStepper } from '../components/common/ScreenTimeoutStepper';
@@ -663,8 +664,7 @@ struct SettingsPage {
           }
         })
       }
-      // 手表翻页依赖华为 Wear Engine，安卓上不显示。
-      if (WatchRemoteBridge.supported()) {
+      if (WATCH_TURN_AVAILABLE) {
         SettingScopeRow({
           title: '手表翻页',
           description: '在手表上打开开源轻页，点屏幕或转表冠翻页，条漫为翻一屏',
@@ -2322,7 +2322,7 @@ struct SettingsPage {
   /** 手表翻页打开时查一次连接与安装状态；关着时不查，免得没有手表的人看到无关提示。 */
   refreshWatchRemoteStatus(): void {
     const serial = ++this.watchRemoteStatusSerial;
-    if (this.readerWatchTurnScope === 0) {
+    if (!WATCH_TURN_AVAILABLE || this.readerWatchTurnScope === 0) {
       this.watchRemoteStatus = null;
       return;
     }

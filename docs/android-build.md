@@ -64,8 +64,11 @@
 - **朗读与听书**：音频焦点在 `MediaBridge` 里处理：来电、其它应用播放时发 pause 命令，短暂失去焦点结束后发 play 续播。
   离线朗读：鸿蒙上 sherpa_onnx 是只有鸿蒙原生库的 NAPI 包，安卓上整文件替换 `utils/localtts/LocalTtsEngine.ets`，经
   `SherpaBridge.java` 用 sherpa-onnx 的安卓 Java 接口（版本与鸿蒙端一致）。构建脚本从 GitHub 发布页下载 jar 和原生库、按 sha256
-  校验后放进包里（只放目标架构的 `libsherpa-onnx-jni.so`、`libonnxruntime.so`，约 13 MB）。平台层之外的整文件替换只此一处，
-  登记在 `platform-parity-check.mjs` 的 `WHOLE_FILE_OVERLAYS` 里。
+  校验后放进包里（只放目标架构的 `libsherpa-onnx-jni.so`、`libonnxruntime.so`，约 13 MB）。
+- **手表翻页**：Wear Engine 是华为健康的系统共享包，ArkUI-X 实例化模块时就去加载，安卓上找不到直接终止进程，
+  `import lazy` 也拦不住。安卓上整文件替换 `utils/WatchRemoteBridge.ets`（空实现）和 `utils/WatchTurnFeature.ts`（总开关恒为 false）。
+- **整文件替换**：平台层之外只有上面三处，登记在 `platform-parity-check.mjs` 的 `WHOLE_FILE_OVERLAYS` 里；检查脚本核对导出名和
+  类的公开静态成员，并禁止其它文件引用 `@kit.WearEngine`。
 - **打包时的插件库**：ace 按 ArkTS 编译产出的 `module_collection.json` 决定打进哪些插件库，增量编译时它只列重编的文件，
   会漏库（首选项、数据库等整个模块为空）。构建脚本每次清掉 ArkTS 编译缓存做全量编译，并检查清单是否完整。
 - **书源内核**：内核分支 `arkuix-compat` 有两个安卓相关提交：ArkUI-X 缺失接口改成运行时取用；QuickJS 脚本会话的调用结果

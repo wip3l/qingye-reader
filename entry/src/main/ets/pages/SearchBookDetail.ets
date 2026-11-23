@@ -1,7 +1,7 @@
 import { router } from '@kit.ArkUI';
 import { motion } from '@kit.MultimodalAwarenessKit';
 import deviceInfo from '@ohos.deviceInfo';
-import { Book, BookGroup, SearchBook, BookChapter, BookFieldSanitizer, BookTypeSupport, BookUrlResolver } from '@legado/sourceengine';
+import { Book, BookGroup, SearchBook, BookChapter, BookFieldSanitizer, BookSource, BookTypeSupport, BookUrlResolver, SourceEventCallback } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { WebBookService } from '../core/book/WebBookService';
 import { syncSystemBars } from '../utils/SystemBars';
@@ -26,6 +26,7 @@ import { BookCatalogSheet } from '../components/BookCatalogSheet';
 import { WebBookFetchRuntimeHost } from '../components/WebBookFetchRuntimeHost';
 import { LocalBookService } from '../core/book/LocalBookService';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { SourceShelfEvents } from '../utils/SourceShelfEvents';
 import { VideoBookPlayer } from '../utils/VideoBookPlayer';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -69,8 +70,12 @@ struct SearchBookDetailPage {
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   @State bookUrl: string = '';
   @State tocUrl: string = '';
-  @State origin: string = '';
+  @State @Watch('refreshSourceCustomButton') origin: string = '';
   @State originName: string = '';
+  /** 当前书源声明了自定义按钮（兼容书源的 customButton 加事件回调），标签行末尾多一个“书源功能”。 */
+  @State sourceHasCustomButton: boolean = false;
+  private customButtonSource: BookSource | null = null;
+  private customButtonRunning: boolean = false;
   @State name: string = '';
   @State author: string = '';
   @State kind: string = '';
@@ -360,6 +365,9 @@ struct SearchBookDetailPage {
 
               if (this.name) {
                 this.markSummaryChip()
+              }
+              if (this.sourceHasCustomButton) {
+                this.sourceFunctionChip()
               }
             }
             .width('100%')
@@ -901,6 +909,65 @@ struct SearchBookDetailPage {
     })
   }
 
+  /** 书源的自定义按钮。做什么由书源决定（常见的是书评），所以只叫“书源功能”。 */
+  @Builder
+  sourceFunctionChip() {
+    Text('书源功能')
+      .fontSize(AppFontSize.BODY)
+      .fontColor(this.accentColor())
+      .maxLines(1)
+      .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
+      .attributeModifier(this.neutralTagModifier())
+      .margin({ right: AppSpacing.MD, bottom: AppSpacing.MD })
+      .accessibilityText('书源功能')
+      .onClick(() => {
+        this.openSourceCustomButton();
+      })
+  }
+
+  /** 书源换了（进页面、换源）就重新看它有没有自定义按钮。 */
+  refreshSourceCustomButton(): void {
+    const origin = this.origin;
+    this.customButtonSource = null;
+    this.sourceHasCustomButton = false;
+    if (!origin) return;
+    const db = AppDatabase.getInstance();
+    db.initWithContext(getContext(this))
+      .then(() => db.getBookSource(origin))
+      .then((source: BookSource | null): void => {
+        if (origin !== this.origin || !SourceEventCallback.hasCustomButton(source)) return;
+        this.customButtonSource = source;
+        this.sourceHasCustomButton = true;
+      })
+      .catch((): void => undefined);
+  }
+
+  async openSourceCustomButton(): Promise<void> {
+    const source = this.customButtonSource;
+    if (!source || this.customButtonRunning) return;
+    this.customButtonRunning = true;
+    try {
+      const result = await SourceEventCallback.dispatch(source, SourceEventCallback.CLICK_CUSTOM_BUTTON,
+        this.buildCurrentBook(), null);
+      if (/^https?:\/\//i.test(result.requestedUrl)) {
+        await router.pushUrl({
+          url: 'pages/VerifyWeb',
+          params: { url: result.requestedUrl, title: '书源功能', readerCommentMode: 'true' }
+        });
+        return;
+      }
+      if (result.toastMessage) {
+        HdsFeedback.showToast(result.toastMessage);
+      } else if (result.error) {
+        HdsFeedback.showToast(`书源功能执行失败：${result.error.split('\n')[0]}`);
+      } else if (!result.handled) {
+        HdsFeedback.showToast('书源没有处理这次点击');
+      }
+    } finally {
+      this.customButtonRunning = false;
+    }
+  }
+
   private markSummaryText(): string {
     const mark = this.bookMark;
     if (!mark) return '标记';
@@ -1312,6 +1379,7 @@ struct SearchBookDetailPage {
         existing.updateTime = BookFieldSanitizer.prefer(this.updateTime, existing.updateTime);
         // 试读过的书这时才真正入架，按新书套默认分组；本来就在书架的书不动分组。
         const existingGroupName = existingWasPending ? await NewBookGroupStore.apply(getContext(this), existing) : '';
+        if (existingWasPending) SourceShelfEvents.added(existing);
         SearchExplorePendingBook.clearPendingAddToShelf(existing);
         await BookMarkService.carryTagsToShelfBook(existing);
         await db.updateBook(existing, true, 'explicit_add_existing');
@@ -1382,6 +1450,7 @@ struct SearchBookDetailPage {
         resolvedExisting.wordCount = BookFieldSanitizer.prefer(book.wordCount, resolvedExisting.wordCount);
         const resolvedGroupName = resolvedWasPending ?
           await NewBookGroupStore.apply(getContext(this), resolvedExisting) : '';
+        if (resolvedWasPending) SourceShelfEvents.added(resolvedExisting);
         SearchExplorePendingBook.clearPendingAddToShelf(resolvedExisting);
         await BookMarkService.carryTagsToShelfBook(resolvedExisting);
         await db.updateBook(resolvedExisting, true, 'explicit_add_resolved_existing');
@@ -1397,6 +1466,7 @@ struct SearchBookDetailPage {
       const resolved = await this.resolveSameWorkBeforeShelf(book);
       if (resolved !== null) return resolved;
       const groupName = await NewBookGroupStore.apply(getContext(this), book);
+      SourceShelfEvents.added(book);
       SearchExplorePendingBook.clearPendingAddToShelf(book);
       await BookMarkService.carryTagsToShelfBook(book);
       await db.insertBook(book, 'explicit_add_from_detail');
@@ -1669,6 +1739,7 @@ struct SearchBookDetailPage {
           if (resolved !== null) return resolved;
         }
         const pendingGroupName = pendingWasPending ? await NewBookGroupStore.apply(getContext(this), pendingBook) : '';
+        if (pendingWasPending) SourceShelfEvents.added(pendingBook);
         SearchExplorePendingBook.clearPendingAddToShelf(pendingBook);
         await BookMarkService.carryTagsToShelfBook(pendingBook);
         await db.updateBook(pendingBook, true, 'temporary_read_kept');

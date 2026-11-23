@@ -36,6 +36,7 @@ import { BookSourceStageRuntimeHost } from '../components/BookSourceStageRuntime
 import { BookSourceAudioWebRuntimeHost } from '../components/BookSourceAudioWebRuntimeHost';
 import { WebBookFetchRuntimeHost } from '../components/WebBookFetchRuntimeHost';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { SourceShelfEvents } from '../utils/SourceShelfEvents';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -2027,6 +2028,7 @@ struct AudioBookPage {
         return;
       }
       const groupName = await NewBookGroupStore.apply(context, book);
+      SourceShelfEvents.added(book);
       SearchExplorePendingBook.clearPendingAddToShelf(book);
       const engineBook = ReadBookEngine.get().book;
       if (engineBook && engineBook !== book && engineBook.bookUrl === book.bookUrl) {

@@ -1,10 +1,9 @@
-// 延迟加载：Wear Engine 是华为专有能力，安卓上没有，静态引用会让引用它的页面（含启动流程）加载失败。
-import lazy { wearEngine } from '@kit.WearEngine';
+import { wearEngine } from '@kit.WearEngine';
 import { bundleManager, common } from '@kit.AbilityKit';
 import { util } from '@kit.ArkTS';
 import { BusinessError, Callback } from '@kit.BasicServicesKit';
 import { ReaderInputScopes } from './ReaderInputScopes';
-import { PlatformInfo } from '../platform/PlatformInfo';
+import { WATCH_TURN_AVAILABLE } from './WatchTurnFeature';
 
 /**
  * 手表翻页遥控的手机端。手表上的 wearable 模块经 Wear Engine P2P 发来短消息，这里转给当前可见的阅读页，
@@ -89,13 +88,8 @@ export class WatchRemoteBridge {
   private static pushTimerId: number = -1;
   private static followUpTimerId: number = -1;
 
-  /** 安卓上没有 Wear Engine。 */
-  static supported(): boolean {
-    return !PlatformInfo.ANDROID;
-  }
-
   static enabled(): boolean {
-    if (!WatchRemoteBridge.supported()) return false;
+    if (!WATCH_TURN_AVAILABLE) return false;
     return ReaderInputScopes.normalize(AppStorage.get<number>(WatchRemoteBridge.KEY_SCOPE) ?? 0) !== 0;
   }
 
@@ -155,9 +149,6 @@ export class WatchRemoteBridge {
 
   /** 设置页的状态行。不依赖开关，打开设置页时查一次。 */
   static async queryStatus(context: common.Context): Promise<WatchRemoteStatus> {
-    if (!WatchRemoteBridge.supported()) {
-      return WatchRemoteBridge.status(WatchRemoteStatusKind.UNSUPPORTED, '', '安卓版不支持手表翻页');
-    }
     try {
       const devices = await wearEngine.getDeviceClient(context).getConnectedDevices();
       const watches = devices.filter((device: wearEngine.Device): boolean => WatchRemoteBridge.isWatch(device));

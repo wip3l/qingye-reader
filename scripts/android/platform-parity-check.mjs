@@ -19,7 +19,12 @@ const OVERLAY_ONLY = new Set(['MediaBridgeClient.ts']);
  * 两份文件的导出名同样要一致。
  */
 const OVERLAY_ROOT = path.join(REPO, 'android', 'overlay', 'entry', 'src', 'main', 'ets');
-const WHOLE_FILE_OVERLAYS = ['utils/localtts/LocalTtsEngine.ets'];
+const WHOLE_FILE_OVERLAYS = [
+  'utils/localtts/LocalTtsEngine.ets',
+  // 手表翻页：Wear Engine 是华为健康的系统共享包，安卓上一加载就终止进程（import lazy 也拦不住）。
+  'utils/WatchRemoteBridge.ets',
+  'utils/WatchTurnFeature.ts'
+];
 
 const problems = [];
 const read = (file) => fs.readFileSync(file, 'utf8');
@@ -83,6 +88,17 @@ for (const rel of WHOLE_FILE_OVERLAYS) {
   for (const symbol of exportedNames(read(harmonyFile))) {
     if (!android.has(symbol)) problems.push(`${rel} 导出了 ${symbol}，安卓实现里没有`);
   }
+  // 类的公开静态成员也要一致（空实现最容易漏掉新加的方法）。
+  const androidStatics = publicStatics(read(androidFile));
+  for (const member of publicStatics(read(harmonyFile))) {
+    if (!androidStatics.has(member)) problems.push(`${rel} 有公开静态成员 ${member}，安卓实现里没有`);
+  }
+}
+
+function publicStatics(source) {
+  const names = new Set();
+  for (const match of source.matchAll(/^  statics+(?:asyncs+)?(?:readonlys+)?([A-Za-z_$][w$]*)/gm)) names.add(match[1]);
+  return names;
 }
 
 // 2. 原生桥
@@ -146,9 +162,9 @@ for (const file of walk(ETS)) {
   if (/^\s*import\s+(?!lazy\b|type\b)[^;]*from\s*'@kit\.UIDesignKit'/m.test(source)) {
     problems.push(`${rel} 静态引用了 @kit.UIDesignKit（HdsTabs 用 import lazy，其它从 platform/Hds 取）`);
   }
-  // 华为专有能力（手表 Wear Engine）同理：只能延迟引入，并在安卓上不走到。
-  if (/^\s*import\s+(?!lazy\b|type\b)[^;]*from\s*'@kit\.WearEngine'/m.test(source)) {
-    problems.push(`${rel} 静态引用了 @kit.WearEngine（用 import lazy，并在安卓上关闭）`);
+  // Wear Engine 是系统共享包，安卓上实例化模块时就加载失败，import lazy 也没用：只能出现在整文件替换的文件里。
+  if (/from\s*'@kit\.WearEngine'/.test(source) && !WHOLE_FILE_OVERLAYS.includes(rel)) {
+    problems.push(`${rel} 引用了 @kit.WearEngine（只能放在安卓整文件替换的文件里，如 utils/WatchRemoteBridge.ets）`);
   }
   if (/from '@kit\.ShareKit'/.test(source) && !(ALLOWED.get(rel) || []).includes('@kit.ShareKit')) {
     problems.push(`${rel} 直接用了 @kit.ShareKit（用 platform/Share）`);

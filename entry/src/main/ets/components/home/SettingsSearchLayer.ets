@@ -11,11 +11,17 @@ import { SettingsFocus } from '../../utils/SettingsFocus';
 import {
   normalizeSettingsQuery,
   searchSettings,
+  SETTINGS_SEARCH_ENTRIES,
   SETTINGS_SEARCH_HINTS,
   SettingsSearchEntry,
   settingsHighlightParts,
   settingsQueryTokens
 } from '../../utils/SettingsSearchIndex';
+import { WATCH_TURN_AVAILABLE } from '../../utils/WatchTurnFeature';
+
+/** 手表翻页没开放时搜不到它（设置页里也不显示那一行）。 */
+const SEARCHABLE_ENTRIES: SettingsSearchEntry[] = WATCH_TURN_AVAILABLE ? SETTINGS_SEARCH_ENTRIES :
+  SETTINGS_SEARCH_ENTRIES.filter((entry: SettingsSearchEntry): boolean => entry.title !== '手表翻页');
 
 class FaqHit {
   section: HelpSection;
@@ -99,14 +105,14 @@ export struct SettingsSearchLayer {
       this.faqResults = [];
       return;
     }
-    let settings = searchSettings(query);
+    let settings = searchSettings(query, SEARCHABLE_ENTRIES);
     let faq = this.searchFaq(query);
     if (settings.length === 0 && faq.length === 0) {
       // 可能是繁体输入：折成简体再搜一次；字典第一次用到时才加载。
       if (this.toSimplified) {
         const simplified = this.toSimplified(query);
         if (simplified !== query) {
-          settings = searchSettings(simplified);
+          settings = searchSettings(simplified, SEARCHABLE_ENTRIES);
           faq = this.searchFaq(simplified);
         }
       } else {
