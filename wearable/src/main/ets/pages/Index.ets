@@ -108,7 +108,7 @@ struct Index {
         this.showMessage(MessageIcon.LINK, '手机上没装开源轻页', '在手机应用市场搜索“开源轻页”安装', MessageAction.RETRY);
         break;
       case LinkFailure.APP_NOT_RUNNING:
-        this.showMessage(MessageIcon.LINK, '手机上的开源轻页没打开', '打开后在 设置 › 阅读通用\n里打开“手表翻页”',
+        this.showMessage(MessageIcon.LINK, '手机上的开源轻页没打开', '打开后在 我的 › 阅读与收听\n里打开“手表翻页”',
           this.link?.canOpenOnPhone() ? MessageAction.OPEN_ON_PHONE : MessageAction.RETRY);
         break;
       case LinkFailure.NO_REPLY:
