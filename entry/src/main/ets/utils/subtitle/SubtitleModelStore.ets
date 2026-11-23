@@ -204,7 +204,7 @@ export class SubtitleModelStore {
     if (!uris || uris.length === 0) return -1;
     const dir = SubtitleModelStore.directory();
     if (!dir) throw new Error('无法保存模型');
-    fs.mkdirSync(dir, true);
+    SubtitleModelStore.ensureDir(dir);
     let matched = 0;
     for (let i = 0; i < uris.length; i++) {
       progress(`正在检查第 ${i + 1} / ${uris.length} 个文件`);
@@ -269,7 +269,7 @@ export class SubtitleModelStore {
   private static async downloadAll(): Promise<void> {
     const dir = SubtitleModelStore.directory();
     if (!dir) throw new Error('无法保存模型');
-    fs.mkdirSync(dir, true);
+    SubtitleModelStore.ensureDir(dir);
     let done = 0;
     let remaining = 0;
     for (const file of SubtitleModelStore.FILES) {
@@ -470,6 +470,11 @@ export class SubtitleModelStore {
       if (count <= 0) throw new Error('无法保存模型文件，请检查存储空间后重试');
       offset += count;
     }
+  }
+
+  /** mkdirSync 的递归模式对已存在的目录会报 File exists：下过一次没下完，再点下载或导入就会失败。 */
+  private static ensureDir(dir: string): void {
+    if (!fs.accessSync(dir)) fs.mkdirSync(dir, true);
   }
 
   private static sizeOf(path: string): number {
