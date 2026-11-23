@@ -1,12 +1,38 @@
 import { Context } from '@kit.AbilityKit';
 import preferences from '@ohos.data.preferences';
 import { util } from '@kit.ArkTS';
-import { WebDavConnection } from './WebDavModels';
+import { WebDavBrowsePrefs, WebDavConnection } from './WebDavModels';
 
 export class WebDavSettingsStore {
   private static readonly STORE_NAME: string = 'webdav_settings';
   private static readonly KEY_CONNECTIONS: string = 'connections_v1';
   private static readonly KEY_ACTIVE_ID: string = 'active_connection_id';
+  /** 远程书籍页的排序、显示其他文件等浏览偏好，按连接分别存。 */
+  private static readonly KEY_BROWSE_PREFS_PREFIX: string = 'browse_prefs_';
+
+  static async loadBrowsePrefs(context: Context, connectionId: string): Promise<WebDavBrowsePrefs> {
+    const prefs = new WebDavBrowsePrefs();
+    if (!connectionId) return prefs;
+    try {
+      const store = await preferences.getPreferences(context, WebDavSettingsStore.STORE_NAME);
+      const raw = await store.get(`${WebDavSettingsStore.KEY_BROWSE_PREFS_PREFIX}${connectionId}`, '');
+      if (typeof raw !== 'string' || !raw) return prefs;
+      const value = JSON.parse(raw) as WebDavBrowsePrefs;
+      prefs.sortMode = WebDavBrowsePrefs.normalizeSortMode(value.sortMode);
+      prefs.showOthers = value.showOthers === true;
+      prefs.searchDeep = value.searchDeep === true;
+      prefs.booksOnly = value.booksOnly === true;
+    } catch (_) {
+    }
+    return prefs;
+  }
+
+  static async saveBrowsePrefs(context: Context, connectionId: string, prefs: WebDavBrowsePrefs): Promise<void> {
+    if (!connectionId) return;
+    const store = await preferences.getPreferences(context, WebDavSettingsStore.STORE_NAME);
+    await store.put(`${WebDavSettingsStore.KEY_BROWSE_PREFS_PREFIX}${connectionId}`, JSON.stringify(prefs));
+    await store.flush();
+  }
 
   static async loadConnections(context: Context): Promise<WebDavConnection[]> {
     const store = await preferences.getPreferences(context, WebDavSettingsStore.STORE_NAME);
@@ -44,6 +70,7 @@ export class WebDavSettingsStore {
       .filter((item: WebDavConnection): boolean => item.id !== connectionId);
     const store = await preferences.getPreferences(context, WebDavSettingsStore.STORE_NAME);
     await store.put(WebDavSettingsStore.KEY_CONNECTIONS, JSON.stringify(connections));
+    await store.delete(`${WebDavSettingsStore.KEY_BROWSE_PREFS_PREFIX}${connectionId}`);
     const active = await store.get(WebDavSettingsStore.KEY_ACTIVE_ID, '');
     if (active === connectionId) {
       await store.put(WebDavSettingsStore.KEY_ACTIVE_ID, connections.length > 0 ? connections[0].id : '');

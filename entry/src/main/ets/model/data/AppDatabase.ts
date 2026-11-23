@@ -1612,6 +1612,24 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     return book;
   }
 
+  /** 只取 bookUrl 列，用于判断一批远程文件是否已在书架（如 WebDAV 列表里的“已在书架”）。 */
+  async getBookUrlsWithPrefix(prefix: string): Promise<string[]> {
+    if (!this.store || !prefix) return [];
+    const predicates = new relationalStore.RdbPredicates('books');
+    predicates.beginsWith('bookUrl', prefix);
+    const resultSet = await this.store.query(predicates, ['bookUrl']);
+    const urls: string[] = [];
+    try {
+      const column = resultSet.getColumnIndex('bookUrl');
+      while (resultSet.goToNextRow()) {
+        urls.push(resultSet.getString(column));
+      }
+    } finally {
+      resultSet.close();
+    }
+    return urls;
+  }
+
   async getAllBooks(): Promise<Book[]> {
     if (!this.store) return [];
     const predicates = new relationalStore.RdbPredicates('books');

@@ -620,7 +620,12 @@ export class LocalBookService {
   }
 
   static webDavBookUrl(connectionId: string, remotePath: string): string {
-    return `webdav://${connectionId}/${LocalBookService.hashText(remotePath)}`;
+    return `${LocalBookService.webDavBookUrlPrefix(connectionId)}${LocalBookService.hashText(remotePath)}`;
+  }
+
+  /** 某个 WebDAV 连接下所有书的 bookUrl 共同前缀。 */
+  static webDavBookUrlPrefix(connectionId: string): string {
+    return `webdav://${connectionId}/`;
   }
 
   static opdsBookUrl(serverId: string, acquisitionUrl: string): string {

@@ -43,6 +43,25 @@ export class WebDavConnectionTestResult {
   message: string = '';
 }
 
+export class WebDavBrowsePrefs {
+  static readonly SORT_NAME: string = 'name';
+  static readonly SORT_MODIFIED: string = 'modified';
+  static readonly SORT_SIZE: string = 'size';
+
+  sortMode: string = WebDavBrowsePrefs.SORT_NAME;
+  /** 图片等不能阅读的文件是否直接列出；关闭时折叠成一行。 */
+  showOthers: boolean = false;
+  /** 搜索时是否包含子文件夹。 */
+  searchDeep: boolean = false;
+  /** 搜索结果只列可阅读的书籍文件和文件夹。 */
+  booksOnly: boolean = false;
+
+  static normalizeSortMode(value: string | undefined): string {
+    return value === WebDavBrowsePrefs.SORT_MODIFIED || value === WebDavBrowsePrefs.SORT_SIZE ? value :
+      WebDavBrowsePrefs.SORT_NAME;
+  }
+}
+
 export class WebDavFileInfo {
   exists: boolean = false;
   statusCode: number = 0;
