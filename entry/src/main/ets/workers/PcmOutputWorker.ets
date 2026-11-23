@@ -172,6 +172,9 @@ async function call(request: PcmThreadRequest): Promise<void> {
       case 'setLoudnessGain':
         await renderer.setLoudnessGain(request.value ?? 0);
         break;
+      case 'setSpeed':
+        renderer.setSpeed(request.value ?? 1);
+        break;
       case 'shutdown':
         await shutdown(output);
         break;

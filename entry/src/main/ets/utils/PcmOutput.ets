@@ -138,6 +138,19 @@ export class PcmOutput {
     return this.callThread('setLoudnessGain', gain);
   }
 
+  /** 系统变速（时间伸缩，不变调），0.25–4 倍；1 倍是直通。不支持时 reject。 */
+  setSpeed(speed: number): Promise<void> {
+    if (this.direct) {
+      try {
+        this.direct.setSpeed(speed);
+        return Promise.resolve();
+      } catch (error) {
+        return Promise.reject(error as Error);
+      }
+    }
+    return this.callThread('setSpeed', speed);
+  }
+
   /** 已播放到的帧位置；取不到时抛错，播放器改用时钟估算。 */
   framePosition(): number {
     if (this.direct) return Math.max(0, Math.round(this.direct.getAudioTimestampInfoSync().framePos));

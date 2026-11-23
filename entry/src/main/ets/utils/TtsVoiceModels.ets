@@ -57,6 +57,7 @@ export class TtsCustomVoices {
     voice.lastUpdateTime = TtsCustomVoices.integer(item['lastUpdateTime'], 0);
     const enabled = item['enabled'];
     voice.enabled = enabled === undefined || enabled === null ? true : enabled !== false && String(enabled) !== 'false';
+    voice.speedMode = TtsCustomVoices.text(item['speedMode']).trim().toLowerCase();
     return voice;
   }
 

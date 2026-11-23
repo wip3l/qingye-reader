@@ -10474,6 +10474,15 @@ struct ReadBookPage {
     this.updateTtsFloatingSession();
     if (this.isTtsSpeaking || this.ttsReader?.isSpeaking()) {
       this.scheduleTtsSpeedAvSessionUpdate();
+      // 播放器变速的自定义音色就地换倍速，不停下重新合成；同时作废还没执行的重读。
+      if (this.ttsReader?.applyLiveSpeed(nextSpeed)) {
+        this.ttsSpeedRestartSerial++;
+        if (this.ttsSpeedRestartTimerId >= 0) {
+          clearTimeout(this.ttsSpeedRestartTimerId);
+          this.ttsSpeedRestartTimerId = -1;
+        }
+        return;
+      }
       this.scheduleActiveTtsSpeedRestart();
     }
   }

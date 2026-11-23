@@ -1215,6 +1215,7 @@ export class AppDataBackupService {
     voice.customOrder = AppDataBackupService.numberValue(raw['customOrder'], 0);
     voice.lastUpdateTime = AppDataBackupService.numberValue(raw['lastUpdateTime'], 0);
     voice.enabled = raw['enabled'] !== false && AppDataBackupService.stringValue(raw['enabled']) !== 'false';
+    voice.speedMode = AppDataBackupService.stringValue(raw['speedMode']).trim().toLowerCase();
     return voice;
   }
 

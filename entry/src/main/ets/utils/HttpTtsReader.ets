@@ -55,6 +55,11 @@ export class HttpTtsAudio {
   filePath: string = '';
   contentType: string = '';
   speed: number = 1;
+  /**
+   * 音频是原速的，倍速交给播放器（AudioRenderer / AVPlayer 的变速不变调）。这时 speed 只是合成时的倍速，
+   * 播放中途改了倍速就按新的放（见 HttpTtsReader.applyLiveSpeed），不必重新合成。
+   */
+  playerSpeed: boolean = false;
 }
 
 export class HttpTtsReader {
@@ -75,6 +80,11 @@ export class HttpTtsReader {
   private currentClients: http.HttpRequest[] = [];
   private loginPromptedAt: Record<string, number> = {};
   private protectedCachePaths: Map<string, number> = new Map<string, number>();
+  // 播放中途改的倍速，0 表示没改过（按各段合成时的倍速放）；stop() 清零。
+  private liveSpeed: number = 0;
+  // 正在播的是不是由播放器变速的音频：只有这时中途改倍速才要通知播放器。
+  private pcmPlayerSpeedActive: boolean = false;
+  private avPlayerSpeedActive: boolean = false;
 
   async play(voice: HttpTTS, text: string, speed: number = 1): Promise<void> {
     const audio = await this.synthesize(voice, text, speed);
@@ -85,21 +95,27 @@ export class HttpTtsReader {
   async synthesize(voice: HttpTTS, text: string, speed: number = 1): Promise<HttpTtsAudio> {
     const generation = this.generation;
     const normalizedSpeed = this.normalizeSpeed(speed);
+    const engineSpeed = this.speedMode(voice) === 'engine';
     try {
-      const audio = await this.synthesizeWithRetry(voice, text, normalizedSpeed, generation);
+      // 播放器变速时接口只要原速音频：倍速变量一律按 1 倍代入，换倍速也能命中同一份缓存。
+      const audio = await this.synthesizeWithRetry(voice, text, engineSpeed ? normalizedSpeed : 1, generation);
       this.assertGeneration(generation);
       if (audio.filePath) {
         this.retainCacheFile(audio.filePath);
       }
-      if (this.templateAppliesSpeed(voice)) {
-        // The provider already synthesized this audio at the requested pace
-        // (the URL template consumed the speed variables). Applying the speed
-        // again would compound it, and the PCM fallback below resamples by
-        // dropping samples, which raises the pitch audibly.
+      if (engineSpeed) {
+        // The provider already synthesized this audio at the requested pace. Applying the speed
+        // again would compound it (1.3x twice is 1.69x).
         audio.speed = 1;
         return audio;
       }
-      return audio.filePath ? audio : this.applyLocalSpeed(audio, normalizedSpeed);
+      audio.speed = normalizedSpeed;
+      if (audio.filePath || TtsPcmAudioPlayer.speedSupported()) {
+        audio.playerSpeed = true;
+        return audio;
+      }
+      // 系统渲染器不支持变速时，才在本地做不变调的时间伸缩。
+      return this.applyLocalSpeed(audio, normalizedSpeed);
     } catch (error) {
       if (this.isCancelledError(error as Error) || generation !== this.generation) {
         throw new HttpTtsCancelledError();
@@ -113,25 +129,60 @@ export class HttpTtsReader {
   }
 
   async writeAudio(audio: HttpTtsAudio, onPlaybackStart?: (durationMs: number) => void): Promise<void> {
+    const rate = this.playbackRateOf(audio);
     if (audio.filePath) {
       try {
         await this.pcmPlayer.keepOutputRunning();
       } catch (error) {
         console.warn('[TTS] keep pcm output running for av playback failed:', error);
       }
+      this.avPlayerSpeedActive = audio.playerSpeed;
       try {
-        await this.avPlayer.play(audio.filePath, audio.speed || 1, onPlaybackStart);
+        await this.avPlayer.play(audio.filePath, audio.playerSpeed ? rate : (audio.speed || 1), onPlaybackStart);
       } finally {
+        this.avPlayerSpeedActive = false;
         this.releaseCacheFile(audio.filePath);
       }
       return;
     }
+    this.pcmPlayerSpeedActive = audio.playerSpeed;
+    this.pcmPlayer.setSpeed(rate);
     if (onPlaybackStart) {
       const durationMs = audio.sampleRate > 0 ?
-        audio.pcm.byteLength * 1000 / (audio.sampleRate * 2) : 0;
+        audio.pcm.byteLength * 1000 / (audio.sampleRate * 2) / rate : 0;
       onPlaybackStart(durationMs);
     }
     await this.pcmPlayer.write(audio.pcm, audio.sampleRate);
+  }
+
+  /**
+   * 播放中途改倍速：音色由播放器变速时直接改正在播的这一段和后面已合成的段，不重新请求。
+   * 返回 false 时（接口自己变速、或渲染器不支持变速）调用方照旧停下按新倍速重读。
+   */
+  applyLiveSpeed(voice: HttpTTS, speed: number): boolean {
+    if (this.speedMode(voice) !== 'client' || !TtsPcmAudioPlayer.speedSupported()) {
+      return false;
+    }
+    const normalizedSpeed = this.normalizeSpeed(speed);
+    this.liveSpeed = normalizedSpeed;
+    if (this.pcmPlayerSpeedActive) {
+      this.pcmPlayer.setSpeed(normalizedSpeed);
+    }
+    if (this.avPlayerSpeedActive) {
+      this.avPlayer.setLiveSpeed(normalizedSpeed);
+    }
+    console.info(`[TTS] custom voice live speed: ${normalizedSpeed}`);
+    return true;
+  }
+
+  /** 新一轮朗读开始：各段按合成时带的倍速放。 */
+  clearLiveSpeed(): void {
+    this.liveSpeed = 0;
+  }
+
+  private playbackRateOf(audio: HttpTtsAudio): number {
+    if (!audio.playerSpeed) return 1;
+    return this.liveSpeed > 0 ? this.liveSpeed : this.normalizeSpeed(audio.speed);
   }
 
   async writeAudioRecovering(voice: HttpTTS, text: string, speed: number, audio: HttpTtsAudio,
@@ -154,6 +205,9 @@ export class HttpTtsReader {
     if (audio.filePath || !audio.pcm || audio.pcm.byteLength === 0) {
       throw new Error('时间轴朗读需要 PCM 音频');
     }
+    // 时间轴音频（云端音色）已按倍速合成，提示点也按原样的帧位置排，播放器保持 1 倍。
+    this.pcmPlayerSpeedActive = false;
+    this.pcmPlayer.setSpeed(1);
     await this.pcmPlayer.writeTimedSegment(audio.pcm, audio.sampleRate, cues);
   }
 
@@ -177,6 +231,9 @@ export class HttpTtsReader {
 
   stop(): void {
     this.generation++;
+    this.liveSpeed = 0;
+    this.pcmPlayerSpeedActive = false;
+    this.avPlayerSpeedActive = false;
     const clients = this.currentClients.slice();
     this.currentClients = [];
     this.protectedCachePaths.clear();
@@ -1132,13 +1189,18 @@ export class HttpTtsReader {
 
   // Matches the speed variables injected in runtimeForVoice inside a {{...}}
   // expression. When the request template consumes one of them, the provider
-  // performs the speed change during synthesis and the local fallback
-  // (applyLocalSpeed / AVPlayer playback rate) must stay off.
+  // performs the speed change during synthesis and the player must stay at 1x.
   private static readonly SPEED_VAR_PATTERN: RegExp =
     new RegExp('\\{\\{[^}]*\\b(speakSpeed|speakSpeedPercent|speechRate|speed|rate)\\b[^}]*\\}\\}');
 
-  private templateAppliesSpeed(voice: HttpTTS): boolean {
-    return HttpTtsReader.SPEED_VAR_PATTERN.test(voice.url || '');
+  /**
+   * 音色的 speedMode 说了算；没写时按 URL 判断：用了倍速变量就是接口变速（engine），否则由播放器变速（client）。
+   * client 时倍速变量按 1 倍代入，这样即使模板里带着倍速变量也不会接口、播放器各变一次。
+   */
+  private speedMode(voice: HttpTTS): string {
+    const declared = (voice.speedMode || '').trim().toLowerCase();
+    if (declared === 'engine' || declared === 'client') return declared;
+    return HttpTtsReader.SPEED_VAR_PATTERN.test(voice.url || '') ? 'engine' : 'client';
   }
 
   private formatSpeed(speed: number): string {

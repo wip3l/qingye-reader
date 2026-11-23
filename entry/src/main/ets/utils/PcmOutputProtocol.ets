@@ -10,7 +10,7 @@ export interface PcmThreadRequest {
   /** 输出编号，一个渲染器一个。 */
   id: number;
   callId?: number;
-  /** call 的方法：start / pause / drain / setVolume / setLoudnessGain / shutdown */
+  /** call 的方法：start / pause / drain / setVolume / setLoudnessGain / setSpeed / shutdown */
   method?: string;
   value?: number;
   options?: audio.AudioRendererOptions;

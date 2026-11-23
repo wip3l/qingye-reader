@@ -183,6 +183,8 @@ export class SystemTtsReader {
   private optionStyle: string | null = null;
   private optionLanguage: string | null = null;
   private optionSpeed: number | null = null;
+  // 正在用自定义音色朗读时的那个音色，供中途改倍速（applyLiveSpeed）判断能否就地生效。
+  private activeCustomVoice: HttpTTS | null = null;
   private optionCloudVoiceId: string = '';
   private optionCloudVoiceName: string = '';
   private optionCloudVoiceTier: string = 'STANDARD';
@@ -437,6 +439,8 @@ export class SystemTtsReader {
     this.optionStyle = options?.style ?? null;
     this.optionLanguage = options?.language ?? null;
     this.optionSpeed = options?.speed ?? null;
+    this.activeCustomVoice = null;
+    this.httpReader.clearLiveSpeed();
     this.optionCloudVoiceId = options?.cloudVoiceId || '';
     this.optionCloudVoiceName = options?.cloudVoiceName || '';
     this.optionCloudVoiceTier = (options?.cloudVoiceTier || '').toUpperCase() === 'PREMIUM' ?
@@ -534,6 +538,7 @@ export class SystemTtsReader {
         }
         this.engine = null;
       }
+      this.activeCustomVoice = customVoice;
       this.speakCustomNext(generation, customVoice);
       return;
     }
@@ -723,6 +728,7 @@ export class SystemTtsReader {
     this.optionStyle = null;
     this.optionLanguage = null;
     this.optionSpeed = null;
+    this.activeCustomVoice = null;
     this.optionCloudVoiceId = '';
     this.optionCloudVoiceName = '';
     this.optionCloudVoiceTier = 'STANDARD';
@@ -769,6 +775,19 @@ export class SystemTtsReader {
 
   isSpeaking(): boolean {
     return this.active;
+  }
+
+  /**
+   * 朗读中途改倍速，能就地生效时返回 true：自定义音色由播放器变速（URL 不带倍速变量），正在放的和已合成的段
+   * 直接按新倍速放，不停下、不重新请求。其他音色返回 false，调用方照旧停下从当前句按新倍速重读。
+   */
+  applyLiveSpeed(speed: number): boolean {
+    const voice = this.activeCustomVoice;
+    if (!this.active || !voice) return false;
+    const normalized = Math.max(0.5, Math.min(3, speed || 1));
+    if (!this.httpReader.applyLiveSpeed(voice, normalized)) return false;
+    if (this.optionSpeed !== null) this.optionSpeed = normalized;
+    return true;
   }
 
   private async ensureEngine(): Promise<textToSpeech.TextToSpeechEngine> {

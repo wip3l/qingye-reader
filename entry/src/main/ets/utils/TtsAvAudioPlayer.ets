@@ -162,6 +162,23 @@ export class TtsAvAudioPlayer {
     }
   }
 
+  /** 播放中途改倍速：只改当前这一句的播放器；回到 1 倍也要显式设回去。 */
+  setLiveSpeed(speed: number): void {
+    const player = this.player;
+    if (!player || this.playerOwnerGeneration !== this.playGeneration) return;
+    if (player.state !== 'prepared' && player.state !== 'playing' && player.state !== 'paused') return;
+    const normalizedSpeed = Math.max(0.125, Math.min(4, speed || 1));
+    if (Math.abs(normalizedSpeed - 1) < 0.01) {
+      try {
+        player.setPlaybackRate(1);
+      } catch (_) {
+        this.setDiscreteSpeed(player, 1);
+      }
+      return;
+    }
+    this.applyPlaybackRate(player, normalizedSpeed);
+  }
+
   stop(): void {
     this.playGeneration++;
     this.interruptRevision++;
