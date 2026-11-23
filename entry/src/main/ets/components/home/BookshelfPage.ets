@@ -83,6 +83,8 @@ import { CloudDownloadQueue } from '../../account/CloudDownloadQueue';
 import { PopupMenuAction } from '../common/PopupMenuAction';
 import { ReaderHaptics } from '../../utils/ReaderHaptics';
 import { BookMarkService } from '../../core/mark/BookMarkService';
+import { BookMark, BookMarkStatus } from '../../model/book/BookMark';
+import { BookIdentity } from '../../utils/BookIdentity';
 
 const SHELF_FULL_TEXT_CACHE_NOTIFICATION_INTERVAL_MS: number = 5000;
 /** 有声书同时下载的章数。 */
@@ -281,17 +283,24 @@ export struct BookshelfPage {
   /** 分类栏按书籍类型切换，没有书的类型不显示；隐私书架不在栏里，双击书架顶部进出。 */
   static readonly TYPE_TAB_IDS: string[] = ['all', 'text', 'image', 'audio', 'video'];
   /**
-   * 弹窗里直接列出的筛选组：来源、状态、阅读进度、最近阅读与更新。
+   * 弹窗里直接列出的筛选组：来源、连载状态、阅读状态（我的标记）、阅读进度、最近阅读与更新。
+   * 阅读状态是用户在标记里选的，进度按阅读位置自动算，两组名字刻意错开（“在读”只属于阅读状态）。
    * 标签和书源的选项随书架内容变化，键带前缀，放在弹窗的二级页里。
    */
   static readonly FILTER_SOURCE_KEYS: string[] = ['network', 'local'];
   static readonly FILTER_STATUS_KEYS: string[] = ['finished', 'ongoing'];
+  static readonly FILTER_MARK_KEYS: string[] = ['markWant', 'markReading', 'markFatten', 'markRead', 'markDropped',
+    'markNone'];
+  /** 与 FILTER_MARK_KEYS 一一对应；没有标记或没标状态的书算“未标记”。 */
+  static readonly FILTER_MARK_STATUSES: number[] = [BookMarkStatus.WANT, BookMarkStatus.READING, BookMarkStatus.FATTEN,
+    BookMarkStatus.READ, BookMarkStatus.DROPPED, BookMarkStatus.NONE];
   static readonly FILTER_PROGRESS_KEYS: string[] = ['unread', 'reading', 'readDone'];
   static readonly FILTER_READ_TIME_KEYS: string[] = ['read7d', 'read30d', 'stale90d'];
   static readonly FILTER_UPDATE_KEYS: string[] = ['updated'];
   static readonly FILTER_GROUPS: string[][] = [BookshelfPage.FILTER_SOURCE_KEYS, BookshelfPage.FILTER_STATUS_KEYS,
-    BookshelfPage.FILTER_PROGRESS_KEYS, BookshelfPage.FILTER_READ_TIME_KEYS, BookshelfPage.FILTER_UPDATE_KEYS];
-  static readonly FILTER_GROUP_LABELS: string[] = ['来源', '状态', '进度', '最近阅读', '更新'];
+    BookshelfPage.FILTER_MARK_KEYS, BookshelfPage.FILTER_PROGRESS_KEYS, BookshelfPage.FILTER_READ_TIME_KEYS,
+    BookshelfPage.FILTER_UPDATE_KEYS];
+  static readonly FILTER_GROUP_LABELS: string[] = ['来源', '连载', '阅读状态', '进度', '最近阅读', '更新'];
   /** 标签、书源二级页里选项区域的最大高度，超出后在区域内滚动。 */
   static readonly FILTER_SUBPAGE_MAX_HEIGHT: number = 360;
   /** 标题行下方书架搜索栏的高度。 */
@@ -365,6 +374,10 @@ export struct BookshelfPage {
   @StorageLink('bookshelfTypeTab') shelfTypeTab: string = 'all';
   /** 筛选条件（FILTER_GROUPS 里的键）逗号分隔，同样只在本次运行内保留。 */
   @StorageLink('bookshelfFilterKeys') shelfFilterKeys: string = '';
+  /** 作品标记键 → 阅读状态，供“阅读状态”筛选用；标记保存后按 bookMarkRevision 重读。 */
+  private shelfMarkStatuses: Map<string, number> = new Map();
+  private shelfMarkStatusesLoaded: boolean = false;
+  @StorageProp('bookMarkRevision') @Watch('onShelfBookMarkRevision') shelfBookMarkRevision: number = 0;
   /** 书架搜索栏是否展开、框里的原始输入；同样只在本次运行内保留，主页返回键会先收起它。 */
   @StorageLink('bookshelfSearchActive') @Watch('onShelfSearchActiveChanged') shelfSearchActive: boolean = false;
   @StorageLink('bookshelfSearchKeyword') @Watch('onShelfSearchKeywordChanged') shelfSearchKeyword: string = '';
@@ -935,6 +948,35 @@ export struct BookshelfPage {
   }
 
   /** 不清已解析好的封面，只让读封面的地方重算一遍：取不到的那几本换成兜底，其余不闪。 */
+  async loadShelfMarkStatuses(): Promise<void> {
+    const statuses: Map<string, number> = new Map();
+    try {
+      const marks = await AppDatabase.getInstance().getAllBookMarks();
+      marks.forEach((mark: BookMark) => {
+        if (mark.workKey && mark.status !== BookMarkStatus.NONE) statuses.set(mark.workKey, mark.status);
+      });
+    } catch (e) {
+      console.warn('读取书籍标记状态失败:', e);
+      return;
+    }
+    this.shelfMarkStatuses = statuses;
+    this.shelfMarkStatusesLoaded = true;
+  }
+
+  async onShelfBookMarkRevision(): Promise<void> {
+    await this.loadShelfMarkStatuses();
+    if (this.shelfFilterKeyList().some((key: string) => BookshelfPage.FILTER_MARK_KEYS.indexOf(key) >= 0)) {
+      this.applyShelfScope();
+      this.reloadShelfDataSources(true);
+      this.refreshShelfCoverCache(this.books);
+    }
+  }
+
+  shelfBookMarkStatus(book: Book): number {
+    const key = BookIdentity.markKeyOf(book);
+    return key ? (this.shelfMarkStatuses.get(key) || BookMarkStatus.NONE) : BookMarkStatus.NONE;
+  }
+
   onCoverFailureRevision(): void {
     this.shelfCoverMap = new Map(this.shelfCoverMap);
   }
@@ -958,6 +1000,7 @@ export struct BookshelfPage {
       const db = AppDatabase.getInstance();
       await db.initWithContext(getContext(this));
       await PrivateShelfStore.load(getContext(this));
+      if (!this.shelfMarkStatusesLoaded) await this.loadShelfMarkStatuses();
       const storedBooks = await db.getAllBooks();
       const loadedBooks = SearchExplorePendingBook.filterShelfBooks(storedBooks);
       const loadedGroups = await db.getCustomBookGroups();
@@ -8330,6 +8373,8 @@ export struct BookshelfPage {
     }
     if (key === 'network' || key === 'local') return (LocalBookService.isLocalBook(book) ? 'local' : 'network') === key;
     if (key === 'finished' || key === 'ongoing') return (this.isShelfBookFinished(book) ? 'finished' : 'ongoing') === key;
+    const markIndex = BookshelfPage.FILTER_MARK_KEYS.indexOf(key);
+    if (markIndex >= 0) return this.shelfBookMarkStatus(book) === BookshelfPage.FILTER_MARK_STATUSES[markIndex];
     if (BookshelfPage.FILTER_PROGRESS_KEYS.indexOf(key) >= 0) return this.shelfReadProgressKey(book) === key;
     if (key === 'updated') return this.hasShelfBookUpdate(book);
     const readTime = this.getBookReadTime(book);
@@ -11645,9 +11690,15 @@ export struct BookshelfPage {
     if (key === 'local') return '本地';
     if (key === 'finished') return '已完结';
     if (key === 'ongoing') return '连载中';
-    if (key === 'unread') return '未读';
-    if (key === 'reading') return '在读';
-    if (key === 'readDone') return '已读完';
+    const markIndex = BookshelfPage.FILTER_MARK_KEYS.indexOf(key);
+    if (markIndex >= 0) {
+      const status = BookshelfPage.FILTER_MARK_STATUSES[markIndex];
+      return status === BookMarkStatus.NONE ? '未标记' : BookMarkStatus.label(status);
+    }
+    // 进度按阅读位置算：连载书读到最新一章也是“读到最新”，和标记里的“读过”不是一回事。
+    if (key === 'unread') return '未开始';
+    if (key === 'reading') return '读了一部分';
+    if (key === 'readDone') return '读到最新';
     if (key === 'updated') return '有更新';
     if (key === 'read7d') return '一周内';
     if (key === 'read30d') return '一月内';

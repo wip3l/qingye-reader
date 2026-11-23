@@ -96,6 +96,13 @@ test('plain objects from backup or sync are normalised', () => {
   assert.equal(dropped.status, BookMarkStatus.DROPPED);
   assert.equal(BookMarkStatus.label(dropped.status), '弃读');
   assert.equal(dropped.finishTime, 0, 'dropped books keep no finish time');
+  const fatten = BookMarkRules.fromPlain({ workKey: 'k', bookName: '书', status: 5, finishTime: 99 });
+  assert.equal(fatten.status, BookMarkStatus.FATTEN);
+  assert.equal(BookMarkStatus.label(fatten.status), '养肥');
+  assert.equal(fatten.finishTime, 0, 'books left to fatten keep no finish time');
+  assert.equal(BookMarkRules.fromPlain({ workKey: 'k', bookName: '书', status: 6 }).status, BookMarkStatus.NONE);
+  assert.deepEqual([...BookMarkStatus.ALL.map((value) => BookMarkStatus.label(value))],
+    ['想读', '在读', '养肥', '读过', '弃读']);
 });
 
 test('average rating follows the status filter and leaves dropped books out of all', () => {

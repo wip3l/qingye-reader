@@ -52,10 +52,12 @@ export class BookMarkStatus {
   static readonly READ: number = 3;
   /** 读了一部分不打算读下去。值排在读过之后，旧版本按未标状态处理。 */
   static readonly DROPPED: number = 4;
-  static readonly LABELS: string[] = ['', '想读', '在读', '读过', '弃读'];
+  /** 读了一部分，等它多更些再接着读。界面上排在在读和读过之间，值接在弃读之后，旧版本按未标状态处理。 */
+  static readonly FATTEN: number = 5;
+  static readonly LABELS: string[] = ['', '想读', '在读', '读过', '弃读', '养肥'];
   /** 可选状态，按界面上的先后排列。 */
-  static readonly ALL: number[] = [BookMarkStatus.WANT, BookMarkStatus.READING, BookMarkStatus.READ,
-    BookMarkStatus.DROPPED];
+  static readonly ALL: number[] = [BookMarkStatus.WANT, BookMarkStatus.READING, BookMarkStatus.FATTEN,
+    BookMarkStatus.READ, BookMarkStatus.DROPPED];
 
   static label(status: number): string {
     return BookMarkStatus.LABELS[BookMarkStatus.normalize(status)];
@@ -63,7 +65,7 @@ export class BookMarkStatus {
 
   static normalize(value: number | string | undefined | null): number {
     const status = Math.floor(Number(value) || 0);
-    return status >= BookMarkStatus.WANT && status <= BookMarkStatus.DROPPED ? status : BookMarkStatus.NONE;
+    return status >= BookMarkStatus.WANT && status <= BookMarkStatus.FATTEN ? status : BookMarkStatus.NONE;
   }
 }
 
