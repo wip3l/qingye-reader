@@ -281,8 +281,17 @@ export class ImmersiveMaterialRuntime {
     const base = fallback || ThemeRuntime.cardColor(darkMode);
     if (typeof base !== 'string' || !/^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(base)) return base;
     const rgb = ImmersiveMaterialRuntime.themeTintRgb(base.substring(base.length - 6), darkMode, themeTint);
+    if (ImmersiveMaterialRuntime.effectiveLevel(level) === 'weak') {
+      // 弱档要实色底。底色自带透明度（如强调色淡底 #1F+强调色）时不能直接去掉 alpha，否则变成整块强调色，
+      // 和用强调色写的字一样色、字就看不见了；按原透明度叠到卡片色上，得到看起来一样的实色。
+      const baseAlpha = base.length === 9 ? parseInt(base.substring(1, 3), 16) : 255;
+      if (baseAlpha >= 255) return `#${rgb}`;
+      const card = ThemeRuntime.cardColor(darkMode);
+      const cardRgb = /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(card) ? card.substring(card.length - 6) : 'FFFFFF';
+      return `#${ImmersiveMaterialRuntime.blendRgb(cardRgb, rgb, baseAlpha / 255)}`;
+    }
     // 统一替换旧 alpha，避免沿用上次过厚的底色。
-    return ImmersiveMaterialRuntime.effectiveLevel(level) === 'weak' ? `#${rgb}` : `#${alpha}${rgb}`;
+    return `#${alpha}${rgb}`;
   }
 
   /** 没有系统材质的旧系统用的不透明面板底，开关打开时同样混入少量强调色。 */
