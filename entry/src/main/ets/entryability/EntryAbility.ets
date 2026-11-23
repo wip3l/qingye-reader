@@ -68,6 +68,7 @@ import { AudioOfflineSettingsStore } from '../utils/AudioOfflineSettingsStore';
 import { AudioBookSettingsStore } from '../utils/AudioBookSettingsStore';
 import { PlaybackLoudnessGain } from '../utils/PlaybackLoudnessGain';
 import { SourceFormProfile } from '../core/book/SourceFormProfile';
+import { SourceErrorState } from '../core/book/SourceErrorState';
 import { ReaderInputScopes } from '../utils/ReaderInputScopes';
 import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
 import { syncDesktopTitleBar, releaseSystemBarListeners } from '../utils/SystemBars';
@@ -141,6 +142,7 @@ export default class EntryAbility extends UIAbility {
       console.warn('恢复阅读统计开关失败:', error);
     });
     BookSourceRuntimeStore.install(AppDatabase.getInstance());
+    SourceErrorState.install();
     SourceScriptNotice.setHandler((sourceName: string, message: string): void => {
       HdsFeedback.showToast(sourceName ? `${sourceName}：${message}` : message);
     });

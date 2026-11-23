@@ -52,6 +52,8 @@ export class ReadBookEngine {
   private audioResolveChain: Promise<void> = Promise.resolve();
 
   private chapterCache: Map<number, string> = new Map();
+  /** 最近一次联网取这一章失败的原因（书源报的错），取到内容后清掉。听书页据此说明取不到音频地址的原因。 */
+  private contentErrors: Map<number, string> = new Map();
   private chapterLoading: Map<number, Promise<string>> = new Map();
   /** 正在加载的章节由谁取消；发起方取消后，后来的调用方不能共用这个会返回空串的任务。 */
   private chapterLoadingCancel: Map<number, (() => boolean) | null> = new Map();
@@ -292,6 +294,7 @@ export class ReadBookEngine {
     this.curPos = book.durChapterPos;
     this.content = '';
     this.chapterCache.clear();
+    this.contentErrors.clear();
     this.chapterLoading.clear();
     this.preloadGeneration++;
     this.cancelChapterPreloads();
@@ -777,8 +780,17 @@ export class ReadBookEngine {
           nextChapterUrl, (): boolean => !background && this.foregroundReader && this.curIdx === idx &&
             this.book === sessionBook);
       } catch (e) {
+        if (this.isCurrentBookSession(generation, sessionBookUrl)) {
+          this.contentErrors.set(idx, ((e as Error)?.message || '').trim());
+        }
         if (cached && this.isCurrentBookSession(generation, sessionBookUrl) && !shouldCancel?.()) return cached;
         throw e;
+      }
+      if (this.isCurrentBookSession(generation, sessionBookUrl)) {
+        // 失败原因按书源分开记，读的时候别的书源已经冲不掉；成功取到内容时清掉旧原因。
+        const reason = text ? '' : (SourceEngineHost.getError(sessionSource) || '').trim();
+        if (reason) this.contentErrors.set(idx, reason);
+        else this.contentErrors.delete(idx);
       }
       if (cached && (!text || !ReaderImageCache.complete(text, true))) return cached;
       if (shouldCancel && shouldCancel()) return '';
@@ -857,6 +869,11 @@ export class ReadBookEngine {
       this.sourceLoadedAt = Date.now();
       this.sourceLoadedOrigin = origin;
     }
+  }
+
+  /** 这一章最近一次联网取正文失败的原因；没有记录时为空串。 */
+  contentError(idx: number): string {
+    return this.contentErrors.get(idx) || '';
   }
 
   hasCachedContent(idx: number): boolean {
@@ -1001,7 +1018,8 @@ export class ReadBookEngine {
       if (shouldCancel?.() || !content || this.book !== book) return null;
       const url = AudioUrlResolver.resolveAudioUrl(content, chapter.url || book.bookUrl || this.source?.bookSourceUrl || '');
       if (!url) {
-        console.warn('[RE] offline audio has no address:', idx, AudioUrlResolver.invalidAudioAddressMessage(content));
+        console.warn('[RE] offline audio has no address:', idx, AudioUrlResolver.invalidAudioAddressMessage(content,
+          this.contentError(idx)));
         return null;
       }
       const address = new AudioAddress();

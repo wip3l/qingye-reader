@@ -899,7 +899,7 @@ struct AudioBookPage {
         timing.mark('resolve-url');
         if (serial !== this.loadingSerial) return;
         const url = AudioUrlResolver.resolveAudioUrl(content, chapter.url || book.bookUrl || this.source?.bookSourceUrl || '');
-        if (!url) throw new Error(AudioUrlResolver.invalidAudioAddressMessage(content));
+        if (!url) throw new Error(AudioUrlResolver.invalidAudioAddressMessage(content, engine.contentError(chapterIndex)));
         const headers = AudioUrlResolver.audioHeaders(url, this.source, content);
         await this.playback.play(book.bookUrl, chapterIndex, url, headers, startPositionMs, this.speed, timing);
       }
