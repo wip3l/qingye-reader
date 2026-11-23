@@ -189,8 +189,11 @@ export class BuiltinThemeRegistry {
       BuiltinThemeRegistry.reader('#17181A', '', '#DCD9D2', '#8E8B85', 'dark'),
       BuiltinThemeRegistry.regex(ThemeBubbleStyles.CAPSULE, '#2A3644', '#E6EEF8')
     );
-    theme.light.regexEmphasis.chapterHead = BuiltinThemeRegistry.imageChapterHead('plain_default_light', 1.2, '#2E5A88');
-    theme.dark.regexEmphasis.chapterHead = BuiltinThemeRegistry.imageChapterHead('plain_default_dark', 1.2, '#8DB0D9');
+    // 章首：标题下一道细墨线、中间一枚小菱形（960×100 透明 WebP，线宽为图高 1/10），0.5 倍时线宽约合 1vp。
+    theme.light.regexEmphasis.chapterHead =
+      BuiltinThemeRegistry.imageChapterHead('plain_default_light', 0.5, '#2E5A88', 'bottom');
+    theme.dark.regexEmphasis.chapterHead =
+      BuiltinThemeRegistry.imageChapterHead('plain_default_dark', 0.5, '#8DB0D9', 'bottom');
     theme.radius = BuiltinThemeRegistry.radius(6, 12, 20, 16, 22, 7);
     theme.readerLayout = BuiltinThemeRegistry.readerLayout(20, 14, 4, 22, 22, 22, 22);
     theme.glass = BuiltinThemeRegistry.glass(20, 16, 90, 80, 50, 22, 16, 4);
@@ -894,10 +897,15 @@ export class BuiltinThemeRegistry {
     return head;
   }
 
-  /** 只有标题饰图、不带首字装饰的章首（饰图 theme_chapter_head_<key>，写成 media:<资源名>）。 */
-  private static imageChapterHead(key: string, scale: number, numberColor: string): ThemePackageChapterHead {
+  /**
+   * 只有标题饰图、不带首字装饰的章首（饰图 theme_chapter_head_<key>，写成 media:<资源名>）。
+   * placement 同主题包格式：''=标题左侧、'top'、'bottom'。
+   */
+  private static imageChapterHead(key: string, scale: number, numberColor: string,
+    placement: string = ''): ThemePackageChapterHead {
     const head = new ThemePackageChapterHead();
     head.image = `media:theme_chapter_head_${key}`;
+    head.placement = placement;
     head.scale = scale;
     head.numberColor = numberColor;
     return head;

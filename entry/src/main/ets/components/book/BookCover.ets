@@ -33,6 +33,11 @@ export struct BookCover {
    * 解码放到后台线程，不占滑动的帧，图到了再淡入（预加载的格子在滑进屏幕前通常已经解码完）。
    */
   @Prop syncDecode: boolean = true;
+  /**
+   * 调用方另外算好的同一张封面的清晰版（如超分结果，file:// 地址）。有值且封面已显示时盖在封面上淡入，
+   * 仍在调暗层和主题边框之下；主题自带封面不用。
+   */
+  @Prop enhancedCover: string = '';
   @StorageProp('appDarkMode') @Watch('refreshCovers') appDarkMode: boolean = false;
   @StorageProp('bookshelfCoverAlbums') @Watch('refreshCovers') albums: string = '';
   @StorageProp('bookshelfLightCoverAlbumId') @Watch('refreshCovers') lightAlbum: string = '';
@@ -402,6 +407,15 @@ export struct BookCover {
           this.activeIndex = index;
           this.notifyReadyCover();
         })
+      }
+      if (this.enhancedCover && !this.themeCover && this.isActiveCoverReady()) {
+        Image(this.enhancedCover)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
+          .borderRadius(this.cornerRadius)
+          .transition(TransitionEffect.OPACITY.animation({ duration: 280, curve: Curve.EaseOut }))
+          .hitTestBehavior(HitTestMode.None)
       }
       // 深色模式调暗封面；主题自带的书籍封面是为深色单独设计的，不调暗。
       if (!this.themeCover && this.dimOpacity() > 0) {

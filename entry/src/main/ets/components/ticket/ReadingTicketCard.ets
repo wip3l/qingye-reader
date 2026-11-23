@@ -1,4 +1,5 @@
 import { PathShape } from '@kit.ArkUI';
+import { ReaderComicSuperResolution, ReaderComicSuperResolutionAccess } from '@legado/aiengine';
 import { BookCover } from '../book/BookCover';
 import { BookMarkStatus } from '../../model/book/BookMark';
 import { ReadingTicket, ReadingTicketRules, TicketAccentRules, TicketDay, TicketMedia, TicketShapeRules,
@@ -135,8 +136,18 @@ export struct ReadingTicketCard {
   /** 缩略图用小一点的封面解码尺寸。 */
   @Prop thumbnail: boolean = false;
   @State measuredHeight: number = 0;
+  /** 封面超分开关（票根页右上角），所有票共用；会员可用且开着时自动超分。 */
+  @StorageProp('ticketCoverSuperResolution') @Watch('onCoverSrSwitch') coverSrEnabled: boolean = true;
+  /** 用书籍原始封面（书源给的封面地址），不走书架的自定义封面、主题封面等规则。 */
+  @StorageProp('ticketOriginalCover') originalCover: boolean = false;
+  /** 封面的超分结果（file://），没有时显示原图。 */
+  @State srCover: string = '';
+  private readyCover: string = '';
+  private srSerial: number = 0;
+  private alive: boolean = false;
 
   aboutToAppear(): void {
+    this.alive = true;
     if (ticketFontRegistered) return;
     ticketFontRegistered = true;
     try {
@@ -147,6 +158,57 @@ export struct ReadingTicketCard {
     } catch (error) {
       console.warn('注册票面字体失败:', JSON.stringify(error));
     }
+  }
+
+  aboutToDisappear(): void {
+    this.alive = false;
+    this.srSerial++;
+  }
+
+  /** 封面在票上的显示宽度（vp），用来定解码尺寸和超分输出宽度。 */
+  private coverDisplayWidth(): number {
+    if (this.ticketStyle === TicketAlbumStore.STYLE_PAPER) return this.u(268);
+    if (this.ticketStyle === TicketAlbumStore.STYLE_NIGHT) return this.cardWidth;
+    if (this.ticketStyle === TicketAlbumStore.STYLE_TRAIN) return this.u(40);
+    return this.u(84);
+  }
+
+  private coverDecodeWidth(): number {
+    return Math.max(120, Math.min(1080, Math.round(this.getUIContext().vp2px(this.coverDisplayWidth()))));
+  }
+
+  /** BookCover 报来实际显示的封面（可能是缓存文件或书架上的自定义封面），拿它去超分。 */
+  private onCoverReady(url: ResourceStr): void {
+    const next = typeof url === 'string' ? url : '';
+    if (next === this.readyCover) return;
+    this.readyCover = next;
+    this.srSerial++;
+    this.srCover = '';
+    this.runCoverSr();
+  }
+
+  onCoverSrSwitch(): void {
+    if (this.coverSrEnabled) {
+      this.runCoverSr();
+    } else {
+      this.srSerial++;
+      this.srCover = '';
+    }
+  }
+
+  private runCoverSr(): void {
+    if (!this.alive || !this.coverSrEnabled || !this.readyCover || this.srCover) return;
+    if (ReaderComicSuperResolution.access() !== ReaderComicSuperResolutionAccess.READY) return;
+    const token = ++this.srSerial;
+    const source = this.readyCover;
+    const active = (): boolean => this.alive && token === this.srSerial && this.coverSrEnabled;
+    ReaderComicSuperResolution.enhance(source, this.coverDecodeWidth(), active, active)
+      .then((uri: string): void => {
+        if (uri && active()) this.srCover = uri;
+      })
+      .catch((error: Error): void => {
+        console.warn('票面封面超分失败:', error.message);
+      });
   }
 
   private u(value: number): number {
@@ -204,11 +266,15 @@ export struct ReadingTicketCard {
       coverUrl: this.ticket.coverUrl,
       name: this.ticket.bookName,
       author: this.ticket.author,
-      useBookshelfCover: true,
+      useBookshelfCover: !this.originalCover,
       placeholderColor: COVER_PLACEHOLDER,
       cornerRadius: radius,
-      decodeWidth: this.thumbnail ? 180 : 360,
-      decodeHeight: this.thumbnail ? 240 : 480
+      decodeWidth: this.coverDecodeWidth(),
+      decodeHeight: Math.round(this.coverDecodeWidth() * 4 / 3),
+      enhancedCover: this.srCover,
+      onReadyCover: (url: ResourceStr): void => {
+        this.onCoverReady(url);
+      }
     })
       .width(width)
       .height(height)
@@ -414,7 +480,7 @@ export struct ReadingTicketCard {
           .width('100%')
           .margin({ top: this.u(22) })
           Row() {
-            this.paperField('HALL', this.ticket.originName || '本地', 1.15)
+            this.paperField('RATE', ReadingTicketRules.ratingText(this.ticket.rating), 1.15)
             this.paperField('DAYS', this.ticket.activeDays > 0 ? `${this.ticket.activeDays} 天` : '—', 1.15)
             this.paperField('FEE', '无价', 0.8)
           }
@@ -845,7 +911,7 @@ export struct ReadingTicketCard {
             .fontColor(this.accent())
             .fontFeature('"tnum" 1')
           Blank()
-          Text(this.ticket.originName ? `${this.ticket.originName} 检票口` : '')
+          Text(`${TicketMedia.typeLabel(this.ticket.bookType)}专列`)
             .fontSize(this.u(11))
             .fontColor(TRAIN_SUB)
             .maxLines(1)

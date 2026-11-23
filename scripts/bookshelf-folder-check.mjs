@@ -61,6 +61,7 @@ vm.runInContext(stripTypeScriptTypes(`class BookshelfPage {
   // 沉浸书架默认关闭；顶栏收起量上报与本检查无关。
   shelfImmersiveActive() { return false; }
   reportShelfBarCollapse() {}
+  shouldUseMultiSelectSections() { return false; }
   ${methods}
 }
 globalThis.Shelf = BookshelfPage;`), context);

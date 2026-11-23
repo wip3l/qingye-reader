@@ -5423,7 +5423,7 @@ struct ReadBookPage {
         if (SourceEventCallback.hasCustomButton(this.currentReaderSource())) {
           this.readerActionMenuItem(
             $r('sys.symbol.message'),
-            '书源功能',
+            this.readerSourceCustomButtonLabel(),
             () => this.openReaderSourceCustomButton()
           )
         }
@@ -5852,27 +5852,33 @@ struct ReadBookPage {
     return /loginCheck|loginUrl|loginUi|book-source-login|请先登[录陆]|需要登[录陆]|账号登[录陆]|网页登录|登[录陆]后/i.test(rules);
   }
 
+  /** 自定义按钮的名字：从书源脚本看得出是评论就叫“评论”，看不出用“书源功能”。 */
+  readerSourceCustomButtonLabel(): string {
+    return SourceEventCallback.customButtonLabel(this.currentReaderSource()) || '书源功能';
+  }
+
   /**
    * 书源的自定义按钮：把点击交给书源的事件回调，书源要求打开网页时用段评面板打开。
-   * 做什么由书源决定（常见的是本章评论），所以菜单里只叫“书源功能”。
+   * 做什么由书源决定（常见的是本章评论）。
    */
   async openReaderSourceCustomButton(): Promise<void> {
     const source = this.currentReaderSource();
     const book = this.book;
     if (!source || !book || !SourceEventCallback.hasCustomButton(source)) return;
     this.showMenu = false;
+    const label = this.readerSourceCustomButtonLabel();
     const chapter = this.chapters.length > 0 ?
       this.chapters[this.clampChapterIndex(this.currentChapterIndex)] : null;
     const result = await SourceEventCallback.dispatch(source, SourceEventCallback.CLICK_CUSTOM_BUTTON, book, chapter);
     if (/^https?:\/\//i.test(result.requestedUrl)) {
-      VerificationSupport.requestVerification(result.requestedUrl, '书源功能', source);
-      this.openReaderCommentPanel(result.requestedUrl, '书源功能', '', result.requestedHtml);
+      VerificationSupport.requestVerification(result.requestedUrl, label, source);
+      this.openReaderCommentPanel(result.requestedUrl, label, '', result.requestedHtml);
       return;
     }
     if (result.toastMessage) {
       HdsFeedback.showToast(result.toastMessage);
     } else if (result.error) {
-      HdsFeedback.showToast(`书源功能执行失败：${result.error.split('\n')[0]}`);
+      HdsFeedback.showToast(`${label}打开失败：${result.error.split('\n')[0]}`);
     } else if (!result.handled) {
       HdsFeedback.showToast('书源没有处理这次点击');
     }

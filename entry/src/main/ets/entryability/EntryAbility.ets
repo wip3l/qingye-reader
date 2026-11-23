@@ -49,7 +49,8 @@ import { CloudSyncSettingsStore } from '../account/CloudSyncSettingsStore';
 import { CloudSyncCoordinator } from '../account/CloudSyncCoordinator';
 import { CloudSyncChangeTracker } from '../account/CloudSyncChangeTracker';
 import { StartupCoverTextStore } from '../utils/StartupCoverTextStore';
-import { BookSourceRuntimeStore, NativeSourceInteraction, SourceScriptNotice, TlsTrustStore } from '@legado/sourceengine';
+import { Book, BookSourceRuntimeStore, NativeSourceInteraction, SourceScriptNotice,
+  TlsTrustStore } from '@legado/sourceengine';
 import { AppSourceInteraction } from '../utils/AppSourceInteraction';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { CrashReportStore } from '../utils/CrashReportStore';
@@ -149,6 +150,12 @@ export default class EntryAbility extends UIAbility {
       console.warn('恢复阅读统计开关失败:', error);
     });
     BookSourceRuntimeStore.install(AppDatabase.getInstance());
+    const ticketContext = this.context.getApplicationContext();
+    // 删书前给票夹留封面和划线；票夹代码不在启动路径上，用到时再加载。
+    AppDatabase.beforeBookDelete = async (book: Book, reason: string): Promise<void> => {
+      const loader = await import('../core/ticket/ReadingTicketLoader');
+      await loader.ReadingTicketLoader.keepForDeletedBook(ticketContext, book, reason);
+    };
     SourceErrorState.install();
     SourceScriptNotice.setHandler((sourceName: string, message: string): void => {
       HdsFeedback.showToast(sourceName ? `${sourceName}：${message}` : message);
