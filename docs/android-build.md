@@ -69,6 +69,13 @@
   `import lazy` 也拦不住。安卓上整文件替换 `utils/WatchRemoteBridge.ets`（空实现）和 `utils/WatchTurnFeature.ts`（总开关恒为 false）。
 - **整文件替换**：平台层之外只有上面三处，登记在 `platform-parity-check.mjs` 的 `WHOLE_FILE_OVERLAYS` 里；检查脚本核对导出名和
   类的公开静态成员，并禁止其它文件引用 `@kit.WearEngine`。
+- **系统栏**：ArkUI-X 的 `getWindowAvoidArea` 在安卓上返回全 0，高度经 `SystemBridge.getSystemInsets` 读。状态栏图标深浅只认
+  两个约定色（`#66000000` 深色图标、`#E5FFFFFF` 浅色图标），别的颜色不理，所以 `statusBarContentColor` 一律经
+  `platform/SystemInsets.systemBarContentColor` 取。阅读正文时安卓总是收起导航栏（三键导航栏、手势条都会压住页脚），从边缘滑动可临时唤出；
+  三键导航栏会接走落在上面的点击，实色底栏（非 HDS）因此整条抬到导航栏上面（`NAVIGATION_BAR_TAKES_TOUCHES`）。
+- **截图**：离屏组件截图（`getComponentSnapshot().get` 截被盖住的页面）在安卓上会连续超时三次、每次卡住渲染 2 秒。
+  书架点按时截首页给“书籍打开动画”用，安卓上量不到封面位置（`componentUtils` 缺失），动画本来就做不出，所以安卓上关掉动画和截图，
+  设置里也不显示开关。屏幕上可见组件的截图（仿真翻页、日夜切换揭开动画）正常。
 - **打包时的插件库**：ace 按 ArkTS 编译产出的 `module_collection.json` 决定打进哪些插件库，增量编译时它只列重编的文件，
   会漏库（首选项、数据库等整个模块为空）。构建脚本每次清掉 ArkTS 编译缓存做全量编译，并检查清单是否完整。
 - **书源内核**：内核分支 `arkuix-compat` 有两个安卓相关提交：ArkUI-X 缺失接口改成运行时取用；QuickJS 脚本会话的调用结果
@@ -109,6 +116,18 @@ node scripts/android/build-android.mjs --abi arm64-v8a
 
 - `android/project/app/build.gradle` 的 `applicationId` 必须等于 `AppScope/app.json5` 的 `bundleName`，否则运行时找不到页面。
 - 安卓模拟器要用本机显卡渲染（`-gpu host`），软件渲染下打开阅读页模拟器会崩溃。
+
+## 真机验收
+
+Redmi Note 11 Pro（Android 13，MIUI，三键导航，arm64）。
+
+- 通过：本地导入（单本、文件夹全选 40 本）、阅读与续读、点按与滑动翻页、跨章、仿真翻页、字号实时重排、日夜切换（含状态栏图标）、
+  系统朗读（后台 25 秒持续、媒体通知、耳机暂停/继续键）、密钥库加解密（重启后解密成功）。
+- 冷启动（到首个界面）2.0–2.3 秒，装好后第一次 5.5 秒。打开书约 1.0 秒。
+- 帧率：翻页动画 60 帧（每页约 14 帧、16 ms）；书架 41 本快速滑动平均 16.6–17.0 ms，最坏 33 ms；“我的”页平均 17.6 ms。
+- 内存（PSS）：书架约 360 MB（41 本时约 470 MB），阅读页约 480 MB；其中原生堆 85–160 MB。
+- 未测：指纹解锁（要先录入指纹）、离线音色（要会员账号）、网页解析书源（要先同意使用须知并自备规则）。
+- MIUI 第一次朗读会弹出系统语音引擎自己的同意页，要用户点同意。
 
 ## 发布
 
