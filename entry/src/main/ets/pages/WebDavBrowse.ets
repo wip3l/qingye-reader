@@ -11,7 +11,8 @@ import { WebDavError } from '../webdav/WebDavError';
 import { WebDavBrowsePrefs, WebDavConnection, WebDavEntry } from '../webdav/WebDavModels';
 import { WebDavSecretStore } from '../webdav/WebDavSecretStore';
 import { WebDavSettingsStore } from '../webdav/WebDavSettingsStore';
-import { WebDavBrowseSupport, WebDavFolderSearch, WebDavNameMatch } from '../webdav/WebDavBrowseSupport';
+import { WebDavBrowseSupport, WebDavFolderSearch } from '../webdav/WebDavBrowseSupport';
+import { KeywordMatch } from '../utils/KeywordMatch';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
@@ -490,7 +491,8 @@ struct WebDavBrowsePage {
     Row({ space: AppSpacing.XS }) {
       Scroll(this.breadcrumbScroller) {
         Row() {
-          this.breadcrumbSegment(this.connection.name || '根目录', '')
+          // 标题已是连接名，路径条起点写“根目录”，免得同屏两个连接名。
+          this.breadcrumbSegment('根目录', '')
           ForEach(WebDavBrowseSupport.breadcrumbPaths(this.currentPath), (path: string) => {
             SymbolGlyph($r('sys.symbol.chevron_right'))
               .fontSize(12)
@@ -746,7 +748,7 @@ struct WebDavBrowsePage {
       this.entryIcon(entry)
       Column({ space: AppSpacing.XXS }) {
         if (inSearch) {
-          this.highlightedName(WebDavBrowseSupport.nameMatch(entry.name, this.keyword))
+          this.highlightedName(KeywordMatch.split(entry.name, this.keyword))
         } else {
           Text(entry.name)
             .fontSize(AppFontSize.BODY_LARGE)
@@ -842,7 +844,7 @@ struct WebDavBrowsePage {
   }
 
   @Builder
-  highlightedName(match: WebDavNameMatch) {
+  highlightedName(match: KeywordMatch) {
     Text() {
       Span(match.before)
       Span(match.hit)
@@ -1435,7 +1437,7 @@ struct WebDavBrowsePage {
   }
 
   currentFolderLabel(): string {
-    return this.currentPath ? WebDavBrowseSupport.lastSegment(this.currentPath) : (this.connection.name || '根目录');
+    return this.currentPath ? WebDavBrowseSupport.lastSegment(this.currentPath) : '根目录';
   }
 
   collapsedOthersLabel(): string {

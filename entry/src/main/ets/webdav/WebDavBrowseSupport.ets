@@ -2,13 +2,6 @@ import { WebDavBrowsePrefs, WebDavEntry } from './WebDavModels';
 
 export type WebDavListLoader = (relativePath: string) => Promise<WebDavEntry[]>;
 
-/** 文件名里命中的关键词，拆成前、中、后三段用于高亮。 */
-export class WebDavNameMatch {
-  before: string = '';
-  hit: string = '';
-  after: string = '';
-}
-
 /** 远程书籍页的排序、分组、搜索匹配等纯逻辑，不碰界面和网络。 */
 export class WebDavBrowseSupport {
   static sortEntries(entries: WebDavEntry[], mode: string): WebDavEntry[] {
@@ -41,20 +34,6 @@ export class WebDavBrowseSupport {
     if (!keyword) return false;
     if (booksOnly && !entry.directory && !entry.readableBook()) return false;
     return entry.name.toLowerCase().includes(keyword);
-  }
-
-  static nameMatch(name: string, keyword: string): WebDavNameMatch {
-    const result = new WebDavNameMatch();
-    const normalized = WebDavBrowseSupport.normalizeKeyword(keyword);
-    const index = normalized ? name.toLowerCase().indexOf(normalized) : -1;
-    if (index < 0) {
-      result.before = name;
-      return result;
-    }
-    result.before = name.substring(0, index);
-    result.hit = name.substring(index, index + normalized.length);
-    result.after = name.substring(index + normalized.length);
-    return result;
   }
 
   static parentPath(relativePath: string): string {
