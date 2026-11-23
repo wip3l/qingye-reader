@@ -3,6 +3,7 @@ import { bundleManager, common } from '@kit.AbilityKit';
 import { util } from '@kit.ArkTS';
 import { BusinessError, Callback } from '@kit.BasicServicesKit';
 import { ReaderInputScopes } from './ReaderInputScopes';
+import { WATCH_TURN_AVAILABLE } from './WatchTurnFeature';
 
 /**
  * 手表翻页遥控的手机端。手表上的 wearable 模块经 Wear Engine P2P 发来短消息，这里转给当前可见的阅读页，
@@ -88,6 +89,7 @@ export class WatchRemoteBridge {
   private static followUpTimerId: number = -1;
 
   static enabled(): boolean {
+    if (!WATCH_TURN_AVAILABLE) return false;
     return ReaderInputScopes.normalize(AppStorage.get<number>(WatchRemoteBridge.KEY_SCOPE) ?? 0) !== 0;
   }
 
