@@ -47,6 +47,12 @@ export class ReadingTicket {
   sortTime: number = 0;
   /** 最近几天有记录的日子，旧的在前（借书卡每天一行）。 */
   log: TicketDay[] = [];
+  /** 标记里的标签，最多两个。 */
+  tags: string[] = [];
+  /** 一条摘录（没有摘录用写了想法的划线），由读取方补上；空串表示没有。 */
+  quote: string = '';
+  /** 从封面取的强调色（#RRGGBB），由读取方补上；空串用默认深红。 */
+  accent: string = '';
 }
 
 export class TicketMedia {
@@ -69,6 +75,13 @@ export class TicketMedia {
     if (media === TicketMedia.AUDIO) return '总收听时长';
     if (media === TicketMedia.COMIC) return '总观看时长';
     return '总阅读时长';
+  }
+
+  static typeLabel(bookType: number): string {
+    const media = TicketMedia.of(bookType);
+    if (media === TicketMedia.AUDIO) return '有声书';
+    if (media === TicketMedia.COMIC) return '漫画';
+    return '小说';
   }
 
   static sessionLabel(bookType: number): string {
@@ -172,6 +185,7 @@ export class ReadingTicketRules {
     ticket.status = mark.status;
     ticket.rating = mark.rating;
     ticket.review = mark.review;
+    ticket.tags = mark.categories.slice(0, 2);
     ticket.number = mark.status === BookMarkStatus.READ ? ticketNumber : 0;
     const keys = Array.from(days.keys()).filter((key: string): boolean => (days.get(key) || 0) > 0).sort();
     keys.forEach((key: string): void => {
@@ -367,6 +381,35 @@ export class ReadingTicketRules {
     return cells;
   }
 
+  /** 影票书名下第二行：标签，没有标签写类型。 */
+  static tagLine(ticket: ReadingTicket): string {
+    return ticket.tags.length > 0 ? ticket.tags.join(' · ') : TicketMedia.typeLabel(ticket.bookType);
+  }
+
+  /** 影票书名下第三行：2026 读完 / 时长：12.5 小时。 */
+  static yearLine(ticket: ReadingTicket): string {
+    const key = ticket.endDayKey || ticket.startDayKey;
+    const verb = ticket.status === BookMarkStatus.READ ? (TicketMedia.of(ticket.bookType) === TicketMedia.AUDIO ? '听完' : '读完') :
+      (ticket.status === BookMarkStatus.READING ? '开读' : '放下');
+    const label = TicketMedia.of(ticket.bookType) === TicketMedia.AUDIO ? '收听' : '时长';
+    const duration = ReadingTicketRules.durationValue(ticket.totalMs).join(' ').trim();
+    return `${key ? key.substring(0, 4) + ' ' : ''}${verb} / ${label}：${duration}`;
+  }
+
+  /** 影票字段格里的日期：2026-11-03；没有写“未完待续”。 */
+  static fullDate(dayKey: string, empty: string): string {
+    return dayKey || empty;
+  }
+
+  /** 暗场票最后一行：5 天 · 12.5 小时 · ★ 5。 */
+  static summaryLine(ticket: ReadingTicket): string {
+    const parts: string[] = [];
+    if (ticket.activeDays > 0) parts.push(`${ticket.activeDays} 天`);
+    if (ticket.totalMs > 0) parts.push(ReadingTicketRules.durationValue(ticket.totalMs).join(' '));
+    if (ticket.rating > 0) parts.push(ReadingTicketRules.ratingText(ticket.rating));
+    return parts.join(' · ') || ReadingTicketRules.stampText(ticket.status);
+  }
+
   /** 条码的线宽（1~3），由书名定，同一本书每次一样。 */
   static barcode(seed: string, count: number = 30): number[] {
     let hash = 2166136261;
@@ -403,5 +446,125 @@ export class ReadingTicketRules {
 
   private static pad(value: number): string {
     return value < 10 ? `0${value}` : `${value}`;
+  }
+}
+
+/** 票的裁切形状：圆角矩形，两侧在 notchY 处挖半圆缺口，上/下边可以挖一排齿孔。尺寸都是同一单位（px）。 */
+export class TicketShapeSpec {
+  width: number = 0;
+  height: number = 0;
+  corner: number = 0;
+  /** 缺口圆心到顶边的距离；小于 0 表示没有缺口。 */
+  notchY: number = -1;
+  notchR: number = 0;
+  scallopR: number = 0;
+  scallopStep: number = 0;
+  topScallops: boolean = false;
+  bottomScallops: boolean = false;
+}
+
+export class TicketShapeRules {
+  /** 一条边上齿孔圆心的横坐标：等距、整体居中，离圆角至少留出一个半径。 */
+  static scallopCenters(spec: TicketShapeSpec): number[] {
+    if (!(spec.scallopR > 0) || !(spec.scallopStep > spec.scallopR * 2)) return [];
+    const usable = spec.width - 2 * (spec.corner + spec.scallopR);
+    if (usable < 0) return [];
+    const count = Math.floor(usable / spec.scallopStep) + 1;
+    const start = (spec.width - (count - 1) * spec.scallopStep) / 2;
+    const centers: number[] = [];
+    for (let i = 0; i < count; i++) centers.push(start + i * spec.scallopStep);
+    return centers;
+  }
+
+  /** SVG 路径；所有缺口都向票内挖（圆弧 sweep=0），四角是外凸圆角。 */
+  static path(spec: TicketShapeSpec): string {
+    const w = spec.width;
+    const h = spec.height;
+    const c = Math.max(0, Math.min(spec.corner, w / 2, h / 2));
+    const r = spec.scallopR;
+    const n = spec.notchR;
+    const f = (value: number): string => `${Math.round(value * 100) / 100}`;
+    const centers = TicketShapeRules.scallopCenters(spec);
+    const hasNotch = spec.notchY - n > c && spec.notchY + n < h - c && n > 0;
+    const parts: string[] = [`M${f(c)} 0`];
+    if (spec.topScallops) {
+      centers.forEach((x: number): void => {
+        parts.push(`L${f(x - r)} 0`, `A${f(r)} ${f(r)} 0 0 0 ${f(x + r)} 0`);
+      });
+    }
+    parts.push(`L${f(w - c)} 0`);
+    if (c > 0) parts.push(`A${f(c)} ${f(c)} 0 0 1 ${f(w)} ${f(c)}`);
+    if (hasNotch) parts.push(`L${f(w)} ${f(spec.notchY - n)}`, `A${f(n)} ${f(n)} 0 0 0 ${f(w)} ${f(spec.notchY + n)}`);
+    parts.push(`L${f(w)} ${f(h - c)}`);
+    if (c > 0) parts.push(`A${f(c)} ${f(c)} 0 0 1 ${f(w - c)} ${f(h)}`);
+    if (spec.bottomScallops) {
+      centers.slice().reverse().forEach((x: number): void => {
+        parts.push(`L${f(x + r)} ${f(h)}`, `A${f(r)} ${f(r)} 0 0 0 ${f(x - r)} ${f(h)}`);
+      });
+    }
+    parts.push(`L${f(c)} ${f(h)}`);
+    if (c > 0) parts.push(`A${f(c)} ${f(c)} 0 0 1 0 ${f(h - c)}`);
+    if (hasNotch) parts.push(`L0 ${f(spec.notchY + n)}`, `A${f(n)} ${f(n)} 0 0 0 0 ${f(spec.notchY - n)}`);
+    parts.push(`L0 ${f(c)}`);
+    if (c > 0) parts.push(`A${f(c)} ${f(c)} 0 0 1 ${f(c)} 0`);
+    parts.push('Z');
+    return parts.join(' ');
+  }
+}
+
+/** 从封面颜色里挑票面强调色。 */
+export class TicketAccentRules {
+  static readonly FALLBACK: string = '#B3352E';
+
+  /**
+   * colors 按占比从高到低，每项 [r, g, b]（0~255）。挑够鲜艳、不太亮也不太黑的一种，占比靠前的优先；
+   * 再把亮度压到适合印在米白纸上的范围。都不合适时用深红。
+   */
+  static pick(colors: number[][]): string {
+    let chosen: number[] = [];
+    let bestScore = 0;
+    for (let index = 0; index < colors.length; index++) {
+      const rgb = colors[index];
+      if (!rgb || rgb.length < 3) continue;
+      const hsl = TicketAccentRules.toHsl(rgb[0], rgb[1], rgb[2]);
+      if (hsl[1] < 0.2 || hsl[2] > 0.88 || hsl[2] < 0.06) continue;
+      const score = hsl[1] * Math.max(0.3, 1 - index * 0.12);
+      if (score > bestScore) {
+        bestScore = score;
+        chosen = hsl;
+      }
+    }
+    if (chosen.length < 3) return TicketAccentRules.FALLBACK;
+    const saturation = Math.min(0.78, Math.max(0.38, chosen[1]));
+    const lightness = Math.min(0.44, Math.max(0.3, chosen[2]));
+    return TicketAccentRules.toHex(chosen[0], saturation, lightness);
+  }
+
+  /** [色相 0~360, 饱和度 0~1, 亮度 0~1]。 */
+  static toHsl(r: number, g: number, b: number): number[] {
+    const rn = r / 255;
+    const gn = g / 255;
+    const bn = b / 255;
+    const max = Math.max(rn, gn, bn);
+    const min = Math.min(rn, gn, bn);
+    const l = (max + min) / 2;
+    if (max === min) return [0, 0, l];
+    const d = max - min;
+    const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    let hue = 0;
+    if (max === rn) hue = (gn - bn) / d + (gn < bn ? 6 : 0);
+    else if (max === gn) hue = (bn - rn) / d + 2;
+    else hue = (rn - gn) / d + 4;
+    return [hue * 60, s, l];
+  }
+
+  static toHex(hue: number, s: number, l: number): string {
+    const k = (n: number): number => (n + hue / 30) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const channel = (n: number): string => {
+      const value = l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+      return Math.round(value * 255).toString(16).padStart(2, '0');
+    };
+    return `#${channel(0)}${channel(8)}${channel(4)}`.toUpperCase();
   }
 }

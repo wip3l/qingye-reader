@@ -1,4 +1,4 @@
-// 票夹的纯逻辑回归：哪些标记出票、读完编号、按作品归并时长、开始/结束日、月份分组与排序、
+// 票夹的纯逻辑回归（含票面裁切路径与封面取色）：哪些标记出票、读完编号、按作品归并时长、开始/结束日、月份分组与排序、
 // 合计与筛选、票面文字、背面日历，以及足迹页“最近的票”默认不显示。票面绘制、存图和出票动画需要真机验证。
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -15,9 +15,11 @@ const context = vm.createContext({
 vm.runInContext(compile(readEtsModule('model/book/BookMark.ts')) + '\n' +
   compile(readEtsModule('core/ticket/ReadingTicket.ts')) + '\n' +
   compile(readEtsModule('utils/FootprintLayout.ets')) +
-  '\nglobalThis.api = { BookMark, BookMarkStatus, ReadingTicketRules, TicketStatsRow, TicketMedia, FootprintLayout };',
+  '\nglobalThis.api = { BookMark, BookMarkStatus, ReadingTicketRules, TicketStatsRow, TicketMedia, FootprintLayout, ' +
+  'TicketShapeSpec, TicketShapeRules, TicketAccentRules };',
   context);
-const { BookMark, BookMarkStatus, ReadingTicketRules, TicketStatsRow, TicketMedia, FootprintLayout } = context.api;
+const { BookMark, BookMarkStatus, ReadingTicketRules, TicketStatsRow, TicketMedia, FootprintLayout, TicketShapeSpec,
+  TicketShapeRules, TicketAccentRules } = context.api;
 
 // vm 里造的数组和这里的数组原型不同，比较前转成普通值。
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -230,4 +232,51 @@ test('qr grid has three hollow finder boxes and is stable per book', () => {
   assert.equal(at(5, 2), false);
   assert.equal(at(0, 5), false);
   deepEqual(cells, ReadingTicketRules.qrCells('novel\u0001活着\u0001余华', 9));
+});
+
+test('ticket outline: centred scallops, inward notches, closed path', () => {
+  const spec = new TicketShapeSpec();
+  Object.assign(spec, { width: 300, height: 600, corner: 3, notchY: 330, notchR: 11, scallopR: 8, scallopStep: 22,
+    bottomScallops: true });
+  const centers = TicketShapeRules.scallopCenters(spec);
+  assert.ok(centers.length >= 12);
+  assert.ok(centers[0] - 8 >= 3 && centers[centers.length - 1] + 8 <= 297);
+  assert.ok(Math.abs((centers[0] + centers[centers.length - 1]) / 2 - 150) < 0.01);
+  const path = TicketShapeRules.path(spec);
+  assert.match(path, /^M3 0 /);
+  assert.match(path, /Z$/);
+  // 右侧缺口：从 319 到 341，向内（sweep 0）。
+  assert.ok(path.includes('L300 319 A11 11 0 0 0 300 341'));
+  assert.ok(path.includes('L0 341 A11 11 0 0 0 0 319'));
+  assert.equal((path.match(/A8 8 0 0 0/g) || []).length, centers.length);
+  // 没有齿孔、缺口超出范围时只剩圆角矩形。
+  const plain = new TicketShapeSpec();
+  Object.assign(plain, { width: 100, height: 50, corner: 10, notchY: 2, notchR: 11 });
+  assert.equal((TicketShapeRules.path(plain).match(/A/g) || []).length, 4);
+});
+
+test('accent picks a vivid cover colour and darkens it for paper', () => {
+  // 白底红字封面：白色不要，取红色并压暗。
+  const red = TicketAccentRules.pick([[250, 248, 240], [214, 62, 40], [30, 30, 30]]);
+  const [h, s, l] = TicketAccentRules.toHsl(parseInt(red.slice(1, 3), 16), parseInt(red.slice(3, 5), 16),
+    parseInt(red.slice(5, 7), 16));
+  assert.ok(h < 20 || h > 340, red);
+  assert.ok(s >= 0.38 && l <= 0.445 && l >= 0.295, red);
+  // 只有灰色时退回深红。
+  assert.equal(TicketAccentRules.pick([[128, 128, 128], [240, 240, 240]]), TicketAccentRules.FALLBACK);
+  assert.equal(TicketAccentRules.pick([]), TicketAccentRules.FALLBACK);
+  assert.equal(TicketAccentRules.toHex(0, 1, 0.5), '#FF0000');
+});
+
+test('paper ticket meta lines', () => {
+  const ticket = ReadingTicketRules.compose(mark({ workKey: 't', status: BookMarkStatus.READ, finishTime: at(2026, 11, 8),
+    categories: ['都市', '爽文', '多余'] }), new Map([['2026-11-03', 45 * 60000], ['2026-11-08', 3600000]]), 3);
+  assert.equal(ReadingTicketRules.tagLine(ticket), '都市 · 爽文');
+  assert.equal(ReadingTicketRules.yearLine(ticket), '2026 读完 / 时长：1.8 小时');
+  assert.equal(ReadingTicketRules.summaryLine(ticket), '2 天 · 1.8 小时');
+  const audio = ReadingTicketRules.compose(mark({ workKey: 'a', status: BookMarkStatus.READING, bookType: 32,
+    updateTime: at(2026, 10, 2) }), new Map(), 0);
+  assert.equal(ReadingTicketRules.tagLine(audio), '有声书');
+  assert.equal(ReadingTicketRules.yearLine(audio), '2026 开读 / 收听：—');
+  assert.equal(ReadingTicketRules.summaryLine(audio), '在读');
 });

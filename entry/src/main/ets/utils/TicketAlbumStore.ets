@@ -6,23 +6,29 @@ import preferences from '@ohos.data.preferences';
  * 写进 Preferences 而不是 PersistentStorage：后者改过的值重启后会回到默认。
  */
 export class TicketAlbumStore {
+  /** 影票：纸质电影票版式，默认样式。 */
+  static readonly STYLE_PAPER: string = 'paper';
+  /** 暗场：满版封面接黑色票根。 */
+  static readonly STYLE_NIGHT: string = 'night';
   static readonly STYLE_CARD: string = 'card';
-  static readonly STYLE_MOVIE: string = 'movie';
   static readonly STYLE_BORROW: string = 'borrow';
   static readonly STYLE_TRAIN: string = 'train';
-  static readonly STYLES: string[] = ['card', 'movie', 'borrow', 'train'];
-  static readonly STYLE_NAMES: string[] = ['藏书卡', '电影票', '借书卡', '车票'];
+  /** 早期的“电影票”，已由影票取代；存着这个值的按影票处理。 */
+  private static readonly LEGACY_MOVIE: string = 'movie';
+  static readonly STYLES: string[] = ['paper', 'night', 'card', 'borrow', 'train'];
+  static readonly STYLE_NAMES: string[] = ['影票', '暗场', '藏书卡', '借书卡', '车票'];
   private static readonly STORE_NAME: string = 'ticket_album';
   private static readonly KEY_STYLE: string = 'style';
   private static readonly KEY_SINGLE: string = 'single';
   private static readonly KEY_ISSUE: string = 'issueAnimation';
   private static loaded: boolean = false;
-  private static style: string = 'card';
+  private static style: string = 'paper';
   private static single: boolean = false;
   private static issue: boolean = true;
 
   static normalizeStyle(style: string): string {
-    return TicketAlbumStore.STYLES.includes(style) ? style : TicketAlbumStore.STYLE_CARD;
+    if (style === TicketAlbumStore.LEGACY_MOVIE) return TicketAlbumStore.STYLE_PAPER;
+    return TicketAlbumStore.STYLES.includes(style) ? style : TicketAlbumStore.STYLE_PAPER;
   }
 
   static styleName(style: string): string {
@@ -33,7 +39,7 @@ export class TicketAlbumStore {
     if (TicketAlbumStore.loaded) return;
     try {
       const store = await preferences.getPreferences(context, TicketAlbumStore.STORE_NAME);
-      const style = await store.get(TicketAlbumStore.KEY_STYLE, TicketAlbumStore.STYLE_CARD);
+      const style = await store.get(TicketAlbumStore.KEY_STYLE, TicketAlbumStore.STYLE_PAPER);
       const single = await store.get(TicketAlbumStore.KEY_SINGLE, false);
       const issue = await store.get(TicketAlbumStore.KEY_ISSUE, true);
       if (!TicketAlbumStore.loaded) {

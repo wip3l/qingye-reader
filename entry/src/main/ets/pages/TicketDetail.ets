@@ -36,7 +36,7 @@ struct TicketDetailPage {
   @State ticket: ReadingTicket | null = null;
   @State back: ReadingTicketBack = new ReadingTicketBack();
   @State loaded: boolean = false;
-  @State ticketStyle: string = TicketAlbumStore.STYLE_CARD;
+  @State ticketStyle: string = TicketAlbumStore.STYLE_PAPER;
   @State showBack: boolean = false;
   @State flipAngle: number = 0;
   @State frontHeight: number = 0;
@@ -68,6 +68,7 @@ struct TicketDetailPage {
       this.ticketStyle = TicketAlbumStore.currentStyle();
       const tickets = await ReadingTicketLoader.loadAll(context);
       const ticket = tickets.find((item: ReadingTicket): boolean => item.workKey === this.workKey) || null;
+      if (ticket && !ticket.accent) ticket.accent = await ReadingTicketLoader.accentOf(context, ticket.coverUrl);
       this.ticket = ticket;
       if (ticket) this.back = await ReadingTicketLoader.loadBack(context, ticket);
     } catch (error) {
@@ -204,7 +205,8 @@ struct TicketDetailPage {
                 ticket: this.ticket as ReadingTicket,
                 back: this.back,
                 cardWidth: this.cardWidth(),
-                cardHeight: this.frontHeight
+                cardHeight: this.frontHeight,
+                ticketStyle: this.ticketStyle
               })
             } else {
               Column() {

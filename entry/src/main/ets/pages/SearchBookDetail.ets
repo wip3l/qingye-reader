@@ -120,7 +120,7 @@ struct SearchBookDetailPage {
   @State showMarkSheet: boolean = false;
   /** 刚标成读过、正在出的那张票；null 时不显示出票层。 */
   @State issueTicket: ReadingTicket | null = null;
-  @State issueTicketStyle: string = TicketAlbumStore.STYLE_CARD;
+  @State issueTicketStyle: string = TicketAlbumStore.STYLE_PAPER;
   /** 标记面板正在专注写短评，面板拉到最高档。 */
   @State markSheetFocused: boolean = false;
   @StorageProp('bookMarkRevision') @Watch('onBookMarkRevisionChanged') bookMarkRevision: number = 0;

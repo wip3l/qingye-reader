@@ -84,7 +84,7 @@ export struct FootprintTabPage {
   /** “最近的票”：默认不显示，打开这块才读。 */
   @State tickets: ReadingTicket[] = [];
   @State ticketsLoaded: boolean = false;
-  @State ticketStyle: string = TicketAlbumStore.STYLE_CARD;
+  @State ticketStyle: string = TicketAlbumStore.STYLE_PAPER;
   private scroller: Scroller = new Scroller();
   private alive: boolean = false;
   private ownerId: string = '';
@@ -163,6 +163,12 @@ export struct FootprintTabPage {
       this.ticketStyle = TicketAlbumStore.currentStyle();
       this.tickets = tickets;
       this.ticketsLoaded = true;
+      const shown = tickets.slice(0, this.layout().limit(FootprintLayout.TICKET));
+      if (ReadingTicketLoader.pendingAccents(shown) > 0) {
+        await ReadingTicketLoader.fillAccents(context, shown, shown.length, (): void => {
+          if (this.alive) this.tickets = tickets.slice();
+        }, (): boolean => this.alive);
+      }
     } catch (error) {
       console.warn('读取最近的票失败:', error);
     }
@@ -413,7 +419,8 @@ export struct FootprintTabPage {
                   .accessibilityText(`${ticket.bookName}的票`)
                   .onClick(() => this.openTicket(ticket))
                 }, (ticket: ReadingTicket) =>
-                  `${ticket.workKey}|${ticket.status}|${ticket.number}|${ticket.totalMs}|${ticket.rating}|${this.ticketStyle}`)
+                  `${ticket.workKey}|${ticket.status}|${ticket.number}|${ticket.totalMs}|${ticket.rating}|${ticket.accent}|` +
+                  `${this.ticketStyle}`)
               }
               .alignItems(VerticalAlign.Top)
               .padding({ top: AppSpacing.XS, bottom: AppSpacing.LG })

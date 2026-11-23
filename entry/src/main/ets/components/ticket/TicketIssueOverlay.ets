@@ -1,5 +1,5 @@
 import { curves } from '@kit.ArkUI';
-import { ReadingTicketCard } from './ReadingTicketCard';
+import { ReadingTicketCard, ticketAspect } from './ReadingTicketCard';
 import { ReadingTicket } from '../../core/ticket/ReadingTicket';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
@@ -56,8 +56,10 @@ export struct TicketIssueOverlay {
     });
   }
 
+  /** 票加下面的提示和按钮要放得下：高的票（影票、暗场）按高度反推宽度。 */
   private cardWidth(): number {
-    return Math.min(300, Math.max(220, this.pageHeight * 0.36));
+    const byHeight = (this.pageHeight - 220) / ticketAspect(this.ticketStyle);
+    return Math.max(150, Math.min(300, byHeight));
   }
 
   build() {

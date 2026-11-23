@@ -1,19 +1,26 @@
+import { PathShape } from '@kit.ArkUI';
 import { BookCover } from '../book/BookCover';
 import { BookMarkStatus } from '../../model/book/BookMark';
-import { ReadingTicket, ReadingTicketRules, TicketDay, TicketMedia } from '../../core/ticket/ReadingTicket';
+import { ReadingTicket, ReadingTicketRules, TicketAccentRules, TicketDay, TicketMedia, TicketShapeRules,
+  TicketShapeSpec } from '../../core/ticket/ReadingTicket';
 import { ReadingTicketBack } from '../../core/ticket/ReadingTicketLoader';
 import { TicketAlbumStore } from '../../utils/TicketAlbumStore';
 
 /** 票面固定用纸张色，不跟主题和深浅色走；数值都按 300vp 宽设计，再按 cardWidth 等比缩放。 */
 const DESIGN_WIDTH: number = 300;
+/** 票面上的英文和数字用打包的衬线字体（rawfile/fonts，见第三方许可清单），中文仍走系统字体。 */
+const TICKET_SERIF: string = 'QingyeTicketSerif';
 const CARD_PAPER: string = '#F6EEDD';
 const CARD_INK: string = '#1F2A3A';
 const CARD_LABEL: string = '#3C4656';
 const CARD_RULE: string = '#B9B0A0';
 const CARD_FOOT: string = '#5F6774';
-const MOVIE_PAPER: string = '#FBF6EC';
+const PAPER: string = '#F7F1E3';
+const PAPER_INK: string = '#2B2620';
+const NIGHT: string = '#121212';
+const NIGHT_INK: string = '#F4EFE6';
+const NIGHT_SUB: string = '#A59E92';
 const MOVIE_LABEL: string = '#8A8170';
-const MOVIE_PERF: string = '#D8CDB8';
 const BACK_PAPER: string = '#FBF8F1';
 const BACK_TEXT: string = '#2A2F38';
 const STAMP_READ: string = '#B3352E';
@@ -31,10 +38,27 @@ const BORROW_BROWN: string = '#4A3518';
 const BORROW_DATE: string = '#5A2D82';
 const TRAIN_INK: string = '#13283A';
 const TRAIN_SUB: string = '#46606F';
-const TRAIN_RED: string = '#C0392B';
 /** 借书卡每行日期戳的歪斜角度，按行轮换，看起来像手盖的。 */
 const STAMP_TILTS: number[] = [-2.5, 1.5, -1, 2.5, -2, 1, -1.5];
 const QR_SIZE: number = 9;
+/** 影票撕口以下那一段的固定高度（设计单位），撕口缺口按“总高 − 这段”定位。 */
+const PAPER_BOTTOM: number = 270;
+/** 暗场票：海报高度和下半段高度都固定。 */
+const NIGHT_POSTER: number = 392;
+const NIGHT_BOTTOM: number = 248;
+/** 车票：底部票价那一行（含下边距）的高度，缺口压在它上方的虚线上。 */
+const TRAIN_BOTTOM: number = 62;
+
+let ticketFontRegistered: boolean = false;
+
+/** 各样式大约的高宽比，用来在有限的高度里给票定宽（出票动画）。 */
+export function ticketAspect(style: string): number {
+  if (style === TicketAlbumStore.STYLE_PAPER) return 2.75;
+  if (style === TicketAlbumStore.STYLE_NIGHT) return 2.14;
+  if (style === TicketAlbumStore.STYLE_TRAIN) return 0.75;
+  if (style === TicketAlbumStore.STYLE_BORROW) return 1.5;
+  return 1.6;
+}
 
 function stampColor(status: number): string {
   if (status === BookMarkStatus.READ) return STAMP_READ;
@@ -42,33 +66,133 @@ function stampColor(status: number): string {
   return STAMP_DROPPED;
 }
 
+/** '#RRGGBB' 加透明度，alpha 两位十六进制。 */
+function withAlpha(color: string, alpha: string): string {
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? `#${alpha}${color.substring(1)}` : color;
+}
+
 /**
- * 一张票的正面。藏书卡照纸质藏书卡排：书名作者编号、三行数据、印章、日期；
- * 电影票是封面作海报，场次=开读、散场=读完、片长=时长、座号=第几本读完，下面是撕线和票根条码。
+ * 各样式的裁切形状（vp）：影票、暗场两侧撕口缺口加底边齿孔；藏书卡、借书卡底边齿孔；车票两侧缺口。
+ * 背面用同一个形状，翻过来轮廓不变。height 为 0（还没量到）时返回 null。
+ */
+export function ticketShapeSpec(style: string, width: number, height: number): TicketShapeSpec | null {
+  if (!(width > 0) || !(height > 0)) return null;
+  const k = width / DESIGN_WIDTH;
+  const spec = new TicketShapeSpec();
+  spec.width = width;
+  spec.height = height;
+  if (style === TicketAlbumStore.STYLE_PAPER || style === TicketAlbumStore.STYLE_NIGHT) {
+    spec.corner = 3 * k;
+    spec.notchY = style === TicketAlbumStore.STYLE_PAPER ? height - PAPER_BOTTOM * k : (NIGHT_POSTER + 15) * k;
+    spec.notchR = 11 * k;
+    spec.scallopR = 8 * k;
+    spec.scallopStep = 22 * k;
+    spec.bottomScallops = true;
+  } else if (style === TicketAlbumStore.STYLE_TRAIN) {
+    spec.corner = 10 * k;
+    spec.notchY = height - TRAIN_BOTTOM * k;
+    spec.notchR = 9 * k;
+  } else {
+    spec.corner = 0;
+    spec.scallopR = 6 * k;
+    spec.scallopStep = 18 * k;
+    spec.bottomScallops = true;
+  }
+  return spec;
+}
+
+/** 把 vp 形状换成 px 路径；还没量到高度时返回一块足够大的矩形（等于不裁）。 */
+export function ticketClipShape(spec: TicketShapeSpec | null, width: number, pxPerVp: number): PathShape {
+  if (!spec) {
+    const w = Math.round(width * pxPerVp);
+    return new PathShape({ commands: `M0 0 L${w} 0 L${w} 100000 L0 100000 Z` });
+  }
+  const px = new TicketShapeSpec();
+  px.width = spec.width * pxPerVp;
+  px.height = spec.height * pxPerVp;
+  px.corner = spec.corner * pxPerVp;
+  px.notchY = spec.notchY >= 0 ? spec.notchY * pxPerVp : -1;
+  px.notchR = spec.notchR * pxPerVp;
+  px.scallopR = spec.scallopR * pxPerVp;
+  px.scallopStep = spec.scallopStep * pxPerVp;
+  px.topScallops = spec.topScallops;
+  px.bottomScallops = spec.bottomScallops;
+  return new PathShape({ commands: TicketShapeRules.path(px) });
+}
+
+/**
+ * 一张票的正面。影票照纸质电影票排：圆角海报、封面色书名、三行小字、撕口、英文字段格、大号编号和一句短评；
+ * 暗场票是满版海报接黑色票根；藏书卡、借书卡、车票保留原来的版式，加纸纹、齿边和封面色。
+ * 外形用 clipShape 裁出缺口和齿孔，阴影是下面一层同形状的模糊色块。
  */
 @Component
 export struct ReadingTicketCard {
   @Prop ticket: ReadingTicket = new ReadingTicket();
-  @Prop ticketStyle: string = TicketAlbumStore.STYLE_CARD;
+  @Prop ticketStyle: string = TicketAlbumStore.STYLE_PAPER;
   @Prop cardWidth: number = DESIGN_WIDTH;
-  /** 电影票两侧齿孔露出的底色，取票所在的背景。 */
+  /** 借书卡顶部打孔露出的底色，取票所在的背景。 */
   @Prop notchColor: ResourceColor = '#F5F5F5';
   /** 缩略图用小一点的封面解码尺寸。 */
   @Prop thumbnail: boolean = false;
+  @State measuredHeight: number = 0;
+
+  aboutToAppear(): void {
+    if (ticketFontRegistered) return;
+    ticketFontRegistered = true;
+    try {
+      this.getUIContext().getFont().registerFont({
+        familyName: TICKET_SERIF,
+        familySrc: $rawfile('fonts/TicketSerif-Black.ttf')
+      });
+    } catch (error) {
+      console.warn('注册票面字体失败:', JSON.stringify(error));
+    }
+  }
 
   private u(value: number): number {
     return value * this.cardWidth / DESIGN_WIDTH;
   }
 
+  private accent(): string {
+    return this.ticket.accent || TicketAccentRules.FALLBACK;
+  }
+
+  private ticketOutline(): PathShape {
+    return ticketClipShape(ticketShapeSpec(this.ticketStyle, this.cardWidth, this.measuredHeight), this.cardWidth,
+      this.getUIContext().vp2px(1));
+  }
+
   build() {
-    if (this.ticketStyle === TicketAlbumStore.STYLE_MOVIE) {
-      this.movieTicket()
-    } else if (this.ticketStyle === TicketAlbumStore.STYLE_BORROW) {
-      this.borrowCard()
-    } else if (this.ticketStyle === TicketAlbumStore.STYLE_TRAIN) {
-      this.trainTicket()
-    } else {
-      this.libraryCard()
+    Stack({ alignContent: Alignment.TopStart }) {
+      if (this.measuredHeight > 0) {
+        Column()
+          .width(this.cardWidth)
+          .height(this.measuredHeight)
+          .backgroundColor('#3A281E0F')
+          .clipShape(this.ticketOutline())
+          .blur(this.u(9))
+          .offset({ y: this.u(6) })
+          .hitTestBehavior(HitTestMode.None)
+      }
+      Column() {
+        if (this.ticketStyle === TicketAlbumStore.STYLE_NIGHT) {
+          this.nightTicket()
+        } else if (this.ticketStyle === TicketAlbumStore.STYLE_CARD) {
+          this.libraryCard()
+        } else if (this.ticketStyle === TicketAlbumStore.STYLE_BORROW) {
+          this.borrowCard()
+        } else if (this.ticketStyle === TicketAlbumStore.STYLE_TRAIN) {
+          this.trainTicket()
+        } else {
+          this.paperTicket()
+        }
+      }
+      .width(this.cardWidth)
+      .clipShape(this.ticketOutline())
+      .onSizeChange((_oldValue: SizeOptions, newValue: SizeOptions) => {
+        const height = Number(newValue.height) || 0;
+        if (Math.abs(height - this.measuredHeight) > 0.5) this.measuredHeight = height;
+      })
     }
   }
 
@@ -117,9 +241,9 @@ export struct ReadingTicketCard {
               .height(this.u(116))
               .shadow({ radius: this.u(6), color: '#2E000000', offsetY: this.u(2) })
               Column({ space: this.u(8) }) {
-                this.cardField('书名', this.ticket.bookName, 3)
-                this.cardField('作者', this.ticket.author || '佚名', 2)
-                this.cardField('编号', ReadingTicketRules.numberText(this.ticket) || '—', 1)
+                this.cardField('书名', this.ticket.bookName, 3, this.accent())
+                this.cardField('作者', this.ticket.author || '佚名', 2, CARD_INK)
+                this.cardField('编号', ReadingTicketRules.numberText(this.ticket) || '—', 1, CARD_INK)
               }
               .layoutWeight(1)
             }
@@ -158,11 +282,12 @@ export struct ReadingTicketCard {
     .width(this.cardWidth)
     .padding(this.u(9))
     .backgroundColor(CARD_PAPER)
-    .shadow({ radius: this.u(18), color: '#29281E0F', offsetY: this.u(6) })
+    .backgroundImage($r('app.media.ticket_grain'), ImageRepeat.XY)
+    .backgroundImageSize({ width: 96, height: 96 })
   }
 
   @Builder
-  cardField(label: string, value: string, lines: number) {
+  cardField(label: string, value: string, lines: number, color: string) {
     Row({ space: this.u(8) }) {
       Text(label)
         .fontSize(this.u(12.5))
@@ -170,7 +295,7 @@ export struct ReadingTicketCard {
       Text(value)
         .fontSize(this.u(12.5))
         .fontWeight(FontWeight.Bold)
-        .fontColor(CARD_INK)
+        .fontColor(color)
         .textAlign(TextAlign.End)
         .lineHeight(this.u(17))
         .maxLines(lines)
@@ -239,172 +364,277 @@ export struct ReadingTicketCard {
     .hitTestBehavior(HitTestMode.None)
   }
 
-  // ---------- 电影票 ----------
+  // ---------- 影票 ----------
 
+  /** 纸纹铺底；背景色在调用处另设。 */
   @Builder
-  movieTicket() {
-    Stack({ alignContent: Alignment.TopEnd }) {
-      Column() {
-        Stack() {
-          this.cover('100%', '100%', 0)
-          Column()
-            .width('100%')
-            .height('100%')
-            .linearGradient({ angle: 180, colors: [['#0D0F141E', 0], ['#C80F141E', 1]] })
-          Column() {
-            Row() {
-              Text(TicketMedia.sessionLabel(this.ticket.bookType))
-                .fontSize(this.u(10))
-                .fontWeight(FontWeight.Medium)
-                .letterSpacing(this.u(2))
-                .fontColor(Color.White)
-                .padding({ left: this.u(6), right: this.u(6), top: this.u(1), bottom: this.u(1) })
-                .borderRadius(this.u(3))
-                .border({ width: Math.max(0.5, this.u(1)), color: '#B3FFFFFF' })
-              Blank()
-              Text(this.ticket.originName ? `${this.ticket.originName} 厅` : '')
-                .fontSize(this.u(11))
-                .fontColor('#E6FFFFFF')
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .constraintSize({ maxWidth: this.u(150) })
-            }
-            .width('100%')
-            Blank()
-            Text(this.ticket.bookName)
-              .fontSize(this.u(22))
-              .fontWeight(FontWeight.Bolder)
-              .lineHeight(this.u(28))
-              .fontColor(Color.White)
-              .maxLines(2)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-            Text(`主创 ${this.ticket.author || '佚名'}`)
-              .fontSize(this.u(11.5))
-              .fontColor('#E0FFFFFF')
-              .maxLines(1)
-              .margin({ top: this.u(2) })
-          }
-          .width('100%')
-          .height('100%')
-          .alignItems(HorizontalAlign.Start)
-          .padding({ left: this.u(16), right: this.u(16), top: this.u(12), bottom: this.u(14) })
-        }
-        .width('100%')
-        .height(this.u(150))
-
-        Column({ space: this.u(12) }) {
-          Row() {
-            this.movieField('场次', ReadingTicketRules.shortDate(this.ticket.startDayKey) || '—', '')
-            this.movieField('散场', this.ticket.endDayKey ? ReadingTicketRules.shortDate(this.ticket.endDayKey) :
-              (this.ticket.status === BookMarkStatus.READING ? '未散场' : '—'), '')
-            this.movieField('片长', ReadingTicketRules.durationValue(this.ticket.totalMs)[0],
-              ReadingTicketRules.durationValue(this.ticket.totalMs)[1])
-          }
-          .width('100%')
-          Row() {
-            this.movieField('场数', this.ticket.activeDays > 0 ? `${this.ticket.activeDays}` : '—',
-              this.ticket.activeDays > 0 ? '场' : '')
-            this.movieField('座号', this.ticket.number > 0 ? `${this.ticket.number}` : '—',
-              this.ticket.number > 0 ? '号' : '')
-            this.movieField('评分', ReadingTicketRules.ratingText(this.ticket.rating), '')
-          }
-          .width('100%')
-        }
-        .width('100%')
-        .padding({ left: this.u(16), right: this.u(16), top: this.u(14), bottom: this.u(14) })
-
-        // 撕线：虚线加两侧半圆缺口（圆心压在票边上，外半圆被裁掉）。
-        Stack() {
-          Column()
-            .width('100%')
-            .height(0)
-            .border({ width: { top: this.u(2) }, color: MOVIE_PERF, style: BorderStyle.Dashed })
-            .padding({ left: this.u(14), right: this.u(14) })
-          Row() {
-            Circle()
-              .width(this.u(18))
-              .height(this.u(18))
-              .fill(this.notchColor)
-              .offset({ x: -this.u(9) })
-            Blank()
-            Circle()
-              .width(this.u(18))
-              .height(this.u(18))
-              .fill(this.notchColor)
-              .offset({ x: this.u(9) })
-          }
-          .width('100%')
-        }
-        .width('100%')
-        .height(this.u(18))
-
-        Row({ space: this.u(12) }) {
-          Column() {
-            Text(ReadingTicketRules.numberText(this.ticket) || '—')
-              .fontSize(this.u(12))
-              .fontWeight(FontWeight.Medium)
-              .fontColor(CARD_INK)
-              .fontFeature('"tnum" 1')
-            Text(ReadingTicketRules.checkText(this.ticket.status))
-              .fontSize(this.u(10))
-              .fontColor(MOVIE_LABEL)
-          }
-          .alignItems(HorizontalAlign.Start)
-          Blank()
-          Row() {
-            ForEach(ReadingTicketRules.barcode(this.ticket.workKey || this.ticket.bookName),
-              (width: number, index: number) => {
-                Column()
-                  .width(this.u(width))
-                  .height(this.u(34))
-                  .backgroundColor(CARD_INK)
-                  .margin({ right: this.u(index % 3 === 0 ? 2 : 1) })
-              }, (width: number, index: number) => `${index}:${width}`)
-          }
-        }
-        .width('100%')
-        .padding({ left: this.u(16), right: this.u(16), top: this.u(10), bottom: this.u(16) })
-      }
+  grainLayer() {
+    Column()
       .width('100%')
-      .backgroundColor(MOVIE_PAPER)
-      .borderRadius(this.u(12))
-      .clip(true)
-
-      Column() {
-        this.circleStamp(this.u(66), this.u(15))
-      }
-      .margin({ top: this.u(118), right: this.u(16) })
+      .height('100%')
+      .backgroundImage($r('app.media.ticket_grain'), ImageRepeat.XY)
+      .backgroundImageSize({ width: 96, height: 96 })
       .hitTestBehavior(HitTestMode.None)
-    }
-    .width(this.cardWidth)
-    .borderRadius(this.u(12))
-    .shadow({ radius: this.u(18), color: '#29281E0F', offsetY: this.u(6) })
   }
 
   @Builder
-  movieField(label: string, value: string, unit: string) {
-    Column({ space: this.u(1) }) {
-      Text(label)
-        .fontSize(this.u(10))
-        .letterSpacing(this.u(0.8))
-        .fontColor(MOVIE_LABEL)
-      Row({ space: this.u(1) }) {
-        Text(value)
-          .fontSize(this.u(14))
-          .fontWeight(FontWeight.Medium)
-          .fontColor(CARD_INK)
-          .fontFeature('"tnum" 1')
-          .maxLines(1)
-        if (unit) {
-          Text(unit)
-            .fontSize(this.u(10))
-            .fontColor(CARD_INK)
+  paperTicket() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      this.grainLayer()
+      Column() {
+        Column() {
+          this.cover('100%', '100%', this.u(10))
         }
+        .width('100%')
+        .height(this.u(340))
+        .borderRadius(this.u(10))
+        .clip(true)
+
+        Text(this.ticket.bookName)
+          .fontSize(this.u(27))
+          .fontWeight(FontWeight.Bolder)
+          .lineHeight(this.u(33))
+          .letterSpacing(this.u(0.5))
+          .fontColor(this.accent())
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .margin({ top: this.u(14) })
+        Column() {
+          this.paperMeta(this.ticket.author || '佚名')
+          this.paperMeta(ReadingTicketRules.tagLine(this.ticket))
+          this.paperMeta(ReadingTicketRules.yearLine(this.ticket))
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+        .margin({ top: this.u(6), bottom: this.u(18) })
+
+        // 撕口以下固定高度，两侧缺口按这段的高度定位。
+        Column() {
+          Row()
+            .width('100%')
+            .height(0)
+            .border({ width: { top: this.u(2) }, color: withAlpha(PAPER_INK, 'B3'), style: BorderStyle.Dashed })
+          Row() {
+            this.paperField('START', ReadingTicketRules.fullDate(this.ticket.startDayKey, '—'), 1.15)
+            this.paperField('END', ReadingTicketRules.fullDate(this.ticket.endDayKey,
+              this.ticket.status === BookMarkStatus.READING ? '未完待续' : '—'), 1.15)
+            this.paperField('TIME', this.ticket.totalMs > 0 ?
+              ReadingTicketRules.durationValue(this.ticket.totalMs).join(' ') : '—', 0.8)
+          }
+          .width('100%')
+          .margin({ top: this.u(22) })
+          Row() {
+            this.paperField('HALL', this.ticket.originName || '本地', 1.15)
+            this.paperField('DAYS', this.ticket.activeDays > 0 ? `${this.ticket.activeDays} 天` : '—', 1.15)
+            this.paperField('FEE', '无价', 0.8)
+          }
+          .width('100%')
+          .margin({ top: this.u(12) })
+          Row()
+            .width('100%')
+            .height(0)
+            .border({ width: { top: Math.max(0.5, this.u(1)) }, color: withAlpha(PAPER_INK, '73'), style: BorderStyle.Dashed })
+            .margin({ top: this.u(14), bottom: this.u(10) })
+          Row() {
+            if (this.ticket.number > 0) {
+              Row() {
+                Text('No.')
+                  .fontFamily(TICKET_SERIF)
+                  .fontSize(this.u(22))
+                  .fontColor(this.accent())
+                  .margin({ bottom: this.u(5) })
+                Text(`${this.ticket.number}`)
+                  .fontFamily(TICKET_SERIF)
+                  .fontSize(this.u(52))
+                  .lineHeight(this.u(52))
+                  .fontColor(this.accent())
+              }
+              .alignItems(VerticalAlign.Bottom)
+            } else {
+              Text(this.ticket.status === BookMarkStatus.READING ? 'NOW READING' : 'INTERMISSION')
+                .fontFamily(TICKET_SERIF)
+                .fontSize(this.u(24))
+                .letterSpacing(this.u(1))
+                .fontColor(this.accent())
+            }
+            Blank()
+            this.circleStamp(this.u(60), this.u(14))
+          }
+          .width('100%')
+          .height(this.u(56))
+          .alignItems(VerticalAlign.Bottom)
+          Text(this.ticket.review.trim() || ReadingTicketRules.summaryLine(this.ticket))
+            .fontSize(this.u(11.5))
+            .lineHeight(this.u(17))
+            .fontColor(withAlpha(PAPER_INK, 'CC'))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+            .margin({ top: this.u(8) })
+          if (this.ticket.quote) {
+            Text(this.ticket.quote)
+              .fontSize(this.u(11))
+              .lineHeight(this.u(16))
+              .fontColor(withAlpha(this.accent(), '99'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .textAlign(TextAlign.End)
+              .width('100%')
+              .margin({ top: this.u(2) })
+          }
+        }
+        .width('100%')
+        .height(this.u(PAPER_BOTTOM))
+        .padding({ bottom: this.u(30) })
+        .clip(true)
       }
-      .alignItems(VerticalAlign.Bottom)
+      .width('100%')
+      .padding({ left: this.u(16), right: this.u(16), top: this.u(16) })
     }
-    .layoutWeight(1)
+    .width(this.cardWidth)
+    .backgroundColor(PAPER)
+  }
+
+  @Builder
+  paperMeta(text: string) {
+    Text(text)
+      .fontSize(this.u(13))
+      .lineHeight(this.u(21))
+      .fontColor(PAPER_INK)
+      .maxLines(1)
+      .textOverflow({ overflow: TextOverflow.Ellipsis })
+      .fontFeature('"tnum" 1')
+  }
+
+  @Builder
+  paperField(label: string, value: string, weight: number) {
+    Column({ space: this.u(2) }) {
+      Text(label)
+        .fontFamily(TICKET_SERIF)
+        .fontSize(this.u(14))
+        .letterSpacing(this.u(0.6))
+        .fontColor(PAPER_INK)
+      Text(value)
+        .fontSize(this.u(12.5))
+        .fontColor(PAPER_INK)
+        .fontFeature('"tnum" 1')
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .layoutWeight(weight)
     .alignItems(HorizontalAlign.Start)
+  }
+
+  // ---------- 暗场 ----------
+
+  @Builder
+  nightTicket() {
+    Column() {
+      Stack({ alignContent: Alignment.Bottom }) {
+        this.cover('100%', '100%', 0)
+        Column()
+          .width('100%')
+          .height(this.u(96))
+          .linearGradient({ angle: 180, colors: [[withAlpha(NIGHT, '00'), 0], [NIGHT, 1]] })
+          .hitTestBehavior(HitTestMode.None)
+      }
+      .width('100%')
+      .height(this.u(NIGHT_POSTER))
+
+      Column() {
+        Row() {
+          ForEach([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], (index: number) => {
+            Circle()
+              .width(this.u(6))
+              .height(this.u(6))
+              .fill(NIGHT_INK)
+              .fillOpacity(0.9)
+          }, (index: number) => `${index}`)
+        }
+        .width('100%')
+        .height(this.u(6))
+        .justifyContent(FlexAlign.SpaceBetween)
+        .padding({ left: this.u(14), right: this.u(14) })
+        .margin({ top: this.u(12) })
+
+        Text(this.ticket.bookName)
+          .fontSize(this.u(32))
+          .fontWeight(FontWeight.Bolder)
+          .lineHeight(this.u(38))
+          .letterSpacing(this.u(-0.5))
+          .fontColor(NIGHT_INK)
+          .textAlign(TextAlign.Center)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .margin({ top: this.u(10) })
+
+        Row() {
+          Column({ space: this.u(1) }) {
+            Text(`作者：${this.ticket.author || '佚名'}`)
+              .fontSize(this.u(12.5))
+              .lineHeight(this.u(20))
+              .fontColor(NIGHT_INK)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text(this.ticket.endDayKey ? `${this.ticket.status === BookMarkStatus.READ ? '读完' : '放下'}：` +
+              ReadingTicketRules.dottedDate(this.ticket.endDayKey) :
+              `开读：${ReadingTicketRules.dottedDate(this.ticket.startDayKey) || '—'}`)
+              .fontSize(this.u(12.5))
+              .lineHeight(this.u(20))
+              .fontColor(NIGHT_INK)
+              .fontFeature('"tnum" 1')
+              .maxLines(1)
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+          .padding({ left: this.u(10), right: this.u(8), top: this.u(9), bottom: this.u(9) })
+          Column()
+            .width(Math.max(0.5, this.u(1)))
+            .height('100%')
+            .backgroundColor(withAlpha(NIGHT_INK, '66'))
+          Column({ space: this.u(2) }) {
+            Text(`“${this.ticket.review.trim() || this.ticket.quote || ReadingTicketRules.stampText(this.ticket.status)}”`)
+              .fontSize(this.u(12.5))
+              .lineHeight(this.u(19))
+              .fontColor(NIGHT_INK)
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+            Text(`——《${this.ticket.bookName}》`)
+              .fontSize(this.u(10.5))
+              .fontColor(NIGHT_SUB)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .textAlign(TextAlign.End)
+              .width('100%')
+          }
+          .layoutWeight(1.25)
+          .padding({ left: this.u(10), right: this.u(10), top: this.u(9), bottom: this.u(9) })
+        }
+        .width('100%')
+        .height(this.u(66))
+        .margin({ top: this.u(12) })
+        .border({ width: { top: Math.max(0.5, this.u(1)), bottom: Math.max(0.5, this.u(1)) },
+          color: withAlpha(NIGHT_INK, '66') })
+
+        Text(ReadingTicketRules.summaryLine(this.ticket))
+          .fontFamily(TICKET_SERIF)
+          .fontSize(this.u(14))
+          .fontColor(NIGHT_INK)
+          .fontFeature('"tnum" 1')
+          .textAlign(TextAlign.Center)
+          .width('100%')
+          .margin({ top: this.u(10) })
+      }
+      .width('100%')
+      .height(this.u(NIGHT_BOTTOM))
+      .padding({ left: this.u(12), right: this.u(12), bottom: this.u(30) })
+      .clip(true)
+    }
+    .width(this.cardWidth)
+    .backgroundColor(NIGHT)
   }
 
   @Builder
@@ -486,9 +716,9 @@ export struct ReadingTicketCard {
           .fontColor(BORROW_BROWN)
           .margin({ top: this.u(4), bottom: this.u(10), left: this.u(14) })
         Column() {
-          this.borrowMeta('书名', this.ticket.bookName, false)
-          this.borrowMeta('著者', this.ticket.author || '佚名', false)
-          this.borrowMeta('卡号', ReadingTicketRules.numberText(this.ticket) || '—', true)
+          this.borrowMeta('书名', this.ticket.bookName, false, this.accent())
+          this.borrowMeta('著者', this.ticket.author || '佚名', false, BORROW_TEXT)
+          this.borrowMeta('卡号', ReadingTicketRules.numberText(this.ticket) || '—', true, BORROW_TEXT)
         }
         .width('100%')
         .border({ width: this.u(1.5), color: BORROW_RULE })
@@ -536,8 +766,8 @@ export struct ReadingTicketCard {
     }
     .width(this.cardWidth)
     .backgroundColor(BORROW_PAPER)
-    .borderRadius(this.u(2))
-    .shadow({ radius: this.u(18), color: '#29281E0F', offsetY: this.u(6) })
+    .backgroundImage($r('app.media.ticket_grain'), ImageRepeat.XY)
+    .backgroundImageSize({ width: 96, height: 96 })
   }
 
   @Builder
@@ -574,7 +804,7 @@ export struct ReadingTicketCard {
   }
 
   @Builder
-  borrowMeta(label: string, value: string, last: boolean) {
+  borrowMeta(label: string, value: string, last: boolean, color: string) {
     Row() {
       Text(label)
         .fontSize(this.u(12))
@@ -586,7 +816,7 @@ export struct ReadingTicketCard {
       Text(value)
         .fontSize(this.u(13))
         .fontWeight(FontWeight.Bold)
-        .fontColor(BORROW_TEXT)
+        .fontColor(color)
         .fontFeature('"tnum" 1')
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -621,7 +851,7 @@ export struct ReadingTicketCard {
           Text(ReadingTicketRules.trainNumberText(this.ticket))
             .fontSize(this.u(12))
             .fontWeight(FontWeight.Medium)
-            .fontColor(TRAIN_RED)
+            .fontColor(this.accent())
             .fontFeature('"tnum" 1')
           Blank()
           Text(this.ticket.originName ? `${this.ticket.originName} 检票口` : '')
@@ -682,7 +912,7 @@ export struct ReadingTicketCard {
             Text(this.ticket.bookName)
               .fontSize(this.u(15))
               .fontWeight(FontWeight.Bold)
-              .fontColor(TRAIN_INK)
+              .fontColor(this.accent())
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
             Text(`${this.ticket.author || '佚名'} · ${this.ticket.activeDays > 0 ? this.ticket.activeDays : '—'} 天 · ` +
@@ -720,6 +950,7 @@ export struct ReadingTicketCard {
           this.qrCode()
         }
         .width('100%')
+        .height(this.u(TRAIN_BOTTOM - 12))
         .alignItems(VerticalAlign.Bottom)
         .margin({ top: this.u(10) })
         .padding({ top: this.u(8) })
@@ -743,7 +974,6 @@ export struct ReadingTicketCard {
     .borderRadius(this.u(10))
     .clip(true)
     .linearGradient({ angle: 135, colors: [['#CFE6EA', 0], ['#B9D8E6', 0.55], ['#C9DFF0', 1]] })
-    .shadow({ radius: this.u(18), color: '#29281E0F', offsetY: this.u(6) })
   }
 
   @Builder
@@ -822,6 +1052,29 @@ export struct ReadingTicketBackFace {
   @Prop cardWidth: number = DESIGN_WIDTH;
   /** 正面量到的高度；0 时按竖向票的常见比例。 */
   @Prop cardHeight: number = 0;
+  /** 跟正面同一个外形；影票、暗场的背面是一张空白票，撕口处一排圆点，标题用英文。 */
+  @Prop ticketStyle: string = TicketAlbumStore.STYLE_PAPER;
+
+  private dieCut(): boolean {
+    return this.ticketStyle === TicketAlbumStore.STYLE_PAPER || this.ticketStyle === TicketAlbumStore.STYLE_NIGHT;
+  }
+
+  private spec(): TicketShapeSpec | null {
+    return ticketShapeSpec(this.ticketStyle, this.cardWidth, this.layout().height);
+  }
+
+  private notchY(): number {
+    const spec = this.spec();
+    return spec && spec.notchY >= 0 ? spec.notchY : -1;
+  }
+
+  private ticketOutline(): PathShape {
+    return ticketClipShape(this.spec(), this.cardWidth, this.getUIContext().vp2px(1));
+  }
+
+  private title(cn: string, en: string): string {
+    return this.dieCut() ? en : cn;
+  }
 
   private u(value: number): number {
     return value * this.cardWidth / DESIGN_WIDTH;
@@ -861,6 +1114,11 @@ export struct ReadingTicketBackFace {
     const footerHeight = this.u(16);
     layout.textAreaHeight = Math.max(0, height - layout.padTop - layout.padBottom - headingHeight - gridHeight -
       footerHeight - layout.space * 3);
+    // 空白票的文字停在撕口上方，日历在撕口下方。
+    const shape = ticketShapeSpec(this.ticketStyle, this.cardWidth, height);
+    if (this.dieCut() && shape && shape.notchY > 0) {
+      layout.textAreaHeight = Math.min(layout.textAreaHeight, Math.max(0, shape.notchY - layout.padTop - this.u(18)));
+    }
 
     const reviewLine = this.u(24);
     const quoteLine = this.u(22);
@@ -892,9 +1150,41 @@ export struct ReadingTicketBackFace {
   }
 
   build() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column()
+        .width(this.cardWidth)
+        .height(this.layout().height)
+        .backgroundColor('#3A281E0F')
+        .clipShape(this.ticketOutline())
+        .blur(this.u(9))
+        .offset({ y: this.u(6) })
+        .hitTestBehavior(HitTestMode.None)
+      this.face()
+      if (this.dieCut() && this.notchY() > 0) {
+        Row() {
+          ForEach([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17], (index: number) => {
+            Circle()
+              .width(this.u(5))
+              .height(this.u(5))
+              .fill(PAPER_INK)
+              .fillOpacity(0.5)
+          }, (index: number) => `${index}`)
+        }
+        .width(this.cardWidth)
+        .height(this.u(5))
+        .justifyContent(FlexAlign.SpaceBetween)
+        .padding({ left: this.u(24), right: this.u(24) })
+        .position({ x: 0, y: this.notchY() - this.u(2.5) })
+        .hitTestBehavior(HitTestMode.None)
+      }
+    }
+  }
+
+  @Builder
+  face() {
     Column({ space: this.layout().space }) {
       Column({ space: this.u(6) }) {
-        this.heading('短评')
+        this.heading(this.title('短评', 'REVIEW'))
         Text(this.reviewText())
           .fontSize(this.u(14))
           .lineHeight(this.u(24))
@@ -904,7 +1194,7 @@ export struct ReadingTicketBackFace {
           .width('100%')
         if (this.layout().quoteLines > 0) {
           Column() {
-            this.heading('摘录')
+            this.heading(this.title('摘录', 'EXCERPT'))
           }
           .margin({ top: this.u(10) })
           Text(this.back.quote)
@@ -923,7 +1213,9 @@ export struct ReadingTicketBackFace {
       .alignItems(HorizontalAlign.Start)
       .clip(true)
 
-      this.heading(`阅读日历 · 截至 ${ReadingTicketRules.shortDate(this.back.calendarEndKey)}`)
+      Blank()
+      this.heading(this.title(`阅读日历 · 截至 ${ReadingTicketRules.shortDate(this.back.calendarEndKey)}`,
+        `CALENDAR · ${ReadingTicketRules.shortDate(this.back.calendarEndKey)}`))
       Column({ space: this.u(this.layout().columns > 7 ? 3 : 4) }) {
         ForEach(this.weeks(this.layout().columns), (week: number[], row: number) => {
           Row({ space: this.u(this.layout().columns > 7 ? 3 : 4) }) {
@@ -956,18 +1248,17 @@ export struct ReadingTicketBackFace {
     .height(this.layout().height)
     .padding({ left: this.u(20), right: this.u(20), top: this.layout().padTop, bottom: this.layout().padBottom })
     .alignItems(HorizontalAlign.Start)
-    .backgroundColor(BACK_PAPER)
-    .borderRadius(this.u(6))
-    .clip(true)
-    .shadow({ radius: this.u(18), color: '#29281E0F', offsetY: this.u(6) })
+    .backgroundColor(this.dieCut() ? '#FBFAF6' : BACK_PAPER)
+    .clipShape(this.ticketOutline())
   }
 
   @Builder
   heading(text: string) {
     Text(text)
-      .fontSize(this.u(11))
-      .fontWeight(FontWeight.Bold)
-      .letterSpacing(this.u(2.5))
+      .fontFamily(this.dieCut() ? TICKET_SERIF : '')
+      .fontSize(this.u(this.dieCut() ? 12 : 11))
+      .fontWeight(this.dieCut() ? FontWeight.Normal : FontWeight.Bold)
+      .letterSpacing(this.u(this.dieCut() ? 1.8 : 2.5))
       .fontColor(MOVIE_LABEL)
       .height(this.u(16))
   }

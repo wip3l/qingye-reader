@@ -36,7 +36,7 @@ struct TicketAlbumPage {
   @StorageProp('bookMarkRevision') @Watch('onRevisionChanged') bookMarkRevision: number = 0;
   @State tickets: ReadingTicket[] = [];
   @State loaded: boolean = false;
-  @State ticketStyle: string = TicketAlbumStore.STYLE_CARD;
+  @State ticketStyle: string = TicketAlbumStore.STYLE_PAPER;
   @State singleColumn: boolean = false;
   @State issueAnimation: boolean = true;
   @State statusFilter: number = 0;
@@ -76,6 +76,13 @@ struct TicketAlbumPage {
       if (generation !== this.loadGeneration) return;
       this.tickets = tickets;
       if (this.yearFilter && !ReadingTicketRules.years(tickets).includes(this.yearFilter)) this.yearFilter = 0;
+      this.loaded = true;
+      // 先按默认色画出来，再逐张取封面颜色，取好几张刷新一次。
+      if (ReadingTicketLoader.pendingAccents(tickets) > 0) {
+        await ReadingTicketLoader.fillAccents(context, tickets, 6, (): void => {
+          if (generation === this.loadGeneration) this.tickets = tickets.slice();
+        }, (): boolean => generation === this.loadGeneration);
+      }
     } catch (error) {
       console.warn('读取票夹失败:', error);
     } finally {
@@ -130,7 +137,7 @@ struct TicketAlbumPage {
 
   private ticketKey(ticket: ReadingTicket): string {
     return `${ticket.workKey}|${ticket.status}|${ticket.number}|${ticket.rating}|${ticket.totalMs}|${ticket.coverUrl}|` +
-      `${ticket.review.length}`;
+      `${ticket.review.length}|${ticket.quote.length}|${ticket.accent}`;
   }
 
   private statusCount(status: number): number {

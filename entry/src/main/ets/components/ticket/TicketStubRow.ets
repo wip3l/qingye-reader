@@ -19,7 +19,7 @@ export struct TicketStubRow {
   /** workKey|status|updateTime，变了就重算这张票。 */
   @Prop @Watch('reload') markKey: string = '';
   @State ticket: ReadingTicket | null = null;
-  @State ticketStyle: string = TicketAlbumStore.STYLE_CARD;
+  @State ticketStyle: string = TicketAlbumStore.STYLE_PAPER;
   private generation: number = 0;
 
   aboutToAppear(): void {
@@ -49,13 +49,20 @@ export struct TicketStubRow {
   build() {
     Row({ space: AppSpacing.MD }) {
       if (this.ticket) {
-        ReadingTicketCard({
-          ticket: this.ticket as ReadingTicket,
-          ticketStyle: this.ticketStyle,
-          cardWidth: 54,
-          notchColor: ThemeRuntime.softFillColor(this.darkMode),
-          thumbnail: true
-        })
+        // 只露出票的上半截，像从票夹里抽出一角；车票本来就矮，整张显示。
+        Column() {
+          ReadingTicketCard({
+            ticket: this.ticket as ReadingTicket,
+            ticketStyle: this.ticketStyle,
+            cardWidth: 56,
+            notchColor: ThemeRuntime.softFillColor(this.darkMode),
+            thumbnail: true
+          })
+        }
+        .width(56)
+        .height(80)
+        .alignItems(HorizontalAlign.Start)
+        .clip(true)
       }
       Column({ space: 2 }) {
         Text(this.title())
