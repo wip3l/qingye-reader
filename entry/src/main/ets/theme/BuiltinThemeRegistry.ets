@@ -18,9 +18,11 @@ export class BuiltinThemeRegistry {
   static readonly DEFAULT_THEME_ID: string = ThemeIds.PLAIN_DEFAULT;
   static readonly THEMES: ThemePack[] = BuiltinThemeRegistry.createThemes();
 
+  /** 主题列表里看到的内置主题；plain-base 只给旧方案打底，不列出来。 */
   static all(): ThemePack[] {
     const result: ThemePack[] = [];
     for (const theme of BuiltinThemeRegistry.THEMES) {
+      if (theme.id === ThemeIds.PLAIN_BASE) continue;
       result.push(BuiltinThemeRegistry.cloneTheme(theme));
     }
     return result;
@@ -84,7 +86,7 @@ export class BuiltinThemeRegistry {
   static isFree(themeId: string): boolean {
     const normalized = (themeId || '').trim();
     return normalized === ThemeIds.PLAIN_DEFAULT || normalized === BuiltinThemeRegistry.DEFAULT_THEME_ID ||
-      normalized === ThemeIds.MORNING_MIST;
+      normalized === ThemeIds.MORNING_MIST || normalized === ThemeIds.PLAIN_BASE;
   }
 
   /** 主题包 ID（pack:<packageId>）原样保留：缺包时由 findById 回退，不把方案里的来源改写掉。 */
@@ -140,6 +142,7 @@ export class BuiltinThemeRegistry {
     const themes: ThemePack[] = [];
     themes.push(BuiltinThemeRegistry.plainDefault());
     themes.push(BuiltinThemeRegistry.morningMist());
+    themes.push(BuiltinThemeRegistry.plainBase());
     themes.push(BuiltinThemeRegistry.strawberryCream());
     themes.push(BuiltinThemeRegistry.crimsonArchive());
     themes.push(BuiltinThemeRegistry.plumTea());
@@ -191,6 +194,40 @@ export class BuiltinThemeRegistry {
     theme.radius = BuiltinThemeRegistry.radius(6, 12, 20, 16, 22, 7);
     theme.readerLayout = BuiltinThemeRegistry.readerLayout(20, 14, 4, 22, 22, 22, 22);
     theme.glass = BuiltinThemeRegistry.glass(20, 16, 90, 80, 50, 22, 16, 4);
+    return theme;
+  }
+
+  /**
+   * 素笺之前的默认主题，原样保留（ThemeIds.PLAIN_BASE）：灰白底、石板蓝强调，没有封面、文件夹、书架边框、
+   * 首页背景和章首饰图。改版前做的方案、主题包靠它补齐没设置的部件，所以这里的数值不要再改。
+   * 启动页沿用默认主题的系统启动页。
+   */
+  private static plainBase(): ThemePack {
+    const theme = BuiltinThemeRegistry.theme(
+      ThemeIds.PLAIN_BASE,
+      '原默认主题',
+      '素笺之前的默认外观：无纹理、低装饰，旧方案没设置的部分按它显示',
+      'sans-serif',
+      'classic'
+    );
+    theme.light = BuiltinThemeRegistry.variant(
+      BuiltinThemeRegistry.colors('#F7F7F7', '#FFFFFF', '#F0F0F0', '#202124', '#73777F', '#E2E2E2',
+        '#4A5F7E', '#435673', '#C93F3F'),
+      BuiltinThemeRegistry.reader('#FAFAFA', '', '#262626', '#777777', 'light'),
+      BuiltinThemeRegistry.regex(ThemeBubbleStyles.CAPSULE, '#E7E9EC', '#34383D')
+    );
+    theme.dark = BuiltinThemeRegistry.variant(
+      BuiltinThemeRegistry.colors('#111111', '#1B1B1B', '#262626', '#F0F0F0', '#A0A0A0', '#343434',
+        '#9DB1CF', '#62748F', '#E86A6A'),
+      BuiltinThemeRegistry.reader('#161616', '', '#E1E1E1', '#9A9A9A', 'dark'),
+      BuiltinThemeRegistry.regex(ThemeBubbleStyles.CAPSULE, '#34383D', '#E4E7EB')
+    );
+    theme.book.coverAssetId = '';
+    theme.book.shelfFrameAssetId = '';
+    theme.book.shelfFolderAssetId = '';
+    theme.startup.styleId = ThemeIds.PLAIN_DEFAULT;
+    theme.radius = BuiltinThemeRegistry.radius(6, 12, 20, 12, 24, 8);
+    theme.readerLayout = BuiltinThemeRegistry.readerLayout(20, 12, 0, 18, 18, 18, 18);
     return theme;
   }
 

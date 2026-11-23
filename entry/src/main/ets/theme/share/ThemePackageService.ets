@@ -19,7 +19,7 @@ import { ReaderFontHelper } from '../../utils/ReaderFontHelper';
 import { ReaderSettings, ReaderSettingsStore } from '../../utils/ReaderSettingsStore';
 import { ReaderThemeHelper } from '../../utils/ReaderThemeHelper';
 import { BuiltinThemeRegistry } from '../BuiltinThemeRegistry';
-import { SuperExclusiveThemes, ThemeIds, ThemePack } from '../ThemeModels';
+import { DefaultBaseRevision, SuperExclusiveThemes, ThemeIds, ThemePack } from '../ThemeModels';
 import { InstalledThemePack, ThemePackRecord, ThemePackRegistry } from '../ThemePackRegistry';
 import { ThemePackStore } from '../../utils/ThemePackStore';
 import {
@@ -333,6 +333,7 @@ export class ThemePackageService {
         manifest.version = bundled.version;
         if (!manifest.description) manifest.description = bundled.description;
         manifest.baseTheme = bundled.baseTheme;
+        manifest.baseRevision = DefaultBaseRevision.CURRENT;
         if (scheme.packageId === bundled.packageId) {
           manifest.credits = bundled.credits;
         } else {
@@ -804,8 +805,11 @@ export class ThemePackageService {
     record.author = manifest.author;
     record.version = manifest.version;
     record.description = manifest.description;
-    record.baseTheme = isPackThemeId(manifest.baseTheme) ? BuiltinThemeRegistry.DEFAULT_THEME_ID :
+    const baseTheme = isPackThemeId(manifest.baseTheme) ? BuiltinThemeRegistry.DEFAULT_THEME_ID :
       BuiltinThemeRegistry.normalizeBuiltinId(manifest.baseTheme);
+    // 素笺之前导出的包（清单没写 baseRevision）照着旧默认主题设计，没写的部件按原默认主题补。
+    record.baseTheme = DefaultBaseRevision.isLegacy(manifest.baseRevision) ?
+      DefaultBaseRevision.upgradeId(baseTheme) : baseTheme;
     record.installedAt = Date.now();
     record.credits = manifest.credits;
     record.parts = mapPartsAssetRefs(parts, (ref: string): string => paths.get(ref) || '');

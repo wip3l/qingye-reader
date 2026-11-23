@@ -2,6 +2,7 @@ import { Context } from '@kit.AbilityKit';
 import preferences from '@ohos.data.preferences';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import {
+  DefaultBaseRevision,
   ThemeColorOverrides,
   ThemeColorTokens,
   ThemeComponentSourceIds,
@@ -82,6 +83,8 @@ export class AppThemeSettings {
   customDarkStartupText: ThemeStartupTextStyle = new ThemeStartupTextStyle();
   // 方案卡片的预览图（本机文件，不同步）；空用启动封面。
   customPreviewImagePath: string = '';
+  // 方案里 plain-default 指哪一版默认主题；旧数据没有这项，读取时换成原默认主题（见 DefaultBaseRevision）。
+  defaultBaseRevision: number = DefaultBaseRevision.CURRENT;
 }
 
 export class AppThemeSettingsStore {
@@ -127,6 +130,7 @@ export class AppThemeSettingsStore {
   static readonly KEY_CUSTOM_LIGHT_STARTUP_TEXT: string = 'appCustomLightStartupText';
   static readonly KEY_CUSTOM_DARK_STARTUP_TEXT: string = 'appCustomDarkStartupText';
   static readonly KEY_CUSTOM_PREVIEW_IMAGE_PATH: string = 'appCustomPreviewImagePath';
+  static readonly KEY_DEFAULT_BASE_REVISION: string = 'appCustomDefaultBaseRevision';
   static readonly DEFAULT_THEME_ID: string = BuiltinThemeRegistry.DEFAULT_THEME_ID;
   static readonly DEFAULT_LIGHT_ACCENT_COLOR: string = '#007DFF';
   static readonly DEFAULT_DARK_ACCENT_COLOR: string = '#4E9BFF';
@@ -164,6 +168,7 @@ export class AppThemeSettingsStore {
       store, AppThemeSettingsStore.KEY_CUSTOM_DARK_SOURCES,
       AppStorage.get<string>(AppThemeSettingsStore.KEY_CUSTOM_DARK_SOURCES) || ''),
     settings.customBaseThemeId);
+    await AppThemeSettingsStore.upgradeStoredDefaultBase(store, settings);
     const defaults = AppThemeSettingsStore.defaultsForTheme(
       settings.themeId === ThemeIds.CUSTOM ? settings.customBaseThemeId : settings.themeId);
     settings.lightAccentColor = AppThemeSettingsStore.normalizeColor(await AppThemeSettingsStore.getString(
@@ -782,6 +787,46 @@ export class AppThemeSettingsStore {
   }
 
   /**
+   * 素笺之前存下的自定义设置只升级一次：有旧数据时把底子和部件来源里的 plain-default 换成原默认主题并写回，
+   * 没存过自定义设置的（新安装）只记下版本号。
+   */
+  private static async upgradeStoredDefaultBase(store: preferences.Preferences, settings: AppThemeSettings):
+    Promise<void> {
+    const stored = await store.get(AppThemeSettingsStore.KEY_DEFAULT_BASE_REVISION, 0);
+    if (!DefaultBaseRevision.isLegacy(typeof stored === 'number' ? stored : 0)) return;
+    if (await store.has(AppThemeSettingsStore.KEY_CUSTOM_BASE_THEME_ID) ||
+      await store.has(AppThemeSettingsStore.KEY_CUSTOM_LIGHT_SOURCES) ||
+      await store.has(AppThemeSettingsStore.KEY_CUSTOM_DARK_SOURCES)) {
+      AppThemeSettingsStore.upgradeLegacyDefaultBase(settings);
+      await store.put(AppThemeSettingsStore.KEY_CUSTOM_BASE_THEME_ID, settings.customBaseThemeId);
+      await store.put(AppThemeSettingsStore.KEY_CUSTOM_LIGHT_SOURCES, JSON.stringify(settings.customLightSources));
+      await store.put(AppThemeSettingsStore.KEY_CUSTOM_DARK_SOURCES, JSON.stringify(settings.customDarkSources));
+    }
+    await store.put(AppThemeSettingsStore.KEY_DEFAULT_BASE_REVISION, DefaultBaseRevision.CURRENT);
+    await store.flush();
+  }
+
+  /** 旧方案的底子和各部件来源：plain-default 当时指素笺之前的默认主题，换成 plain-base。 */
+  private static upgradeLegacyDefaultBase(settings: AppThemeSettings): void {
+    settings.customBaseThemeId = DefaultBaseRevision.upgradeId(settings.customBaseThemeId);
+    for (const sources of [settings.customLightSources, settings.customDarkSources]) {
+      sources.startupThemeId = DefaultBaseRevision.upgradeId(sources.startupThemeId);
+      sources.paletteThemeId = DefaultBaseRevision.upgradeId(sources.paletteThemeId);
+      sources.readerThemeId = DefaultBaseRevision.upgradeId(sources.readerThemeId);
+      sources.ttsPanelThemeId = DefaultBaseRevision.upgradeId(sources.ttsPanelThemeId);
+      sources.bubbleThemeId = DefaultBaseRevision.upgradeId(sources.bubbleThemeId);
+      sources.navigationThemeId = DefaultBaseRevision.upgradeId(sources.navigationThemeId);
+      sources.bookThemeId = DefaultBaseRevision.upgradeId(sources.bookThemeId);
+      sources.homeBackdropThemeId = DefaultBaseRevision.upgradeId(sources.homeBackdropThemeId);
+      sources.typographyThemeId = DefaultBaseRevision.upgradeId(sources.typographyThemeId);
+      sources.layoutThemeId = DefaultBaseRevision.upgradeId(sources.layoutThemeId);
+      sources.radiusThemeId = DefaultBaseRevision.upgradeId(sources.radiusThemeId);
+      sources.glassThemeId = DefaultBaseRevision.upgradeId(sources.glassThemeId);
+    }
+    settings.defaultBaseRevision = DefaultBaseRevision.CURRENT;
+  }
+
+  /**
    * 默认主题早期的石板灰几乎不带色相，选中态与普通文字分不开；已保存的旧灰色换成新的冷调石板色，
    * 其他用户自选的颜色保持不动。
    */
@@ -930,6 +975,10 @@ export class AppThemeSettingsStore {
     settings.customDarkSources = AppThemeSettingsStore.normalizeSources(
       source.customDarkSources, settings.customBaseThemeId);
     settings.customDarkSources.layoutThemeId = settings.customLightSources.layoutThemeId;
+    // 方案列表、云同步和主题包里的旧方案没有这项：读进来时就按原默认主题打底（见 DefaultBaseRevision）。
+    if (DefaultBaseRevision.isLegacy(source.defaultBaseRevision)) {
+      AppThemeSettingsStore.upgradeLegacyDefaultBase(settings);
+    }
     const defaults = AppThemeSettingsStore.defaultsForTheme(settings.themeId === ThemeIds.CUSTOM ?
       settings.customBaseThemeId : settings.themeId);
     settings.lightAccentColor = AppThemeSettingsStore.normalizeColor(

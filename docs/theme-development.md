@@ -67,7 +67,9 @@ entry/src/main/resources/base/media/
 | `sword-frost`、`qingluan-water`、`cat-pipi`、`azure-mecha`、`starwish-magic`、`letterpress-page` | 带整套位图资源的主题，`theme-framework-check` 会逐个校验其资源文件和尺寸。 |
 | `custom` | 自定义主题，不是独立的主题包：`BuiltinThemeRegistry.customTheme()` 以某个内置主题为基底克隆，再由 `ThemeComponentSourceIds` 按浅色、深色分别指定各部件来自哪个主题。 |
 
-`BuiltinThemeRegistry.isFree()` 对 `plain-default`、`morning-mist` 返回 `true`；免费主题不进服务端 `theme_catalog`。
+`plain-base`（`ThemeIds.PLAIN_BASE`）是默认主题改成素笺之前的原样，名称“原默认主题”，不在 `BuiltinThemeRegistry.all()` 里，只给改版前的自定义方案和主题包打底，数值不要再改。`DefaultBaseRevision` 标出 `plain-default` 的含义版本：方案设置的 `defaultBaseRevision`、主题包记录的 `baseRevision`、清单的 `baseRevision` 缺省或小于 2 时，读取时把其中的 `plain-default`（基底为空也算）换成 `plain-base`；主题页当前自定义设置在 `AppThemeSettingsStore.load()` 里只升级一次（`appCustomDefaultBaseRevision`）。方案编辑器只在方案正在用它时把它列进来源下拉。
+
+`BuiltinThemeRegistry.isFree()` 对 `plain-default`、`morning-mist`、`plain-base` 返回 `true`；免费主题不进服务端 `theme_catalog`。
 
 ## ThemePack 字段
 

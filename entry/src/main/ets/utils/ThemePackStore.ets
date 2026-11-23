@@ -3,6 +3,7 @@ import fs from '@ohos.file.fs';
 import fileUri from '@ohos.file.fileuri';
 import hash from '@ohos.file.hash';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
+import { DefaultBaseRevision } from '../theme/ThemeModels';
 import { InstalledThemePack, ThemePackRecord, ThemePackRegistry } from '../theme/ThemePackRegistry';
 import { CloudThemeChange } from '../account/CloudThemeChange';
 import {
@@ -152,7 +153,9 @@ export class ThemePackStore {
     record.author = parsed.author || '';
     record.version = parsed.version || '';
     record.description = parsed.description || '';
-    record.baseTheme = parsed.baseTheme || '';
+    // 素笺之前装的包：没写的部件原本取自旧默认主题。
+    record.baseTheme = DefaultBaseRevision.isLegacy(parsed.baseRevision) ?
+      DefaultBaseRevision.upgradeId(parsed.baseTheme || '') : (parsed.baseTheme || '');
     record.installedAt = parsed.installedAt || 0;
     record.credits = parsed.credits || null;
     record.navFallbackIconPackId = parsed.navFallbackIconPackId || '';

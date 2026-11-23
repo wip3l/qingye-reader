@@ -1438,6 +1438,11 @@ struct ThemeColorSettingsPage {
         available.push(theme);
       }
     }
+    // 原默认主题不在主题列表里，只在改版前的方案还在用它时列出来（排在素笺后面），换走之后还能换回。
+    if (this.customBaseThemeId === ThemeIds.PLAIN_BASE || this.isSourceInUse(ThemeIds.PLAIN_BASE)) {
+      const index = available.findIndex((theme: ThemePack): boolean => theme.id === ThemeIds.PLAIN_DEFAULT);
+      available.splice(index + 1, 0, BuiltinThemeRegistry.findById(ThemeIds.PLAIN_BASE));
+    }
     // 已安装的主题包也能当部件来源，与内置主题混搭。
     for (const pack of ThemePackRegistry.all()) {
       available.push(BuiltinThemeRegistry.findById(pack.themeId));

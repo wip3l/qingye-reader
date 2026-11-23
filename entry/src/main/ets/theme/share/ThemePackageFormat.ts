@@ -134,6 +134,8 @@ export class ThemePackageManifest {
   version: string = '';
   description: string = '';
   baseTheme: string = '';
+  // baseTheme 里 plain-default 的含义版本：2 是素笺；没写（素笺之前导出的包、旧版编辑器）指原默认主题。
+  baseRevision: number = 0;
   credits: ThemePackageCredits | null = null;
   // 清单里是否写了 assets；没写时由导入方枚举 assets/ 目录补全。
   assetsDeclared: boolean = true;
@@ -1238,6 +1240,7 @@ export function encodeManifest(manifest: ThemePackageManifest): string {
     if (manifest.version) record['version'] = manifest.version;
     if (manifest.description) record['description'] = manifest.description;
     if (manifest.baseTheme) record['baseTheme'] = manifest.baseTheme;
+    if (manifest.baseRevision > 0) record['baseRevision'] = manifest.baseRevision;
     if (manifest.credits) record['credits'] = manifest.credits;
   }
   record['assets'] = manifest.assets;
@@ -1288,6 +1291,7 @@ export function decodeManifest(text: string): ThemePackageManifest {
       ThemePackageLimits.MAX_VERSION_LENGTH);
     manifest.description = sanitizeDescription(stringField(record, 'description'));
     manifest.baseTheme = limitChars(stringField(record, 'baseTheme'), 64);
+    manifest.baseRevision = Math.max(0, Math.floor(numberField(record, 'baseRevision')));
     const credits = objectField(record, 'credits');
     if (credits) {
       manifest.credits = new ThemePackageCredits();

@@ -24,6 +24,29 @@ export class ThemeIds {
   static readonly CELESTIAL_VAULT: string = 'celestial-vault';
   /** 晨雾：光晕背景与玻璃卡片，和默认主题一样免费。 */
   static readonly MORNING_MIST: string = 'morning-mist';
+  /**
+   * 默认主题改成“素笺”之前的样子（灰白、无封面边框、无章首饰图），不在主题列表里出现。
+   * 只给改版前做的自定义方案和主题包打底：它们没单独设置的部件原本取自旧默认主题。
+   */
+  static readonly PLAIN_BASE: string = 'plain-base';
+}
+
+/**
+ * 自定义方案、主题包记录与清单里 plain-default 的含义版本。缺这个标记（或小于 2）的旧数据里，
+ * plain-default 指的是素笺之前的默认主题，读取时换成 ThemeIds.PLAIN_BASE。
+ */
+export class DefaultBaseRevision {
+  static readonly CURRENT: number = 2;
+
+  static isLegacy(value: number | undefined | null): boolean {
+    return typeof value !== 'number' || value < DefaultBaseRevision.CURRENT;
+  }
+
+  /** 旧数据里的 plain-default（或空）换成 plain-base，其他主题原样返回。 */
+  static upgradeId(themeId: string): string {
+    const normalized = (themeId || '').trim();
+    return !normalized || normalized === ThemeIds.PLAIN_DEFAULT ? ThemeIds.PLAIN_BASE : normalized;
+  }
 }
 
 /**

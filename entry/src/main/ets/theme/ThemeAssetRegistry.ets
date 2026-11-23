@@ -506,6 +506,8 @@ export class ThemeAssetRegistry {
         return $r('app.media.theme_logo_custom');
       case ThemeIds.PLAIN_DEFAULT:
         return $r('app.media.theme_logo_plain_default');
+      case ThemeIds.PLAIN_BASE:
+        return $r('app.media.theme_logo_plain_base');
       case ThemeIds.MORNING_MIST:
         return $r('app.media.theme_logo_morning_mist');
       case ThemeIds.WARM_PAPER:

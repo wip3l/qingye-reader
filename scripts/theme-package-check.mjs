@@ -314,6 +314,12 @@ test('v2 manifest: assets optional, packageId charset, credits and description k
   assert.equal(m.assetsDeclared, false);
   assert.equal(m.version, '1.0');
   assert.equal(m.baseTheme, 'plain-default');
+  // 没写 baseRevision 是素笺之前的包（导入时按原默认主题打底）；写了就原样往返。
+  assert.equal(m.baseRevision, 0);
+  const revised = format.decodeManifest(JSON.stringify(manifestV2({ baseRevision: 2 })));
+  assert.equal(revised.baseRevision, 2);
+  assert.equal(format.decodeManifest(format.encodeManifest(revised)).baseRevision, 2);
+  assert.equal(format.decodeManifest(JSON.stringify(manifestV2({ baseRevision: '2' }))).baseRevision, 0);
   assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ packageId: '../x' }))), /packageId/);
   assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ packageId: 'a b' }))), /packageId/);
   const credits = format.decodeManifest(JSON.stringify(manifestV2({

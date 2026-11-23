@@ -32,6 +32,7 @@ my-theme/
   "version": "1.0",
   "description": "深蓝夜色里的花园",
   "baseTheme": "plain-default",
+  "baseRevision": 2,
   "requires": ["custom-scheme-v1", "reader-layout-v1", "theme-parts-v1"]
 }
 ```
@@ -46,6 +47,7 @@ my-theme/
 | `version` | 否 | 作者自定的版本号，最多 32 个字符。 |
 | `description` | 否 | 一句话说明，最多 120 个字符，显示在主题详情。 |
 | `baseTheme` | 否 | 包里没写的部件回退到哪个内置主题，默认 `plain-default`。内置主题 ID 见主题开发指南。选付费主题时，导入的人没有那套主题，基底会换成 `plain-default`（导入预览里会列出）；要所有人看到一样的效果，就用 `plain-default` 或把部件都写进包里。`obsidian-archive`、`celestial-vault` 这类专属主题不要作基底。 |
+| `baseRevision` | 否 | `baseTheme` 里 `plain-default` 指哪一版默认主题。写 `2` 表示现在的默认主题“素笺”；不写时按改版前的“原默认主题”（`plain-base`：灰白、没有封面边框和章首饰图）补齐没写的部件，旧包导入后样子不变。想让没写的部件跟随素笺就写 `2`。 |
 | `requires` | 是 | 至少包含 `custom-scheme-v1`；带 `parts` 时必须包含 `theme-parts-v1`；带字体文件时包含 `fonts-v1`；带 `layout` 时包含 `reader-layout-v1`；带 `emphasis` 时包含 `emphasis-rules-v3`；阅读页角饰只有左上或右下一张时包含 `reader-single-corner-v1`；`covers` 超过 8 张时包含 `book-covers-16-v1`；气泡边框是位图或只有边框没有端饰时包含 `bubble-frame-v1`；气泡端饰或书架边框是位图时（深色那张也算）包含 `bitmap-cap-shelf-frame-v1`；素材超过 64 个时包含 `assets-128-v1`（旧版本应用最多只收 64 个）。 |
 | `assets` | 否 | 可以不写：应用导入时枚举 `assets/` 目录。写了就按 `[{ "path": "assets/x.png", "sha256": "...", "size": 123 }]` 登记，`sha256` 和 `size` 可省略，写了会核对。 |
 | `credits` | 否 | 再导出的混搭方案记录原主题包：`{ "packageId", "name", "author" }`。手写包不用填。 |

@@ -30,7 +30,7 @@ import {
   bookFolderOff,
   bookShelfFrameOff
 } from './share/ThemePackageFormat';
-import { ThemePack, ThemeVariant } from './ThemeModels';
+import { DefaultBaseRevision, ThemePack, ThemeVariant } from './ThemeModels';
 import { ImageFileSize } from '../utils/ImageFileSize';
 
 /** 带显示区域的素材位，见 ThemePackRegistry.imageCrop。 */
@@ -58,6 +58,8 @@ export class ThemePackRecord {
   version: string = '';
   description: string = '';
   baseTheme: string = '';
+  // baseTheme 里 plain-default 的含义版本；旧记录没有这项，读回时换成原默认主题（见 DefaultBaseRevision）。
+  baseRevision: number = DefaultBaseRevision.CURRENT;
   installedAt: number = 0;
   credits: ThemePackageCredits | null = null;
   parts: ThemePackageParts = new ThemePackageParts();
