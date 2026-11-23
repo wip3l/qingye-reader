@@ -447,6 +447,11 @@ export struct BookshelfPage {
   private tileGroupMotionWatchdog: number = -1;
   @State selectedBookUrls: string[] = [];
   @State showMultiSelectMoreMenu: boolean = false;
+  /**
+   * 平铺/陪伴书架多选时文件夹默认照常收起，“全选”只管外面这层；打开后把文件夹摊开、按分组分段列出所有书。
+   * 每次进多选都回到收起。
+   */
+  @State multiSelectExpandFolders: boolean = false;
   private batchExportDialogSession: SystemDialogSession = new SystemDialogSession();
   @State showBookGroupPicker: boolean = false;
   @State groupPickerSingleBookUrl: string = '';
@@ -2138,10 +2143,12 @@ export struct BookshelfPage {
       Stack({ alignContent: Alignment.Bottom }) {
         Row() {
           if (this.isBookMultiSelect) {
-            Text('书架')
+            // 多选时大标题直接写已选本数，比状态行里的小字醒目。
+            Text(this.multiSelectTitleText())
               .fontSize(AppFontSize.DISPLAY)
               .fontWeight(FontWeight.Bold)
               .fontColor(this.primaryTextColor())
+              .maxLines(1)
           } else if (!this.shelfSoloMenuMode() && !this.isCompanionLayout()) {
             this.shelfGroupSwitcher()
           } else if (!this.shelfSoloMenuMode() && this.shelfBaseGroupId() === -1) {
@@ -2348,11 +2355,32 @@ export struct BookshelfPage {
       Column() {
         Row() {
           if (this.isBookMultiSelect) {
-            Text('书架')
-              .fontSize(AppFontSize.DISPLAY)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(this.primaryTextColor())
-            Blank()
+            // 多选时从文件夹点进来接着挑：留着返回键回书架，已选的书不丢。
+            ImmersiveBackButton({
+              iconColor: this.primaryTextColor(),
+              darkMode: this.appDarkMode,
+              buttonSize: 40,
+              containerWidth: 56,
+              materialScale: 0.83,
+              compactLayout: true,
+              onBack: () => this.exitTileGroupPage()
+            })
+            Row({ space: AppSpacing.SM }) {
+              Text(this.multiSelectTitleText())
+                .fontSize(AppFontSize.TITLE)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(this.primaryTextColor())
+                .maxLines(1)
+                .flexShrink(0)
+              Text(this.tileGroupLayerName())
+                .fontSize(AppFontSize.BODY)
+                .fontColor(this.subTextColor())
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .flexShrink(1)
+            }
+            .layoutWeight(1)
+            .alignItems(VerticalAlign.Center)
             ImmersiveHeaderAction({
               label: '取消',
               accessibilityLabel: '退出多选',
@@ -2386,7 +2414,7 @@ export struct BookshelfPage {
         }
         .width('100%')
         .height(56 + this.statusBarHeight)
-        .padding({ left: this.isBookMultiSelect ? AppSpacing.XL : 0, right: AppSpacing.XL, top: this.statusBarHeight })
+        .padding({ left: 0, right: AppSpacing.XL, top: this.statusBarHeight })
         .alignItems(VerticalAlign.Center)
 
         if (this.isBookMultiSelect) {
@@ -2821,27 +2849,89 @@ export struct BookshelfPage {
     return count;
   }
 
+  /** 书架根视图（平铺/陪伴、不在搜索）且这一页确实有文件夹时才给“展开文件夹”开关。 */
+  showsMultiSelectExpandSwitch(): boolean {
+    const key = this.shelfPageKey();
+    if (!this.isTileLayout() || this.pageGroupId(key) !== 0 || this.shelfAppliedSearchKeyword) return false;
+    return this.getTileFolderGroups(this.shelfBooksForPage(key)).length > 0;
+  }
+
+  multiSelectTitleText(): string {
+    return `已选 ${this.selectedBookUrls.length} 本`;
+  }
+
+  /** “展开文件夹”胶囊的宽度：悬浮材质只接受具体数值，按开关 + 间距 + 五个汉字 + 两侧留白算。 */
+  multiSelectExpandCapsuleWidth(): number {
+    return 15 + 28 + 7 + AppFontSize.BODY * 5 + 15;
+  }
+
+  multiSelectFoldersCollapsed(): boolean {
+    return this.showsMultiSelectExpandSwitch() && !this.multiSelectExpandFolders;
+  }
+
+  /** 收着文件夹时按钮写“全选外层”，免得以为连文件夹里的也选了。 */
+  multiSelectToggleAllText(): string {
+    if (this.areAllBooksSelected()) return '取消全选';
+    return this.multiSelectFoldersCollapsed() ? '全选外层' : '全选';
+  }
+
+  /**
+   * 多选工具行：已选本数放在大标题里，这一行只放两颗沉浸光感胶囊（与右上角“取消”同一种材质），
+   * 主题背景图和滚过去的封面上也看得清。左边“展开文件夹”只在书架根视图有文件夹时出现。
+   */
   @Builder
   bookSelectionStatusBar() {
     Row() {
-      Text(this.areAllBooksSelected() ? '☑' : '☐')
-        .fontSize(AppFontSize.TITLE)
-        .fontColor(this.accentColor())
-        .width(28)
-        .textAlign(TextAlign.Center)
-        .onClick(() => this.toggleAllBooks())
+      if (this.showsMultiSelectExpandSwitch()) {
+        ImmersiveMaterialSurface({
+          surfaceWidth: this.multiSelectExpandCapsuleWidth(),
+          surfaceHeight: ImmersiveHeaderAction.SIZE,
+          darkMode: this.appDarkMode,
+          fallbackColor: ThemeRuntime.cardColor(this.appDarkMode),
+          glowColor: `#40${ThemeRuntime.accentColor(this.appDarkMode).substring(1)}`
+        }) {
+          Row({ space: 7 }) {
+            Stack({ alignContent: this.multiSelectExpandFolders ? Alignment.End : Alignment.Start }) {
+              Column()
+                .width(12)
+                .height(12)
+                .borderRadius(6)
+                .backgroundColor(this.multiSelectExpandFolders ? ThemeRuntime.onAccentColor() : '#FFFFFF')
+                .shadow({ radius: 2, color: '#33000000', offsetY: 1 })
+            }
+            .width(28)
+            .height(16)
+            .padding(2)
+            .borderRadius(8)
+            .backgroundColor(this.multiSelectExpandFolders ? this.accentColor() :
+              (this.appDarkMode ? '#4DFFFFFF' : '#33000000'))
+            .animation({ duration: 160, curve: Curve.FastOutSlowIn })
 
-      Text(`已选择 ${this.selectedBookUrls.length}/${this.books.length}`)
-        .fontSize(AppFontSize.BODY)
-        .fontColor(this.secondaryTextColor())
-        .margin({ left: AppSpacing.MD })
-        .layoutWeight(1)
+            Text('展开文件夹')
+              .fontSize(AppFontSize.BODY)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.primaryTextColor())
+              .maxLines(1)
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Center)
+          .accessibilityGroup(true)
+          .accessibilityText('展开文件夹')
+          .accessibilityRole(AccessibilityRoleType.TOGGLER)
+          .accessibilityChecked(this.multiSelectExpandFolders)
+          .onClick(() => this.toggleMultiSelectExpandFolders())
+        }
+      }
 
-      Text(this.areAllBooksSelected() ? '取消全选' : '全选')
-        .fontSize(AppFontSize.BODY)
-        .fontColor(this.accentColor())
-        .padding({ left: AppSpacing.LG, right: AppSpacing.XS, top: AppSpacing.MD, bottom: AppSpacing.MD })
-        .onClick(() => this.toggleAllBooks())
+      Blank()
+
+      ImmersiveHeaderAction({
+        label: this.multiSelectToggleAllText(),
+        tint: this.accentColor(),
+        onTap: () => this.toggleAllBooks()
+      })
     }
     .width('100%')
     .height(42)
@@ -2849,50 +2939,72 @@ export struct BookshelfPage {
     .alignItems(VerticalAlign.Center)
   }
 
+  /** 底栏上方的提示：有选中的书不在眼前这一页（收在文件夹里或在别的分组页），批量操作会一起处理。 */
+  multiSelectOffscreenHint(): string {
+    const offscreen = this.multiSelectOffscreenBooks();
+    if (offscreen.length === 0) return '';
+    return `另有 ${offscreen.length} 本选中的书在${this.multiSelectPlacesText(offscreen)}，操作会一起处理`;
+  }
+
   @Builder
   bookMultiSelectBar() {
-    Row({ space: 10 }) {
-      Button('删除', { type: ButtonType.Normal })
-        .layoutWeight(1)
-        .height(42)
-        .fontSize(AppFontSize.BODY)
-        .borderRadius(ThemeRuntime.buttonRadius())
-        .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode))
-        .fontColor(ThemeRuntime.onAccentColor())
-        .enabled(this.selectedBookUrls.length > 0)
-        .onClick(() => {
-          if (this.selectedBookUrls.length > 0) this.openBatchDeleteDialog();
-        })
-      Button('分组', { type: ButtonType.Normal })
-        .layoutWeight(1)
-        .height(42)
-        .fontSize(AppFontSize.BODY)
-        .borderRadius(ThemeRuntime.buttonRadius())
-        .backgroundColor(this.buttonColor())
-        .fontColor(ThemeRuntime.onAccentColor())
-        .enabled(this.selectedBookUrls.length > 0)
-        .onClick(() => {
-          if (this.selectedBookUrls.length > 0) {
-            this.groupPickerSingleBookUrl = '';
-            this.showBookGroupPicker = true;
-          }
-        })
-      Button('更多', { type: ButtonType.Normal })
-        .layoutWeight(1)
-        .height(42)
-        .fontSize(AppFontSize.BODY)
-        .borderRadius(ThemeRuntime.buttonRadius())
-        .backgroundColor(this.inputColor())
-        .fontColor(this.primaryTextColor())
-        .enabled(this.selectedBookUrls.length > 0)
-        .onClick(() => {
-          if (this.selectedBookUrls.length > 0) this.showMultiSelectMoreMenu = true;
-        })
-        .bindPopup(this.isBookMultiSelect && this.showMultiSelectMoreMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
-          this.multiSelectMoreMenu()
-        }, Placement.TopRight, this.appDarkMode, this.accentColor(), () => {
-          this.showMultiSelectMoreMenu = false;
-        }))
+    Column({ space: 8 }) {
+      if (this.multiSelectOffscreenHint().length > 0) {
+        Text(this.multiSelectOffscreenHint())
+          .width('100%')
+          .fontSize(AppFontSize.CAPTION)
+          .lineHeight(18)
+          .fontColor(this.secondaryTextColor())
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: 6, bottom: 6 })
+          .borderRadius(8)
+          .backgroundColor(this.inputColor())
+      }
+      Row({ space: 10 }) {
+        Button('删除', { type: ButtonType.Normal })
+          .layoutWeight(1)
+          .height(42)
+          .fontSize(AppFontSize.BODY)
+          .borderRadius(ThemeRuntime.buttonRadius())
+          .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode))
+          .fontColor(ThemeRuntime.onAccentColor())
+          .enabled(this.selectedBookUrls.length > 0)
+          .onClick(() => {
+            if (this.selectedBookUrls.length > 0) this.openBatchDeleteDialog();
+          })
+        Button('分组', { type: ButtonType.Normal })
+          .layoutWeight(1)
+          .height(42)
+          .fontSize(AppFontSize.BODY)
+          .borderRadius(ThemeRuntime.buttonRadius())
+          .backgroundColor(this.buttonColor())
+          .fontColor(ThemeRuntime.onAccentColor())
+          .enabled(this.selectedBookUrls.length > 0)
+          .onClick(() => {
+            if (this.selectedBookUrls.length > 0) {
+              this.groupPickerSingleBookUrl = '';
+              this.showBookGroupPicker = true;
+            }
+          })
+        Button('更多', { type: ButtonType.Normal })
+          .layoutWeight(1)
+          .height(42)
+          .fontSize(AppFontSize.BODY)
+          .borderRadius(ThemeRuntime.buttonRadius())
+          .backgroundColor(this.inputColor())
+          .fontColor(this.primaryTextColor())
+          .enabled(this.selectedBookUrls.length > 0)
+          .onClick(() => {
+            if (this.selectedBookUrls.length > 0) this.showMultiSelectMoreMenu = true;
+          })
+          .bindPopup(this.isBookMultiSelect && this.showMultiSelectMoreMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
+            this.multiSelectMoreMenu()
+          }, Placement.TopRight, this.appDarkMode, this.accentColor(), () => {
+            this.showMultiSelectMoreMenu = false;
+          }))
+      }
+      .width('100%')
     }
     .width('100%')
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: 10, bottom: this.multiSelectBottomPadding() })
@@ -3640,6 +3752,11 @@ export struct BookshelfPage {
       Text('批量删除').fontSize(AppFontSize.SUBTITLE).fontWeight(FontWeight.Bold).fontColor(this.primaryTextColor())
       Text(`确定从书架移除选中的 ${this.selectedBookUrls.length} 本书吗？`)
         .fontSize(AppFontSize.BODY).fontColor(this.secondaryTextColor()).textAlign(TextAlign.Center)
+      if (this.multiSelectFolderBreakdownText().length > 0) {
+        Text(this.multiSelectFolderBreakdownText())
+          .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).textAlign(TextAlign.Center)
+          .lineHeight(18).margin({ top: -AppSpacing.SM })
+      }
       Row({ space: AppSpacing.LG }) {
         Button('取消', { type: ButtonType.Normal }).layoutWeight(1).height(42).borderRadius(ThemeRuntime.buttonRadius())
           .backgroundColor(this.glassCardColor()).fontColor(this.primaryTextColor())
@@ -4341,6 +4458,7 @@ export struct BookshelfPage {
 
   enterBookMultiSelect(initialBookUrl: string): void {
     this.isBookMultiSelect = true;
+    this.multiSelectExpandFolders = false;
     this.selectedBookUrls = initialBookUrl ? [initialBookUrl] : [];
     this.showShelfMoreMenu = false;
     this.showShelfFilterMenu = false;
@@ -4436,17 +4554,120 @@ export struct BookshelfPage {
     this.selectedBookUrls = this.selectedBookUrls.filter((url: string) => url !== bookUrl);
   }
 
+  /**
+   * “全选”管的书：书架根视图收着文件夹时只算外面这层（未分组的和置顶到外层的），文件夹里的书靠整夹勾选或进去挑；
+   * 其余情况（列表布局、分组页、摊开文件夹、搜索）是当前页的书。
+   */
+  multiSelectVisibleBooks(): Book[] {
+    const key = this.shelfPageKey();
+    if (this.isTileLayout() && this.shouldUseTileGroupFolders(key)) {
+      return this.shelfBooksForPage(key).filter((book: Book): boolean => book.isPinned || book.group <= 0 ||
+        !this.shelfGroups.some((group: BookGroup): boolean => group.groupId === book.group));
+    }
+    return this.isTileLayout() ? this.shelfBooksForPage(key) : this.books;
+  }
+
+  multiSelectSelectedCount(books: Book[]): number {
+    if (this.selectedBookUrls.length === 0) return 0;
+    const selected = new Set<string>(this.selectedBookUrls);
+    return books.filter((book: Book): boolean => selected.has(book.bookUrl)).length;
+  }
+
+  /** 文件夹的勾选状态：0 一本没选，1 选了一部分，2 全选。 */
+  folderSelectState(groupId: number, pageKey: string): number {
+    const books = this.getTileGroupBooks(groupId, this.shelfBooksForPage(pageKey));
+    const count = this.multiSelectSelectedCount(books);
+    if (count === 0) return 0;
+    return count >= books.length ? 2 : 1;
+  }
+
+  toggleFolderSelection(groupId: number, pageKey: string): void {
+    const urls = this.getTileGroupBooks(groupId, this.shelfBooksForPage(pageKey)).map((book: Book): string => book.bookUrl);
+    if (urls.length === 0) return;
+    if (this.folderSelectState(groupId, pageKey) === 2) {
+      const drop = new Set<string>(urls);
+      this.selectedBookUrls = this.selectedBookUrls.filter((url: string): boolean => !drop.has(url));
+      return;
+    }
+    const merged = new Set<string>(this.selectedBookUrls);
+    urls.forEach((url: string): void => {
+      merged.add(url);
+    });
+    this.selectedBookUrls = Array.from(merged);
+  }
+
+  toggleMultiSelectExpandFolders(): void {
+    this.multiSelectExpandFolders = !this.multiSelectExpandFolders;
+    // 换了排法，回到顶上，免得停在原来位置对不上内容。
+    const page = this.shelfCategoryPage(this.shelfPageKey());
+    page.tileOffset = 0;
+    try {
+      page.tileScroller.scrollTo({ xOffset: 0, yOffset: 0, animation: false });
+    } catch (_) {
+      // 网格还没挂上时不用滚。
+    }
+  }
+
+  /** 选中了但不在当前这一页的书（在收起的文件夹里，或在别的分组页），用于底栏提示和删除确认。 */
+  multiSelectOffscreenBooks(): Book[] {
+    if (this.selectedBookUrls.length === 0) return [];
+    const visible = new Set<string>(this.multiSelectVisibleBooks().map((book: Book): string => book.bookUrl));
+    const selected = new Set<string>(this.selectedBookUrls);
+    return this.allBooks.filter((book: Book): boolean => selected.has(book.bookUrl) && !visible.has(book.bookUrl));
+  }
+
+  /** 选中的书分在哪几个文件夹：“「玄幻」「都市」等 3 个文件夹”，不在文件夹里的记作“书架外层”。 */
+  multiSelectPlacesText(books: Book[]): string {
+    const names: string[] = [];
+    books.forEach((book: Book): void => {
+      const group = book.group > 0 ? this.shelfGroups.find((item: BookGroup): boolean => item.groupId === book.group) : undefined;
+      const name = group ? `「${group.groupName}」` : '书架外层';
+      if (!names.includes(name)) names.push(name);
+    });
+    if (names.length <= 2) return names.join('');
+    return `${names.slice(0, 2).join('')}等 ${names.length} 处`;
+  }
+
+  /** 删除确认里“其中 N 本在文件夹里：玄幻 3 本，都市 2 本”。 */
+  multiSelectFolderBreakdownText(): string {
+    const selected = new Set<string>(this.selectedBookUrls);
+    const counts = new Map<number, number>();
+    this.allBooks.forEach((book: Book): void => {
+      if (!selected.has(book.bookUrl) || book.group <= 0) return;
+      if (!this.shelfGroups.some((group: BookGroup): boolean => group.groupId === book.group)) return;
+      counts.set(book.group, (counts.get(book.group) ?? 0) + 1);
+    });
+    if (counts.size === 0) return '';
+    let total = 0;
+    const parts: string[] = [];
+    this.shelfGroups.forEach((group: BookGroup): void => {
+      const count = counts.get(group.groupId) ?? 0;
+      if (count <= 0) return;
+      total += count;
+      if (parts.length < 4) parts.push(`${group.groupName} ${count} 本`);
+    });
+    const more = counts.size > 4 ? ' 等' : '';
+    return `其中 ${total} 本在文件夹里：${parts.join('，')}${more}。`;
+  }
+
   areAllBooksSelected(): boolean {
-    return this.books.length > 0 && this.books.every((book: Book) => this.isBookSelected(book.bookUrl));
+    const books = this.multiSelectVisibleBooks();
+    return books.length > 0 && this.multiSelectSelectedCount(books) >= books.length;
   }
 
   toggleAllBooks(): void {
+    const visibleUrls = this.multiSelectVisibleBooks().map((book: Book) => book.bookUrl);
     if (this.areAllBooksSelected()) {
-      const visibleUrls = this.books.map((book: Book) => book.bookUrl);
-      this.selectedBookUrls = this.selectedBookUrls.filter((url: string) => !visibleUrls.includes(url));
+      const drop = new Set<string>(visibleUrls);
+      this.selectedBookUrls = this.selectedBookUrls.filter((url: string) => !drop.has(url));
       return;
     }
-    this.selectedBookUrls = this.books.map((book: Book) => book.bookUrl);
+    // 只加上这一页的书，文件夹里或别的分组页里已经选的保留。
+    const merged = new Set<string>(this.selectedBookUrls);
+    visibleUrls.forEach((url: string): void => {
+      merged.add(url);
+    });
+    this.selectedBookUrls = Array.from(merged);
   }
 
   async addShelfBookGroup(): Promise<void> {
@@ -4915,7 +5136,9 @@ export struct BookshelfPage {
 
   bookshelfListBottomInset(): number {
     const comfortableGap = 20;
-    const multiSelectBarHeight = this.isBookMultiSelect ? 104 : 0;
+    // 底栏上方有“另有 N 本…”提示时再让出一行提示的高度。
+    const multiSelectBarHeight = this.isBookMultiSelect ?
+      104 + (this.multiSelectOffscreenHint().length > 0 ? 38 : 0) : 0;
     if (deviceInfo.sdkApiVersion < 23) {
       return comfortableGap + multiSelectBarHeight;
     }
@@ -5115,10 +5338,52 @@ export struct BookshelfPage {
     return this.bookshelfLayoutMode === 'companion';
   }
 
-  /** 搜索时把分组文件夹摊开，命中的书直接排出来，不会被折进文件夹里。 */
+  /** 搜索时把分组文件夹摊开，命中的书直接排出来，不会被折进文件夹里；多选时由“展开文件夹”开关决定。 */
   shouldUseTileGroupFolders(pageKey: string = ''): boolean {
-    return this.isTileLayout() && this.pageGroupId(pageKey) === 0 && !this.isBookMultiSelect &&
-      !this.shelfAppliedSearchKeyword;
+    return this.isTileLayout() && this.pageGroupId(pageKey) === 0 && !this.shelfAppliedSearchKeyword &&
+      !(this.isBookMultiSelect && this.multiSelectExpandFolders);
+  }
+
+  /** 多选里打开了“展开文件夹”的书架根视图：书按分组分段排，每段前面一行分组名。 */
+  shouldUseMultiSelectSections(pageKey: string = ''): boolean {
+    return this.isTileLayout() && this.pageGroupId(pageKey) === 0 && !this.shelfAppliedSearchKeyword &&
+      this.isBookMultiSelect && this.multiSelectExpandFolders;
+  }
+
+  /** “展开文件夹”时的分段：未分组（含分组已不存在的书）在前，其后按分组顺序，段内沿用当前排序。 */
+  getMultiSelectSectionEntries(books: Book[], viewKey: string): ShelfTileSortEntry[] {
+    const entries: ShelfTileSortEntry[] = [];
+    const pushSection = (groupId: number, name: string, sectionBooks: Book[]): void => {
+      if (sectionBooks.length === 0) return;
+      const header = new ShelfTileSortEntry();
+      header.kind = 'header';
+      header.key = `msec_${viewKey}_${groupId}`;
+      header.name = name;
+      header.originalOrder = groupId;
+      entries.push(header);
+      sectionBooks.forEach((book: Book): void => {
+        const entry = new ShelfTileSortEntry();
+        entry.kind = 'book';
+        entry.key = `msbook_${viewKey}_${book.bookUrl}`;
+        entry.book = book;
+        entries.push(entry);
+      });
+    };
+    const unique = this.getTileBooksWithoutLatest(books, [], viewKey);
+    pushSection(0, '未分组', unique.filter((book: Book): boolean => book.group <= 0 ||
+      !this.shelfGroups.some((group: BookGroup): boolean => group.groupId === book.group)));
+    this.getTileFolderGroups(unique).forEach((group: BookGroup): void => {
+      pushSection(group.groupId, group.groupName, unique.filter((book: Book): boolean => book.group === group.groupId));
+    });
+    return entries;
+  }
+
+  /** 分段标题那一行的书：分组 id 0 是“未分组”。 */
+  multiSelectSectionBooks(groupId: number, pageKey: string): Book[] {
+    const books = this.shelfBooksForPage(pageKey);
+    if (groupId > 0) return books.filter((book: Book): boolean => book.group === groupId);
+    return books.filter((book: Book): boolean => book.group <= 0 ||
+      !this.shelfGroups.some((group: BookGroup): boolean => group.groupId === book.group));
   }
 
   getUngroupedTileBooks(): Book[] {
@@ -5430,7 +5695,25 @@ export struct BookshelfPage {
         }
       }
 
-      if (this.shouldUseTileGroupFolders(pageKey)) {
+      if (this.shouldUseMultiSelectSections(pageKey)) {
+        LazyForEach(this.shelfTileEntryDataSource(pageKey), (entry: ShelfTileSortEntry) => {
+          if (entry.kind === 'header') {
+            GridItem() {
+              this.multiSelectSectionHeader(entry, pageKey)
+            }
+            .columnStart(0)
+            .columnEnd(this.shelfTileColumnCount() - 1)
+          } else {
+            GridItem() {
+              if (entry.book) {
+                this.shelfTileBook(entry.book, pageKey)
+              }
+            }
+            .padding({ bottom: this.shelfTileRowGap() - this.shelfTileGridRowGap(this.shelfBooksForPage(pageKey), pageKey) })
+          }
+        }, (entry: ShelfTileSortEntry) => entry.book ? this.shelfBookRenderKey(entry.book, entry.key) :
+          `${entry.key}_cols_${this.shelfTileColumnCount()}`)
+      } else if (this.shouldUseTileGroupFolders(pageKey)) {
         LazyForEach(this.shelfTileEntryDataSource(pageKey), (entry: ShelfTileSortEntry) => {
           GridItem() {
             if (entry.kind === 'group' && entry.group) {
@@ -6420,24 +6703,80 @@ export struct BookshelfPage {
   }
 
   @Builder
+  multiSelectSectionHeader(entry: ShelfTileSortEntry, pageKey: string) {
+    Row() {
+      Text(`${entry.name} · ${this.multiSelectSectionBooks(entry.originalOrder, pageKey).length} 本`)
+        .fontSize(AppFontSize.CAPTION)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.subTextColor())
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      if (this.multiSelectSelectedCount(this.multiSelectSectionBooks(entry.originalOrder, pageKey)) > 0) {
+        Text(`已选 ${this.multiSelectSelectedCount(this.multiSelectSectionBooks(entry.originalOrder, pageKey))}`)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.accentColor())
+      }
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XS, right: AppSpacing.XS, top: AppSpacing.SM })
+    .alignItems(VerticalAlign.Center)
+  }
+
+  /** 多选时文件夹左上角的整夹勾选：空、半选（横线）、全选（对勾），位置与单本书的勾选圈一致。 */
+  @Builder
+  shelfFolderSelectMark(group: BookGroup, pageKey: string) {
+    Stack({ alignContent: Alignment.Center }) {
+      if (this.folderSelectState(group.groupId, pageKey) === 2) {
+        SymbolGlyph($r('sys.symbol.checkmark'))
+          .fontSize(12)
+          .fontColor(['#FFFFFF'])
+      } else if (this.folderSelectState(group.groupId, pageKey) === 1) {
+        SymbolGlyph($r('sys.symbol.minus'))
+          .fontSize(12)
+          .fontColor(['#FFFFFF'])
+      }
+    }
+    .width(22)
+    .height(22)
+    .backgroundColor(this.folderSelectState(group.groupId, pageKey) > 0 ? this.buttonColor() :
+      ThemeRuntime.glassPanelColor(this.appDarkMode))
+    .border({ width: 1, color: this.folderSelectState(group.groupId, pageKey) > 0 ? this.buttonColor() :
+      this.glassBorderColor() })
+    .borderRadius(11)
+    .margin({ left: AppSpacing.SM, top: AppSpacing.SM })
+    // 勾选圈比看上去大一圈的点按区域，点它整夹勾选，点文件夹其他地方照常进分组页接着挑。
+    .responseRegion({ x: -AppSpacing.SM, y: -AppSpacing.SM, width: 22 + AppSpacing.SM * 3, height: 22 + AppSpacing.SM * 3 })
+    .accessibilityText(this.folderSelectState(group.groupId, pageKey) === 2 ? `取消选择${group.groupName}里的书` :
+      `选择${group.groupName}里的全部书`)
+    .onClick(() => this.toggleFolderSelection(group.groupId, pageKey))
+  }
+
+  @Builder
   shelfTileGroupFolder(group: BookGroup, pageKey: string) {
     Column({ space: AppSpacing.XS }) {
-      if (this.isCompanionLayout()) {
-        Column() {
-          this.shelfHardcoverFolder(this.getTileGroupPreviewBooks(group.groupId, this.shelfBooksForPage(pageKey)),
+      Stack({ alignContent: Alignment.TopStart }) {
+        if (this.isCompanionLayout()) {
+          Column() {
+            this.shelfHardcoverFolder(this.getTileGroupPreviewBooks(group.groupId, this.shelfBooksForPage(pageKey)),
+              this.tileGroupElementId(group.groupId, pageKey))
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+          // 与单本书一样，书底下留出底板与落地投影。
+          .margin({ bottom: AppSpacing.SM })
+        } else {
+          // Use one outer surface for both the themed folder artwork and the
+          // four-cover preview so folders carry the same radius, border and shadow
+          // weight as ordinary shelf cards.
+          this.shelfFolderPreview(this.getTileGroupPreviewBooks(group.groupId, this.shelfBooksForPage(pageKey)),
             this.tileGroupElementId(group.groupId, pageKey))
         }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
-        // 与单本书一样，书底下留出底板与落地投影。
-        .margin({ bottom: AppSpacing.SM })
-      } else {
-      // Use one outer surface for both the themed folder artwork and the
-      // four-cover preview so folders carry the same radius, border and shadow
-      // weight as ordinary shelf cards.
-      this.shelfFolderPreview(this.getTileGroupPreviewBooks(group.groupId, this.shelfBooksForPage(pageKey)),
-        this.tileGroupElementId(group.groupId, pageKey))
+        if (this.isBookMultiSelect) {
+          this.shelfFolderSelectMark(group, pageKey)
+        }
       }
+      .width('100%')
 
       Text(group.groupName)
         .width('100%')
@@ -6468,9 +6807,17 @@ export struct BookshelfPage {
           SymbolGlyph($r('sys.symbol.folder'))
             .fontSize(13)
             .fontColor([this.subTextColor()])
-          Text(`共 ${this.getTileGroupBooks(group.groupId, this.shelfBooksForPage(pageKey)).length} 本`)
-            .fontSize(AppFontSize.CAPTION)
-            .fontColor(this.subTextColor())
+          if (this.isBookMultiSelect && this.folderSelectState(group.groupId, pageKey) > 0) {
+            Text(`已选 ${this.multiSelectSelectedCount(this.getTileGroupBooks(group.groupId,
+              this.shelfBooksForPage(pageKey)))}/${this.getTileGroupBooks(group.groupId,
+              this.shelfBooksForPage(pageKey)).length}`)
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.accentColor())
+          } else {
+            Text(`共 ${this.getTileGroupBooks(group.groupId, this.shelfBooksForPage(pageKey)).length} 本`)
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.subTextColor())
+          }
         }
       }
       .width('100%')
@@ -6488,6 +6835,7 @@ export struct BookshelfPage {
     .gesture(
       LongPressGesture({ repeat: false })
         .onAction((event: GestureEvent) => {
+          if (this.isBookMultiSelect) return;
           this.captureContextMenuAnchor(event);
           this.pendingBookGroup = group;
           this.showBookGroupActionMenu = true;
@@ -8562,7 +8910,8 @@ export struct BookshelfPage {
       (!this.privateShelfHasPassword || this.privateShelfRevealed || this.shelfScope === 'private');
     const signature = `${this.shelfCategoryRevision}:${groupId}:${this.sortMode}:` +
       `${this.bookshelfLayoutMode}:${this.bookshelfLastReadPinMode}:${this.bookshelfLastReadPinCount}:` +
-      `${this.isBookMultiSelect}:${this.shelfFilterKeys}:${this.shelfAppliedSearchKeyword}:${privateAllowed}`;
+      `${this.isBookMultiSelect}:${this.multiSelectExpandFolders}:${this.shelfFilterKeys}:` +
+      `${this.shelfAppliedSearchKeyword}:${privateAllowed}`;
     if (signature !== page.signature) {
       page.signature = signature;
       page.books = type === 'private' && !privateAllowed ? [] : this.sortBooks(this.allBooks.filter((book: Book): boolean =>
@@ -8570,7 +8919,9 @@ export struct BookshelfPage {
         (type === 'all' || type === 'private' || this.shelfBookType(book) === type) &&
         this.matchesShelfFilters(book) && this.matchesShelfSearch(book)));
       if (!this.isTileLayout()) page.listSource.replace(page.books, true);
-      else if (this.shouldUseTileGroupFolders(key)) {
+      else if (this.shouldUseMultiSelectSections(key)) {
+        page.entrySource.replace(this.getMultiSelectSectionEntries(page.books, key), true);
+      } else if (this.shouldUseTileGroupFolders(key)) {
         page.entrySource.replace(this.getSortedTileRootEntries(page.books, this.sortMode, key), true);
       } else page.tileSource.replace(this.getTileBooksWithoutLatest(page.books,
         this.getLatestReadTileBooks(page.books), key), true);
