@@ -76,6 +76,7 @@ import { ReaderNightImage } from '../core/reader/ReaderNightImage';
 import { TapZoneSettingsDialogContent } from '../components/TapZoneSettingsDialog';
 import { ReaderHaptics } from '../utils/ReaderHaptics';
 import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
+import { WatchReaderHost, WatchReaderSnapshot, WatchRemoteBridge } from '../utils/WatchRemoteBridge';
 import {
   ReaderSnapshotPageTurn, ReaderSnapshotTurnController, ReaderSnapshotTurnHost
 } from '../components/reader/ReaderSnapshotPageTurn';
@@ -494,6 +495,7 @@ struct EpubOriginalReadBookPage {
   private loadSerial: number = 0;
   private noteSerial: number = 0;
   private alive: boolean = true;
+  private watchRemoteHost: WatchReaderHost | null = null;
   private saveTimer: number = -1;
   private saveTask: Promise<void> = Promise.resolve();
   private owner: string = `epub-original-${Date.now()}-${Math.random()}`;
@@ -624,6 +626,7 @@ struct EpubOriginalReadBookPage {
     // 没有接系统媒体控件，退到后台或盖上别的页面时音乐先停下，回来再点卡片或胶囊继续。
     EpubAudioPlayer.pause(this.owner);
     this.unregisterHardwareKeys();
+    if (this.watchRemoteHost) WatchRemoteBridge.detach(this.watchRemoteHost);
     this.keyboard.reset();
     this.showLayoutElements = false;
     this.showTapZones = false;
@@ -640,6 +643,7 @@ struct EpubOriginalReadBookPage {
     this.stopHoldingHandTracking();
     this.flushAndSyncProgress();
     this.alive = false;
+    if (this.watchRemoteHost) WatchRemoteBridge.detach(this.watchRemoteHost);
     this.themeRevealSerial++;
     this.releaseThemeReveal();
     this.musicUnsubscribe?.();
@@ -889,6 +893,7 @@ struct EpubOriginalReadBookPage {
   /** 页面可见时才接管音量键、智控键；离开页面立即交还给系统。 */
   updateKeySubscription(): void {
     this.unregisterHardwareKeys();
+    this.syncWatchRemoteHost();
     // 朗读时音量键调音量（与普通阅读页相同）。
     if (!this.alive || !this.visible || this.ttsActive) return;
     if (this.volumeTurnOn()) {
@@ -942,6 +947,40 @@ struct EpubOriginalReadBookPage {
   private hardwareTurn(direction: number): void {
     if (!this.canTurnByKey()) return;
     this.turnByKey(direction);
+  }
+
+  /** 手表翻页：页面可见时接上，规则与按键翻页相同，朗读时不翻。 */
+  private syncWatchRemoteHost(): void {
+    if (!this.watchRemoteHost) {
+      const host = new WatchReaderHost();
+      host.inputKind = (): number => ReaderInputKind.NOVEL;
+      host.blockedReason = (): string => {
+        if (this.ttsActive) return '手机正在朗读，停止朗读后自动恢复';
+        if (this.canTurnByKey()) return '';
+        return this.ready && !this.transitioning && !this.jumpBusy ? '手机上菜单或面板开着' : '手机正在加载';
+      };
+      host.turn = (direction: number): void => {
+        if (!this.ttsActive) this.hardwareTurn(direction);
+      };
+      host.snapshot = (): WatchReaderSnapshot => {
+        const pages = this.paged ? Math.max(0, this.pageCount) : 0;
+        const page = pages > 0 ? Math.min(pages, this.pageIndex + 1) : 0;
+        const chapterRatio = pages > 0 ? page / pages : 0;
+        const snapshot: WatchReaderSnapshot = {
+          book: this.title, chapter: this.chapterTitle, page: page, pages: pages,
+          progress: this.chapterCount > 0 ? (this.chapterIndex + chapterRatio) / this.chapterCount : 0
+        };
+        return snapshot;
+      };
+      host.onWatchContact = (): void => HdsFeedback.showToast('手表已连上，可以用手表翻页');
+      this.watchRemoteHost = host;
+    }
+    if (this.alive && this.visible) {
+      WatchRemoteBridge.attach(this.watchRemoteHost);
+      WatchRemoteBridge.sync(this.getUIContext().getHostContext() as Context);
+    } else {
+      WatchRemoteBridge.detach(this.watchRemoteHost);
+    }
   }
 
   private turnByKey(direction: number): void {

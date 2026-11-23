@@ -70,6 +70,7 @@ import { PlaybackLoudnessGain } from '../utils/PlaybackLoudnessGain';
 import { SourceFormProfile } from '../core/book/SourceFormProfile';
 import { SourceErrorState } from '../core/book/SourceErrorState';
 import { ReaderInputScopes } from '../utils/ReaderInputScopes';
+import { WatchRemoteBridge } from '../utils/WatchRemoteBridge';
 import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
 import { syncDesktopTitleBar, releaseSystemBarListeners } from '../utils/SystemBars';
 
@@ -430,6 +431,7 @@ export default class EntryAbility extends UIAbility {
     AiAccessPolicy.stop();
     if (this.membershipThemeTimer >= 0) clearInterval(this.membershipThemeTimer);
     lanReaderServer.stop().catch(() => undefined);
+    WatchRemoteBridge.stop().catch(() => undefined);
     readStatsTracker.flush();
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onDestroy');
   }
@@ -534,6 +536,9 @@ export default class EntryAbility extends UIAbility {
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onForeground');
     readStatsTracker.setAppForeground(true);
     AppStorage.setOrCreate<number>('appLifecycleForegroundRevision', Date.now());
+    // 手表翻页打开时注册接收；回前台时重扫一遍已连接的手表（换表、重新配对后 randomId 会变）。
+    ReaderInputScopes.load(this.context).then((): Promise<void> => WatchRemoteBridge.sync(this.context))
+      .catch((): void => {});
     if (AppStorage.get<boolean>('lanReaderEnabled') && !lanReaderServer.isRunning()) {
       lanReaderServer.start(this.context).catch((e: Error) => {
         hilog.warn(0x0000, 'testTag', 'Restart LAN reader failed: %{public}s', JSON.stringify(e));

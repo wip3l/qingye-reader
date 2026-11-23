@@ -40,6 +40,7 @@ import { PlaybackSpeed } from '../utils/PlaybackSpeed';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow, SettingRow, SettingScopeRow, SettingSwitchRow } from '../components/common/SettingRow';
 import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
+import { WatchRemoteBridge, WatchRemoteStatus, WatchRemoteStatusKind } from '../utils/WatchRemoteBridge';
 import { ReaderComicSettings, ReaderComicSettingsStore } from '../core/reader/ReaderComicSettings';
 import { ReaderPdfSettingsStore } from '../core/book/pdf/ReaderPdfSettingsStore';
 import { ScreenTimeoutStepper } from '../components/common/ScreenTimeoutStepper';
@@ -138,6 +139,9 @@ struct SettingsPage {
   @StorageProp('readerVolumeTurnScope') readerVolumeTurnScope: number = 0;
   @StorageProp('readerSmartKeyTurnScope') readerSmartKeyTurnScope: number = 0;
   @StorageProp('readerSmartKeyTurnSupported') readerSmartKeyTurnSupported: boolean = false;
+  @StorageProp('readerWatchTurnScope') readerWatchTurnScope: number = 0;
+  @State watchRemoteStatus: WatchRemoteStatus | null = null;
+  private watchRemoteStatusSerial: number = 0;
   @StorageProp('audioBookAutoPlay') audioBookAutoPlay: boolean = true;
   @StorageProp('audioMixWithOthers') audioMixWithOthers: boolean = false;
   /** 有声书、段评、预缓存只对网页解析的内容有意义，开关关闭时不显示。 */
@@ -209,7 +213,10 @@ struct SettingsPage {
     this.refreshSystemFontFamily();
     this.loadReaderSettings();
     if (this.isNovelSection()) this.refreshTypographyThemes();
-    else this.loadDoublePageScope();
+    else {
+      this.loadDoublePageScope();
+      this.refreshWatchRemoteStatus();
+    }
     this.reloadCustomFonts();
     this.syncBars();
     if (this.pendingStyleGroup >= 0) {
@@ -654,6 +661,18 @@ struct SettingsPage {
             this.toggleReaderInputScope(ReaderInputScopes.KEY_SMART_KEY_TURN, kind, on);
           }
         })
+      }
+      SettingScopeRow({
+        title: '手表翻页',
+        description: '在手表上打开开源轻页，点屏幕或转表冠翻页，条漫为翻一屏',
+        scope: this.readerWatchTurnScope,
+        labels: ReaderInputKind.LABELS,
+        values: ReaderInputKind.VALUES,
+        showDivider: this.readerWatchTurnScope === 0,
+        onToggle: (kind: number, on: boolean): void => this.toggleWatchTurn(kind, on)
+      })
+      if (this.readerWatchTurnScope !== 0) {
+        this.watchRemoteStatusRow()
       }
       SettingScopeRow({
         title: '翻页震感',
@@ -2282,6 +2301,48 @@ struct SettingsPage {
     ReaderInputScopes.toggle(getContext(this), key, kind, on).catch((e: Error) => {
       console.error('保存按键翻页设置失败:', e);
     });
+  }
+
+  toggleWatchTurn(kind: number, on: boolean): void {
+    ReaderInputScopes.toggle(getContext(this), ReaderInputScopes.KEY_WATCH_TURN, kind, on).then((): void => {
+      WatchRemoteBridge.sync(getContext(this));
+      this.refreshWatchRemoteStatus();
+    }).catch((e: Error) => {
+      console.error('保存手表翻页设置失败:', e);
+    });
+  }
+
+  /** 手表翻页打开时查一次连接与安装状态；关着时不查，免得没有手表的人看到无关提示。 */
+  refreshWatchRemoteStatus(): void {
+    const serial = ++this.watchRemoteStatusSerial;
+    if (this.readerWatchTurnScope === 0) {
+      this.watchRemoteStatus = null;
+      return;
+    }
+    WatchRemoteBridge.queryStatus(getContext(this)).then((status: WatchRemoteStatus): void => {
+      if (serial === this.watchRemoteStatusSerial) this.watchRemoteStatus = status;
+    });
+  }
+
+  @Builder
+  watchRemoteStatusRow() {
+    Column({ space: 2 }) {
+      if (this.watchRemoteStatus && this.watchRemoteStatus.deviceName) {
+        Text(this.watchRemoteStatus.deviceName)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.primaryTextColor())
+      }
+      Text(this.watchRemoteStatus ? this.watchRemoteStatus.text : '正在查找手表…')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.watchRemoteStatus?.kind === WatchRemoteStatusKind.OK ? this.accentColor() :
+          this.subTextColor())
+    }
+    .width('calc(100% - 32vp)')
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.SM, bottom: AppSpacing.SM })
+    .margin({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: AppSpacing.MD })
+    .borderRadius(12)
+    .border({ width: 0.5, color: ThemeRuntime.hairlineColor(this.appDarkMode) })
   }
 
   setReaderEyeTurnEnabled(enabled: boolean): void {

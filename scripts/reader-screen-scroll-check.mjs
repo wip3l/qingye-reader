@@ -85,7 +85,7 @@ function method(name) {
   return reader.slice(start, reader.indexOf('\n  }', start) + 4);
 }
 vm.runInContext(stripTypeScriptTypes(`class Reader {
-${['handleHardwareKeyTurn', 'scrollReaderComicByPage', 'advanceReaderComicScreenScroll', 'turnNext', 'turnPrev']
+${['handleHardwareKeyTurn', 'readerExternalTurnBlockedReason', 'scrollReaderComicByPage', 'advanceReaderComicScreenScroll', 'turnNext', 'turnPrev']
   .map(method).join('\n')}
 }\nglobalThis.Reader = Reader;`), sandbox);
 function fixture() {

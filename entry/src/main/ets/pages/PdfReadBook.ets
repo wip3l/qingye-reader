@@ -59,6 +59,7 @@ import { TapZoneSettingsDialogContent } from '../components/TapZoneSettingsDialo
 import { ReaderHaptics } from '../utils/ReaderHaptics';
 import { HoldingHandTracker } from '../utils/HoldingHandTracker';
 import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
+import { WatchReaderHost, WatchReaderSnapshot, WatchRemoteBridge } from '../utils/WatchRemoteBridge';
 import {
   ReaderSnapshotPageTurn, ReaderSnapshotTurnController, ReaderSnapshotTurnHost
 } from '../components/reader/ReaderSnapshotPageTurn';
@@ -112,6 +113,7 @@ struct PdfReadBookPage {
   @State @Watch('syncTapZoneDialog') showTapZones: boolean = false;
   private pdfDefaults: ReaderPdfSettings = new ReaderPdfSettings();
   private turnKeys: ReaderTurnKeys = new ReaderTurnKeys('PDF');
+  private watchRemoteHost: WatchReaderHost | null = null;
   private screenTimeout: ReaderScreenTimeout = new ReaderScreenTimeout('PDF');
   private keyboardSettings: ReaderKeyboardSettings = new ReaderKeyboardSettings();
   private keyboard: ReaderKeyboard = new ReaderKeyboard();
@@ -271,6 +273,7 @@ struct PdfReadBookPage {
     this.showTapZones = false;
     this.brightnessSession.deactivate();
     this.turnKeys.release();
+    if (this.watchRemoteHost) WatchRemoteBridge.detach(this.watchRemoteHost);
     this.keyboard.reset();
     this.syncInfoClock();
     this.screenTimeout.release(this.getUIContext().getHostContext());
@@ -288,6 +291,7 @@ struct PdfReadBookPage {
     this.showTapZones = false;
     this.brightnessSession.deactivate();
     this.turnKeys.release();
+    if (this.watchRemoteHost) WatchRemoteBridge.detach(this.watchRemoteHost);
     this.infoClock?.stop();
     if (this.prewarmTimer >= 0) clearTimeout(this.prewarmTimer);
     this.screenTimeout.release(this.getUIContext().getHostContext());
@@ -977,6 +981,36 @@ struct PdfReadBookPage {
       this.smartKeySupported, (direction: number): void => {
         if (this.canTurnByKey()) this.turn(direction);
       });
+    this.syncWatchRemoteHost();
+  }
+
+  /** 手表翻页：页面可见时接上，规则与按键翻页相同。 */
+  private syncWatchRemoteHost(): void {
+    if (!this.watchRemoteHost) {
+      const host = new WatchReaderHost();
+      host.inputKind = (): number => ReaderInputKind.PDF;
+      host.blockedReason = (): string => this.canTurnByKey() ? '' :
+        (this.ready ? '手机上菜单或面板开着' : '手机正在加载');
+      host.turn = (direction: number): void => {
+        if (this.canTurnByKey()) this.turn(direction);
+      };
+      host.snapshot = (): WatchReaderSnapshot => {
+        const pages = Math.max(0, this.pageCount);
+        const page = pages > 0 ? Math.min(pages, this.pageIndex + 1) : 0;
+        const snapshot: WatchReaderSnapshot = {
+          book: this.title, chapter: 'PDF', page: page, pages: pages, progress: pages > 0 ? page / pages : 0
+        };
+        return snapshot;
+      };
+      host.onWatchContact = (): void => HdsFeedback.showToast('手表已连上，可以用手表翻页');
+      this.watchRemoteHost = host;
+    }
+    if (this.alive && this.visible) {
+      WatchRemoteBridge.attach(this.watchRemoteHost);
+      WatchRemoteBridge.sync(this.getUIContext().getHostContext() as Context);
+    } else {
+      WatchRemoteBridge.detach(this.watchRemoteHost);
+    }
   }
 
   /** 菜单、面板、弹窗开着时按键不翻页，与普通阅读页一致。 */

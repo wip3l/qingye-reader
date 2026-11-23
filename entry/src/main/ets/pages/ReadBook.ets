@@ -290,6 +290,7 @@ import { PopupMenuAction } from '../components/common/PopupMenuAction';
 import { KnockShare } from '../utils/KnockShare';
 import { ReaderHaptics } from '../utils/ReaderHaptics';
 import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
+import { WatchReaderHost, WatchReaderSnapshot, WatchRemoteBridge } from '../utils/WatchRemoteBridge';
 import { READER_TURN_FRAME_RATE, applyReaderTurnFrameRate } from '../utils/ReaderTurnFrameRate';
 
 const READER_CURRENT_PAGINATION_AHEAD_PAGE_COUNT = 4;
@@ -1387,6 +1388,7 @@ struct ReadBookPage {
   private readerPdfDispatched: boolean = false;
   private readerFormatShowPending: boolean = false;
   private readerEntryAlive: boolean = false;
+  private watchRemoteHost: WatchReaderHost | null = null;
 
   async aboutToAppear() {
     ReaderInputScopes.load(getContext(this));
@@ -1513,6 +1515,7 @@ struct ReadBookPage {
     this.onReaderAiAccessChanged();
     this.readerComicColor.setForeground(true);
     this.readerPageVisible = true;
+    this.syncWatchRemoteHost();
     this.readerBrightnessReady = false;
     this.readerBrightnessSession.activate(getContext(this), (value: number): void => {
       this.readerBrightness = value;
@@ -1755,6 +1758,7 @@ struct ReadBookPage {
     this.readerPageTextureWarmSerial++;
     this.readerPageTextureCache.clear();
     this.readerEntryAlive = false;
+    if (this.watchRemoteHost) WatchRemoteBridge.detach(this.watchRemoteHost);
     this.readerContentSearch?.dispose();
     if (!this.readerFormatResolved || this.readerPdfDispatched) return;
     this.cancelReaderContinuousMetricsTimers();
@@ -1902,6 +1906,7 @@ struct ReadBookPage {
     this.readerComicColor.setForeground(false);
     this.shortcutRoutingActive = false;
     this.readerPageVisible = false;
+    this.syncWatchRemoteHost();
     this.readerComicModelRequest++;
     this.syncReaderInfoBarClock();
     readStatsTracker.setReadingActive('');
@@ -11748,6 +11753,8 @@ struct ReadBookPage {
 
   /** 音量键与智控键翻页共用订阅时机：阅读页可见且未在听书时才接管按键。 */
   updateVolumeKeySubscription(): void {
+    // 朗读开始/停止、可见性变化都会走到这里，顺带把新状态推给手表。
+    WatchRemoteBridge.notifyChanged();
     if (this.readerVolumeKeySubscribeTimerId >= 0) {
       clearTimeout(this.readerVolumeKeySubscribeTimerId);
       this.readerVolumeKeySubscribeTimerId = -1;
@@ -11871,10 +11878,53 @@ struct ReadBookPage {
     this.smartKeyDownCallback = undefined;
   }
 
+  /** 阅读页可见时接上手表翻页（开关在桥接里按阅读类型判断），不可见或离开时断开。 */
+  syncWatchRemoteHost(): void {
+    if (!this.watchRemoteHost) this.watchRemoteHost = this.createWatchRemoteHost();
+    if (this.readerPageVisible && this.readerEntryAlive) {
+      WatchRemoteBridge.attach(this.watchRemoteHost);
+      WatchRemoteBridge.sync(getContext(this));
+    } else {
+      WatchRemoteBridge.detach(this.watchRemoteHost);
+    }
+  }
+
+  createWatchRemoteHost(): WatchReaderHost {
+    const host = new WatchReaderHost();
+    host.inputKind = (): number => this.readerInputKind();
+    host.blockedReason = (): string => this.readerExternalTurnBlockedReason();
+    host.turn = (direction: number): void => this.handleHardwareKeyTurn(direction, true);
+    host.snapshot = (): WatchReaderSnapshot => {
+      const info = this.getReaderInfoBarContext();
+      const pages = info.pageCountPending ? 0 : Math.max(0, info.pageCount);
+      const page = pages > 0 ? Math.min(pages, info.pageIndex + 1) : 0;
+      const chapterRatio = info.chapterProgressRatio >= 0 ? info.chapterProgressRatio : pages > 0 ? page / pages : 0;
+      const snapshot: WatchReaderSnapshot = {
+        book: info.bookName,
+        chapter: info.chapterTitle,
+        page: page,
+        pages: pages,
+        progress: info.chapterCount > 0 ? (info.chapterIndex + chapterRatio) / info.chapterCount : 0
+      };
+      return snapshot;
+    };
+    host.onWatchContact = (): void => HdsFeedback.showToast('手表已连上，可以用手表翻页');
+    return host;
+  }
+
+  /** 音量键、智控键、手表翻页共用的拦截规则；返回给手表显示的一句原因，可以翻页时为空串。 */
+  readerExternalTurnBlockedReason(): string {
+    if (!this.readerPageVisible) return '手机上的阅读页不在前台';
+    if (this.isTtsSpeaking || this.ttsReader?.isSpeaking() || ReaderTtsFloatingSession.isActive()) {
+      return '手机正在朗读，停止朗读后自动恢复';
+    }
+    if (this.showMenu || this.showToc || this.showSettings) return '手机上菜单或目录开着';
+    if (this.isLoading || this.chapters.length === 0) return '手机正在加载';
+    return '';
+  }
+
   handleHardwareKeyTurn(direction: number, enabled: boolean): void {
-    if (!enabled || !this.readerPageVisible || this.isTtsSpeaking ||
-      this.ttsReader?.isSpeaking() || ReaderTtsFloatingSession.isActive() || this.showMenu || this.showToc ||
-      this.showSettings || this.isLoading || this.chapters.length === 0) {
+    if (!enabled || this.readerExternalTurnBlockedReason() !== '') {
       return;
     }
     if (this.isReaderContinuousScrollSurfaceActive()) {

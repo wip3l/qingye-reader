@@ -109,6 +109,19 @@
       ]
     },
     {
+      "name": "wearable",
+      "srcPath": "./wearable",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default",
+            "release"
+          ]
+        }
+      ]
+    },
+    {
       "name": "sourceengine",
       "srcPath": "./harmony-book-source-engine/sourceengine",
       "targets": [
