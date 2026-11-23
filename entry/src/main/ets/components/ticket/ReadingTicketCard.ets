@@ -414,7 +414,7 @@ export struct ReadingTicketCard {
           .width('100%')
           .margin({ top: this.u(22) })
           Row() {
-            this.paperField('HALL', this.ticket.originName || '本地', 1.15)
+            this.paperField('RATE', ReadingTicketRules.ratingText(this.ticket.rating), 1.15)
             this.paperField('DAYS', this.ticket.activeDays > 0 ? `${this.ticket.activeDays} 天` : '—', 1.15)
             this.paperField('FEE', '无价', 0.8)
           }
@@ -845,7 +845,7 @@ export struct ReadingTicketCard {
             .fontColor(this.accent())
             .fontFeature('"tnum" 1')
           Blank()
-          Text(this.ticket.originName ? `${this.ticket.originName} 检票口` : '')
+          Text(`${TicketMedia.typeLabel(this.ticket.bookType)}专列`)
             .fontSize(this.u(11))
             .fontColor(TRAIN_SUB)
             .maxLines(1)

@@ -19,9 +19,8 @@ import { BookMarkService } from '../core/mark/BookMarkService';
 import { ReadingTicket, ReadingTicketRules } from '../core/ticket/ReadingTicket';
 import { ReadingTicketBack, ReadingTicketLoader } from '../core/ticket/ReadingTicketLoader';
 
+/** 导出图就是票和它四周留给阴影的透明边，不带底板。 */
 const EXPORT_ID: string = 'reading_ticket_export';
-/** 展示台和导出图的底色：浅暖灰，深浅色模式都一样，存出来的图不会因为深色模式变黑。 */
-const MAT_COLOR: string = '#E9E4DA';
 
 /**
  * 单张票根：大图、翻到背面（短评、摘录、阅读日历）、临时换样式、保存图片和分享。
@@ -197,7 +196,7 @@ struct TicketDetailPage {
         .width('100%')
         .padding({ top: 80 })
       } else if (this.ticket) {
-        // 展示台：导出图就是这一块。
+        // 票直接放在页面上；导出图就是这一块（透明底）。
         Column() {
           Stack() {
             if (this.showBack) {
@@ -214,7 +213,7 @@ struct TicketDetailPage {
                   ticket: this.ticket as ReadingTicket,
                   ticketStyle: this.ticketStyle,
                   cardWidth: this.cardWidth(),
-                  notchColor: MAT_COLOR
+                  notchColor: ThemeRuntime.pageColor(this.darkMode)
                 })
               }
               .onSizeChange((_oldValue: SizeOptions, newValue: SizeOptions) => {
@@ -231,8 +230,6 @@ struct TicketDetailPage {
         .width('100%')
         .padding({ top: 28, bottom: 28 })
         .alignItems(HorizontalAlign.Center)
-        .borderRadius(ThemeRuntime.largeRadius())
-        .backgroundColor(MAT_COLOR)
 
         Text(this.showBack ? '点票面翻回正面' : '点票面翻到背面：短评、摘录和阅读日历')
           .fontSize(AppFontSize.CAPTION)
