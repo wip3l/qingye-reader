@@ -13,6 +13,8 @@ import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
+import { copyFile, saveDocuments, selectDocuments } from '../platform/Files';
+import { PlatformInfo } from '../platform/PlatformInfo';
 
 @Entry
 @Component
@@ -517,7 +519,7 @@ struct DataBackupPage {
       const options = new picker.DocumentSaveOptions();
       options.newFileNames = [`qingye-backup-${this.timestamp()}.qingyebak`];
       options.fileSuffixChoices = ['应用数据备份|.qingyebak'];
-      const result = await new picker.DocumentViewPicker(getContext(this)).save(options);
+      const result = await saveDocuments(getContext(this), options);
       if (!result || result.length === 0) return;
       this.busyText = '正在整理备份数据...';
       const backup = await AppDataBackupService.createBackup(getContext(this), this.selection(true), password,
@@ -553,7 +555,7 @@ struct DataBackupPage {
       options.maxSelectNumber = 1;
       options.fileSuffixFilters = this.androidImport ? ['安卓阅读备份|.zip'] :
         ['应用数据备份|.qingyebak', 'Android 阅读备份|.zip'];
-      const result = await new picker.DocumentViewPicker(getContext(this)).select(options);
+      const result = await selectDocuments(getContext(this), options);
       if (!result || result.length === 0) return;
       await AppDataBackupService.discardImport(this.importSession);
       this.pendingImportUri = result[0];
@@ -714,6 +716,11 @@ struct DataBackupPage {
   }
 
   async writeBackupToUri(sourcePath: string, targetUri: string): Promise<void> {
+    if (PlatformInfo.ANDROID) {
+      // 安卓的保存地址是 content://，fs 打不开，由平台层经原生桥整个写过去。
+      await copyFile(sourcePath, targetUri);
+      return;
+    }
     let source: fs.File | null = null;
     let target: fs.File | null = null;
     let stage = '检查临时备份文件';

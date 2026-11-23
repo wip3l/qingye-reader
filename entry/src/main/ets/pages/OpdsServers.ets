@@ -1,6 +1,6 @@
 import { router, promptAction, SymbolGlyphModifier } from '@kit.ArkUI';
 import deviceInfo from '@ohos.deviceInfo';
-import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
+import { HdsListItem, HdsSwipeActionOptions } from '../platform/Hds';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { syncSystemBars } from '../utils/SystemBars';
 import { OpdsServerConfig } from '../opds/OpdsModels';

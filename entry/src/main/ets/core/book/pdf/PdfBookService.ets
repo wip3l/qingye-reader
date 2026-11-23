@@ -1,9 +1,11 @@
 import { Context } from '@kit.AbilityKit';
-import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
+import { fileIo as fs } from '@kit.CoreFileKit';
+import { fileUri } from '../../../platform/FileUri';
 import { Book, BookChapter } from '@legado/sourceengine';
 import { appDb } from '../../../model/data/AppDatabase';
 import { PdfImportTask } from '../../concurrency/PdfImportTask';
 import { PdfOutlineEntry, PdfPagePosition } from './PdfModels';
+import { copyFile } from '../../../platform/Files';
 
 export class PdfBookService {
   static readonly PARSER_VERSION: string = '1';
@@ -30,7 +32,7 @@ export class PdfBookService {
     let committed = false;
     fs.mkdirSync(root, true);
     try {
-      await fs.copy(source.startsWith('/') ? fileUri.getUriFromPath(source) : source, fileUri.getUriFromPath(path));
+      await copyFile(source.startsWith('/') ? fileUri.getUriFromPath(source) : source, fileUri.getUriFromPath(path));
       const summary = await PdfImportTask.extract(path, root);
       let hash = '';
       try { hash = await hashFile(path); } catch (error) { console.warn('[PDF] fingerprint unavailable:', error); }

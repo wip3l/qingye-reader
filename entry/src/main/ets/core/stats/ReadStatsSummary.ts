@@ -1,4 +1,5 @@
 import { ReadStatsRow } from '../../model/data/AppDatabase';
+import { compareText } from '../../platform/TextCompare';
 
 export class ReadStatsPeriod {
   startKey: string = '';
@@ -351,7 +352,7 @@ export class ReadStatsSummary {
       sorted.sort((a: ReadStatsRank, b: ReadStatsRank): number => b.readDays - a.readDays || byRank(a, b));
     } else if (key === 'title') {
       sorted.sort((a: ReadStatsRank, b: ReadStatsRank): number =>
-        a.name.localeCompare(b.name, 'zh-Hans-CN-u-co-pinyin') || byRank(a, b));
+        compareText(a.name, b.name, 'zh-Hans-CN-u-co-pinyin') || byRank(a, b));
     } else {
       sorted.sort(byRank);
     }

@@ -1,5 +1,5 @@
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import zlib from '@ohos.zlib';
 import util from '@ohos.util';
 import preferences from '@ohos.data.preferences';

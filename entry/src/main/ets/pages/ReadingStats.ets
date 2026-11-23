@@ -1,7 +1,7 @@
 import { promptAction, SymbolGlyphModifier } from '@kit.ArkUI';
 import preferences from '@ohos.data.preferences';
 import deviceInfo from '@ohos.deviceInfo';
-import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
+import { HdsListItem, HdsSwipeActionOptions } from '../platform/Hds';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { syncSystemBars } from '../utils/SystemBars';
 import { appDb, ReadStatsDeviceOption } from '../model/data/AppDatabase';

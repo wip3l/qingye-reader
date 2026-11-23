@@ -3,6 +3,7 @@ import { Context } from '@kit.AbilityKit';
 import preferences from '@ohos.data.preferences';
 import { BookshelfSortHelper } from './BookshelfSortHelper';
 import { BookIdentity } from './BookIdentity';
+import { compareText } from '../platform/TextCompare';
 
 /**
  * 封面模式“固定”下每本书的封面序号：按加入书架的先后依次编号，封面取 序号 % 张数。
@@ -50,7 +51,7 @@ export class ShelfCoverSlots {
     if (pending.length > 0) {
       pending.sort((a: Book, b: Book) =>
         BookshelfSortHelper.getBookAddTime(a) - BookshelfSortHelper.getBookAddTime(b) ||
-          a.name.localeCompare(b.name, 'zh-Hans-CN-u-co-pinyin') || a.bookUrl.localeCompare(b.bookUrl));
+          compareText(a.name, b.name, 'zh-Hans-CN-u-co-pinyin') || a.bookUrl.localeCompare(b.bookUrl));
       const used = new Set<number>();
       ShelfCoverSlots.slots.forEach((slot: number) => used.add(slot));
       let next = 0;

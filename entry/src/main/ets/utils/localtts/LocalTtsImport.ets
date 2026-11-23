@@ -1,10 +1,11 @@
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../../platform/FileUri';
 import picker from '@ohos.file.picker';
 import zlib from '@ohos.zlib';
 import { ZipEntryInfo, ZipEntryInspector, ZipInspectLimits } from '../../theme/share/ZipEntryInspector';
 import { LocalTtsModel, LocalTtsModelFile, LocalTtsModels } from './LocalTtsModels';
 import { LocalTtsSpeakers } from './LocalTtsSpeakers';
+import { copyFile, selectDocuments } from '../../platform/Files';
 
 class ImportedFile {
   path: string = '';
@@ -40,7 +41,7 @@ export class LocalTtsImport {
     const options = new picker.DocumentSelectOptions();
     options.maxSelectNumber = 1;
     options.fileSuffixFilters = ['模型压缩包|.zip'];
-    const result = await new picker.DocumentViewPicker(context).select(options);
+    const result = await selectDocuments(context, options);
     return result && result.length > 0 ? result[0] : '';
   }
 
@@ -54,7 +55,7 @@ export class LocalTtsImport {
       fs.mkdirSync(workDir, true);
       stage('正在读取压缩包');
       const zipPath = `${workDir}/source.zip`;
-      await fs.copy(uri.startsWith('/') ? fileUri.getUriFromPath(uri) : uri, fileUri.getUriFromPath(zipPath));
+      await copyFile(uri.startsWith('/') ? fileUri.getUriFromPath(uri) : uri, fileUri.getUriFromPath(zipPath));
       const size = fs.statSync(zipPath).size;
       if (size > LocalTtsImport.MAX_ZIP_BYTES) throw new Error('压缩包超过 1GB，无法导入');
       step = '检查压缩包';

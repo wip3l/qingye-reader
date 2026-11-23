@@ -1,7 +1,7 @@
 import { Context } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
 import http from '@ohos.net.http';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import preferences from '@ohos.data.preferences';
 import { util } from '@kit.ArkTS';
 import cryptoFramework from '@ohos.security.cryptoFramework';
@@ -10,6 +10,7 @@ import { AccountApiError } from './AccountCommerceModels';
 import { AccountSessionStore } from './AccountSessionStore';
 import { CloudTransferTicket, CloudFileItem, CloudFileList, CloudFileMeta, CloudFileSummary, CloudManifest,
   CloudTombstoneList, CloudUploadTask } from './CloudFileModels';
+import { copyFile } from '../platform/Files';
 
 export class CloudFileClient {
   private static paused: boolean = false;
@@ -91,7 +92,7 @@ export class CloudFileClient {
     task.path = `${dir}/${task.requestId}.upload`;
     const original = await fs.stat(uri);
     if (original.size < 1 || original.size > 1073741824) throw new Error('文件大小须为 1 字节至 1GB');
-    await fs.copy(uri.startsWith('/') ? fileUri.getUriFromPath(uri) : uri, fileUri.getUriFromPath(task.path));
+    await copyFile(uri.startsWith('/') ? fileUri.getUriFromPath(uri) : uri, fileUri.getUriFromPath(task.path));
     task.bytes = (await fs.stat(task.path)).size;
     if (task.bytes < 1 || task.bytes > 1073741824) {
       await fs.unlink(task.path); throw new Error('文件大小须为 1 字节至 1GB');

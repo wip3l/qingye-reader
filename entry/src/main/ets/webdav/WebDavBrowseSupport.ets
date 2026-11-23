@@ -1,4 +1,5 @@
 import { WebDavBrowsePrefs, WebDavEntry } from './WebDavModels';
+import { compareText } from '../platform/TextCompare';
 
 export type WebDavListLoader = (relativePath: string) => Promise<WebDavEntry[]>;
 
@@ -14,7 +15,7 @@ export class WebDavBrowseSupport {
       if (mode === WebDavBrowsePrefs.SORT_SIZE && !left.directory && left.size !== right.size) {
         return right.size - left.size;
       }
-      return left.name.localeCompare(right.name, 'zh-Hans-CN', { numeric: true });
+      return compareText(left.name, right.name, 'zh-Hans-CN', { numeric: true });
     });
     return sorted;
   }

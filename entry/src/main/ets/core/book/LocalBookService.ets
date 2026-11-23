@@ -1,6 +1,6 @@
 import { Context } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../../platform/FileUri';
 import picker from '@ohos.file.picker';
 import util from '@ohos.util';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
@@ -19,6 +19,7 @@ import { ComicArchiveChapter, ComicArchiveContent, LocalArchiveImport } from './
 import { TxtChapterMatcher, TxtTocResolvedRule, TxtTocRules } from './TxtTocRules';
 import { TxtTocRuleStore } from '../../utils/TxtTocRuleStore';
 import { ReadBookEngine } from './ReadBookEngine';
+import { copyFile, saveDocuments, selectDocuments } from '../../platform/Files';
 
 
 export class LocalBookExportResult {
@@ -443,7 +444,7 @@ export class LocalBookService {
     options.selectMode = picker.DocumentSelectMode.FILE;
     options.maxSelectNumber = 500;
     options.fileSuffixFilters = ['电子书|.txt,.epub,.mobi,.pdf,.cbz,.zip'];
-    const result = await new picker.DocumentViewPicker(context).select(options);
+    const result = await selectDocuments(context, options);
     const paths: LocalBookFile[] = [];
     for (const uri of result) {
       if (!uri || paths.some((item: LocalBookFile) => item.uri === uri)) continue;
@@ -666,11 +667,11 @@ export class LocalBookService {
     const author = book.author ? ` - ${book.author}` : '';
     const options = new picker.DocumentSaveOptions();
     options.newFileNames = [`${LocalBookService.sanitizeFileName(book.name + author)}.${format}`];
-    const result = await new picker.DocumentViewPicker(context).save(options);
+    const result = await saveDocuments(context, options);
     if (!result || result.length === 0) {
       return '';
     }
-    await fs.copy(fileUri.getUriFromPath(localPath), result[0]);
+    await copyFile(fileUri.getUriFromPath(localPath), result[0]);
     return result[0];
   }
 
@@ -706,7 +707,7 @@ export class LocalBookService {
     }
     const options = new picker.DocumentSaveOptions();
     options.newFileNames = fileNames;
-    const savedUris = await new picker.DocumentViewPicker(context).save(options);
+    const savedUris = await saveDocuments(context, options);
     if (!savedUris || savedUris.length === 0) {
       return null;
     }
@@ -716,7 +717,7 @@ export class LocalBookService {
         continue;
       }
       try {
-        await fs.copy(fileUri.getUriFromPath(localPaths[index]), savedUris[index]);
+        await copyFile(fileUri.getUriFromPath(localPaths[index]), savedUris[index]);
         result.savedCount++;
       } catch (e) {
         console.warn('导出本地书籍源文件失败:', bookNames[index], e);
@@ -796,7 +797,7 @@ export class LocalBookService {
       fs.unlinkSync(localPath);
     }
     const copySource = sourceUri.startsWith('/') ? fileUri.getUriFromPath(sourceUri) : sourceUri;
-    await fs.copy(copySource, fileUri.getUriFromPath(localPath));
+    await copyFile(copySource, fileUri.getUriFromPath(localPath));
 
     const book = oldBook || new Book();
     book.bookUrl = bookUrl;

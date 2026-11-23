@@ -1,7 +1,8 @@
 import http from '@ohos.net.http';
 import fs from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
-import { HttpClient, HttpRequest, CookieStore, digestHashHex, TlsTrustStore, HttpDigestChallenge, HttpAuth } from '@legado/sourceengine';
+import { HttpClient, HttpRequest, digestHashHex, TlsTrustStore, HttpDigestChallenge, HttpAuth } from '@legado/sourceengine';
+import { AppCookies } from '../platform/Cookies';
 import {
   OpdsEntry,
   OpdsFeed,
@@ -12,6 +13,7 @@ import {
 import { OpdsXmlParser } from './OpdsXmlParser';
 import { OpdsError } from './OpdsError';
 import { OpdsKavita } from './OpdsKavita';
+import { streamReadTimeout } from '../platform/HttpTimeouts';
 
 export interface OpdsDownloadHandle {
   promise: Promise<void>;
@@ -486,7 +488,7 @@ export class OpdsClient {
       method: http.RequestMethod.GET,
       header: this.downloadHeaders(url, authorization),
       connectTimeout: this.timeout,
-      readTimeout: Math.max(this.timeout, 120000),
+      readTimeout: streamReadTimeout(Math.max(this.timeout, 120000), 30 * 60 * 1000),
       maxRedirects: OpdsClient.MAX_REDIRECTS
     };
     this.applyTlsTrust(options, url);
@@ -499,7 +501,7 @@ export class OpdsClient {
       'User-Agent': 'LegadoHarmony-OPDS/1.0'
     };
     if (authorization) headers['Authorization'] = authorization;
-    const cookie = CookieStore.getCookie(url);
+    const cookie = AppCookies.getCookie(url);
     if (cookie) headers['Cookie'] = cookie;
     return headers;
   }

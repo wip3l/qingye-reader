@@ -2,6 +2,10 @@ import { window } from '@kit.ArkUI';
 import { ConfigurationConstant } from '@kit.AbilityKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
+import { PlatformInfo } from '../platform/PlatformInfo';
+import {
+  READER_ALWAYS_HIDES_NAVIGATION, setNavigationHidden, systemBarContentColor, SystemInsetsPx, systemInsetsPx
+} from '../platform/SystemInsets';
 
 let safeAreaWindow: window.Window | undefined;
 let desktopWindow: window.Window | undefined;
@@ -75,17 +79,27 @@ export function releaseSystemBarListeners(): void {
  * 阅读页的系统栏显隐。readingBody 只在停留于正文时为 true，此时按“隐藏底部小白条”开关收起导航条；
  * 菜单出现或离开阅读页时为 false，导航条随即恢复。
  * 只切显隐，底部安全区高度按“忽略可见性”取值，正文排版不跟着变。
+ * 安卓的导航栏会压在页脚上，正文显示时不看开关、总是收起（READER_ALWAYS_HIDES_NAVIGATION）。
  */
 export function applyReaderSystemBars(mainWindow: window.Window, showStatus: boolean, readingBody: boolean): void {
-  const hide = readingBody && (AppStorage.get<boolean>('readerHideNavIndicator') ?? false);
+  const hide = readingBody &&
+    (READER_ALWAYS_HIDES_NAVIGATION || (AppStorage.get<boolean>('readerHideNavIndicator') ?? false));
   // 系统栏名单里的 'navigation' 会把导航条重新显示出来，所以等它生效后再单独切换导航条。
   const applyIndicator = (): void => {
-    mainWindow.setSpecificSystemBarEnabled('navigationIndicator', !hide).catch((err: Error) => {
+    setNavigationHidden(mainWindow, hide).catch((err: Error) => {
       console.warn('切换底部导航条显隐失败:', err);
     });
   };
   mainWindow.setWindowSystemBarEnable(showStatus ? ['navigation', 'status'] : ['navigation'])
     .then(applyIndicator, applyIndicator);
+}
+
+/** 离开阅读正文后放出导航条。鸿蒙上系统栏名单里的 'navigation' 已经恢复了它；安卓上要单独放出来。 */
+export function restoreReaderNavigation(mainWindow: window.Window): void {
+  if (!READER_ALWAYS_HIDES_NAVIGATION) return;
+  setNavigationHidden(mainWindow, false).catch((err: Error) => {
+    console.warn('恢复底部导航条失败:', err);
+  });
 }
 
 export function syncSystemBars(context: Context, darkMode: boolean, backgroundColor?: string,
@@ -95,12 +109,13 @@ export function syncSystemBars(context: Context, darkMode: boolean, backgroundCo
     mainWindow.setWindowBackgroundColor(bg);
     mainWindow.setWindowLayoutFullScreen(true);
     mainWindow.setWindowSystemBarEnable(hideStatusBar ? ['navigation'] : ['navigation', 'status']);
+    restoreReaderNavigation(mainWindow);
     syncDesktopTitleBar(mainWindow, darkMode);
     syncSystemSafeAreas(mainWindow);
     mainWindow.setWindowSystemBarProperties({
       statusBarColor: '#00000000',
       isStatusBarLightIcon: darkMode,
-      statusBarContentColor: ThemeRuntime.primaryTextColor(darkMode),
+      statusBarContentColor: systemBarContentColor(darkMode, ThemeRuntime.primaryTextColor(darkMode)),
       navigationBarColor: '#00000000',
       isNavigationBarLightIcon: darkMode,
       navigationBarContentColor: ThemeRuntime.primaryTextColor(darkMode)
@@ -110,7 +125,26 @@ export function syncSystemBars(context: Context, darkMode: boolean, backgroundCo
   });
 }
 
+/** 安卓：ArkUI-X 的避让区接口返回全 0，系统栏高度由平台层从原生窗口读取。 */
+function syncNativeSafeAreas(mainWindow: window.Window): void {
+  systemInsetsPx().then((insets: SystemInsetsPx | null) => {
+    if (!insets) return;
+    const uiContext = mainWindow.getUIContext();
+    AppStorage.setOrCreate('statusBarHeight', Math.max(uiContext.px2vp(insets.top),
+      AppStorage.get<number>('desktopTitleBarHeight') ?? 0));
+    const bottom = uiContext.px2vp(insets.bottom);
+    AppStorage.setOrCreate('navBarHeight', bottom);
+    AppStorage.setOrCreate('navIndicatorHeight', bottom);
+  }).catch((err: Error) => {
+    console.error('读取系统栏高度失败:', err);
+  });
+}
+
 export function syncSystemSafeAreas(mainWindow: window.Window): void {
+  if (PlatformInfo.ANDROID) {
+    syncNativeSafeAreas(mainWindow);
+    return;
+  }
   try {
     const systemArea = mainWindow.getWindowAvoidAreaIgnoringVisibility(window.AvoidAreaType.TYPE_SYSTEM);
     const navigationArea = mainWindow.getWindowAvoidAreaIgnoringVisibility(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);

@@ -1,7 +1,7 @@
 import { MembershipBadge } from '../components/common/MembershipBadge';
 import { promptAction, router, SymbolGlyphModifier } from '@kit.ArkUI';
 import deviceInfo from '@ohos.deviceInfo';
-import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
+import { HdsListItem, HdsSwipeActionOptions } from '../platform/Hds';
 import { common } from '@kit.AbilityKit';
 import { AppIconManager } from '../utils/AppIconManager';
 import { AppIconSettingsStore } from '../utils/AppIconSettingsStore';
@@ -79,6 +79,7 @@ import {
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { PopupMenuAction, PopupMenuHeader } from '../components/common/PopupMenuAction';
+import { compareText } from '../platform/TextCompare';
 
 // “我的”页已拥有区只露这么多套，其余进“全部”列表，免得把方案挤到很下面。
 const OWNED_PREVIEW_COUNT = 8;
@@ -3491,7 +3492,7 @@ struct ThemeSettingsPage {
       }
       if (sort === 'modified') return b.updatedAt - a.updatedAt;
       if (sort === 'created') return b.createdAt - a.createdAt;
-      if (sort === 'name') return a.name.localeCompare(b.name, 'zh');
+      if (sort === 'name') return compareText(a.name, b.name, 'zh');
       return (position.get(a.id) || 0) - (position.get(b.id) || 0);
     });
     return list;
@@ -3696,7 +3697,7 @@ struct ThemeSettingsPage {
   sortedOwnedEntries(sort: string): ThemeListEntry[] {
     const entries = this.ownedThemeEntries();
     if (sort === 'name') {
-      entries.sort((a: ThemeListEntry, b: ThemeListEntry): number => a.theme.name.localeCompare(b.theme.name, 'zh'));
+      entries.sort((a: ThemeListEntry, b: ThemeListEntry): number => compareText(a.theme.name, b.theme.name, 'zh'));
       return entries;
     }
     const rank = (entry: ThemeListEntry): number => {

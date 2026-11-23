@@ -1,6 +1,6 @@
 import { Context } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import hash from '@ohos.file.hash';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import { DefaultBaseRevision } from '../theme/ThemeModels';
@@ -17,6 +17,7 @@ import {
   ThemePackageAssetKinds,
   ThemePackageParts
 } from '../theme/share/ThemePackageFormat';
+import { copyFile } from '../platform/Files';
 
 /**
  * 主题包素材的落盘与冷启动加载：files/theme_packs/<packageId>/{pack.json, assets/...}。
@@ -179,7 +180,7 @@ export class ThemePackStore {
       // 应用沙箱里的文件（取景裁出来的图）：fs.copy 对沙箱路径的 URI 会报 EINVAL，直接按路径复制。
       fs.copyFileSync(sourceUri, temp);
     } else {
-      await fs.copy(sourceUri, fileUri.getUriFromPath(temp));
+      await copyFile(sourceUri, fileUri.getUriFromPath(temp));
     }
     try {
       const size = fs.statSync(temp).size;

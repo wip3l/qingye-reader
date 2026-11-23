@@ -29,6 +29,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # 安卓平台层：两份实现一一对应、原生桥已注册、共用代码不绕过平台层。完整的安卓构建需要 ArkUI-X SDK，见 docs/android-build.md。
+      - run: node scripts/android/platform-parity-check.mjs
       - run: node scripts/thread-blocking-check.mjs
       - run: node scripts/theme-framework-check.mjs
       - run: node --experimental-strip-types scripts/bookshelf-category-transition-check.mjs

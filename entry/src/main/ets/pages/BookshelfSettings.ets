@@ -23,6 +23,7 @@ import { ShelfGreetingSlot, ShelfGreetingTemplate } from '../utils/ShelfGreeting
 import { BookshelfSortHelper } from '../utils/BookshelfSortHelper';
 import { NewBookGroup } from '../utils/NewBookGroup';
 import { NewBookGroupStore } from '../utils/NewBookGroupStore';
+import { PlatformInfo } from '../platform/PlatformInfo';
 
 @Entry
 @Component
@@ -244,17 +245,20 @@ struct BookshelfSettingsPage {
         }
       })
     }
-    this.itemDivider()
-    SettingSwitchRow({
-      title: '书籍打开动画',
-      description: '点击书籍时播放封面展开动画',
-      isOn: this.bookshelfBookOpenAnimation,
-      showDivider: false,
-      onChange: (value: boolean) => {
-        this.bookshelfBookOpenAnimation = value;
-        this.onDisplaySettingChanged();
-      }
-    })
+    // 安卓上做不出封面展开动画（见 BookshelfPage.bookOpenAnimationEnabled），不显示开关。
+    if (!PlatformInfo.ANDROID) {
+      this.itemDivider()
+      SettingSwitchRow({
+        title: '书籍打开动画',
+        description: '点击书籍时播放封面展开动画',
+        isOn: this.bookshelfBookOpenAnimation,
+        showDivider: false,
+        onChange: (value: boolean) => {
+          this.bookshelfBookOpenAnimation = value;
+          this.onDisplaySettingChanged();
+        }
+      })
+    }
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })

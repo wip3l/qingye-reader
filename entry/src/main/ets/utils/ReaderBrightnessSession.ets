@@ -1,5 +1,6 @@
 import { window } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
+import { setWindowBrightness } from '../platform/WindowBrightness';
 
 /**
  * Device-local brightness, shared by reader instances, never written into a theme or synced to another device.
@@ -76,7 +77,7 @@ export class ReaderBrightnessSession {
       if (!this.active || revision !== this.revision) return;
       ReaderBrightnessSession.mainWindow = mainWindow;
       ReaderBrightnessSession.owner = this;
-      await mainWindow.setWindowBrightness(this.value < 0 ? ReaderBrightnessSession.FOLLOW_SYSTEM : this.value / 100);
+      await setWindowBrightness(mainWindow, this.value < 0 ? ReaderBrightnessSession.FOLLOW_SYSTEM : this.value / 100);
     }).catch((error: Error) => {
       console.warn('设置阅读亮度失败:', error);
       if (this.active && revision === this.revision) this.reportError();
@@ -93,7 +94,7 @@ export class ReaderBrightnessSession {
       // A retained page must not restore brightness over the reader that replaced it.
       if (this.active || ReaderBrightnessSession.owner !== this) return;
       const mainWindow = ReaderBrightnessSession.mainWindow;
-      if (mainWindow) await mainWindow.setWindowBrightness(ReaderBrightnessSession.FOLLOW_SYSTEM);
+      if (mainWindow) await setWindowBrightness(mainWindow, ReaderBrightnessSession.FOLLOW_SYSTEM);
       ReaderBrightnessSession.owner = null;
       ReaderBrightnessSession.mainWindow = null;
     }).catch((error: Error) => console.warn('恢复窗口亮度失败:', error));

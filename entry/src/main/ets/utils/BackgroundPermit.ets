@@ -1,4 +1,4 @@
-import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
+import { backgroundTaskManager } from '../platform/BackgroundTasks';
 import { common, WantAgent } from '@kit.AbilityKit';
 
 export type BackgroundPermitMode = 'audioPlayback' | 'dataTransfer';

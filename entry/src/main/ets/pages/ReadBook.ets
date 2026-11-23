@@ -15,7 +15,7 @@ import {
 } from '../components/reader/ReaderShelfCoverOpening';
 import { ReaderCacheCoordinator } from '../core/book/ReaderCacheCoordinator';
 import { BookCoverResolver } from '../utils/BookCoverResolver';
-import { applyReaderSystemBars, syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
+import { applyReaderSystemBars, restoreReaderNavigation, syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
 import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation';
 import { ReaderScreenScrollMotion } from '../core/reader/ReaderScreenScrollMotion';
 import displaySync from '@ohos.graphics.displaySync';
@@ -25,23 +25,26 @@ import { router, window, promptAction, RectShape } from '@kit.ArkUI';
 import { MixedVideoChapter } from '../core/book/MixedVideoChapter';
 import { webview } from '@kit.ArkWeb';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
-import { inputConsumer, KeyCode, Action, KeyEvent as InputKeyEvent } from '@kit.InputKit';
+import { inputConsumer, KeyEvent as InputKeyEvent } from '../platform/KeyConsumer';
+import { KeyCode, Action } from '../platform/InputKeys';
 import { SmartControlKey } from '../utils/SmartControlKey';
 import { ReaderKeyboard, ReaderKeyboardSettings } from '../core/reader/ReaderKeyboard';
 import { ReaderKeyboardSettingsStore } from '../utils/ReaderKeyboardSettingsStore';
 import { ReaderKeyboardCaptureDialog } from '../components/reader/ReaderKeyboardCaptureDialog';
-import lazy { avSession } from '@kit.AVSessionKit';
+import lazy { avSession } from '../platform/MediaSession';
 import lazy { motion } from '@kit.MultimodalAwarenessKit';
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
 import pasteboard from '@ohos.pasteboard';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import graphicsText from '@ohos.graphics.text';
 import { LengthMetrics } from '@ohos.arkui.node';
 import deviceInfo from '@ohos.deviceInfo';
 import display from '@ohos.display';
 import Animator, { AnimatorResult } from '@ohos.animator';
-import { HdsTabs } from '@kit.UIDesignKit';
+// HdsTabs 带专属属性，编译器要求它直接从组件库引入；其余 HDS 符号走 platform/Hds。安卓构建会改写这一行。
+// 延迟加载：安卓上没有这个系统包，静态引用会在启动时终止进程；HdsTabs 只在 supportsHdsTabs() 为真时用到。
+import lazy { HdsTabs } from '@kit.UIDesignKit';
 import { AccountCommerceApi } from '../account/AccountCommerceApi';
 import { AccountSessionStore } from '../account/AccountSessionStore';
 import { CloudSyncCoordinator } from '../account/CloudSyncCoordinator';
@@ -292,6 +295,8 @@ import { ReaderHaptics } from '../utils/ReaderHaptics';
 import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
 import { WatchReaderHost, WatchReaderSnapshot, WatchRemoteBridge } from '../utils/WatchRemoteBridge';
 import { READER_TURN_FRAME_RATE, applyReaderTurnFrameRate } from '../utils/ReaderTurnFrameRate';
+import { PlatformInfo } from '../platform/PlatformInfo';
+import { NAVIGATION_BAR_TAKES_TOUCHES, systemBarContentColor } from '../platform/SystemInsets';
 
 const READER_CURRENT_PAGINATION_AHEAD_PAGE_COUNT = 4;
 /** 换到上一章时从最后一句开读的标记，传给 playPositionFromFloatingSession 的 sourceOffset。 */
@@ -448,6 +453,9 @@ struct ReadBookPage {
   @State isLoading: boolean = true;
   @State @Watch('onReaderShowMenuChange') showMenu: boolean = false;
   @State readerDayNightLongPressHandled: boolean = false;
+  /** 日夜按钮最近一次按下的位置（vp，相对窗口），揭开动画从这里扩开。 */
+  private readerDayNightTouchX: number = -1;
+  private readerDayNightTouchY: number = -1;
   // 展开屏上记住用户本次唤起菜单的手指侧：-1 左侧，1 右侧。
   @State readerMenuAnchorSide: number = 1;
   // 0 表示尚未识别，继续使用原有位置；左右手分别为 -1 / 1。
@@ -2003,7 +2011,7 @@ struct ReadBookPage {
       mainWindow.setWindowSystemBarProperties({
         statusBarColor: '#00000000',
         isStatusBarLightIcon: useLightIcons,
-        statusBarContentColor: systemTextColor,
+        statusBarContentColor: systemBarContentColor(useLightIcons, systemTextColor),
         navigationBarColor: comicMode ? '#00000000' : bg,
         isNavigationBarLightIcon: useLightIcons,
         navigationBarContentColor: systemTextColor
@@ -2038,6 +2046,7 @@ struct ReadBookPage {
     window.getLastWindow(getContext(this)).then((mainWindow: window.Window) => {
       mainWindow.setWindowLayoutFullScreen(true);
       mainWindow.setWindowSystemBarEnable(['navigation', 'status']);
+      restoreReaderNavigation(mainWindow);
       this.statusBarSafeHeight = 0;
     }).catch((err: Error) => {
       console.error('退出阅读沉浸模式失败:', err);
@@ -4712,7 +4721,15 @@ struct ReadBookPage {
     if (this.readerBottomChromeMode() !== 'menu') return this.readerBottomActionOverlayHeight();
     // 旧系统的实色底栏自带 14vp 底边距，外壳至少要容得下整条栏，否则顶边一截点不到。
     return this.supportsReaderImmersiveMaterial() ? this.readerBottomMenuOverlayHeight() :
-      Math.max(this.readerBottomMenuOverlayHeight(), this.readerBottomMenuPanelHeight() + 14);
+      Math.max(this.readerBottomMenuOverlayHeight(), this.readerBottomMenuPanelHeight() + this.readerSolidMenuBottomGap());
+  }
+
+  /**
+   * 旧系统实色底栏离屏幕底边的距离。导航条接走点击的平台（安卓三键导航）要整条抬到导航条上面，
+   * 否则最下面一排按钮点不到。
+   */
+  readerSolidMenuBottomGap(): number {
+    return NAVIGATION_BAR_TAKES_TOUCHES ? 14 + Math.max(0, this.navBarHeight) : 14;
   }
 
   @Builder
@@ -5178,7 +5195,7 @@ struct ReadBookPage {
       }
     }
     .width(this.readerFloatingBarWidth())
-    .padding({ bottom: 14 })
+    .padding({ bottom: this.readerSolidMenuBottomGap() })
     .position({ x: this.readerFloatingBarLeft(), y: '100%' })
     .translate({ y: '-100%' })
   }
@@ -5235,11 +5252,18 @@ struct ReadBookPage {
   @Builder
   readerFloatingDayNightMenuItem() {
     Row() {
-      this.readerFloatingIconMenuItem(this.readerDayNightIcon(), false, () => {})
+      // 点击交给图标项本身：它自带 onClick，外层再挂 onClick 收不到点击（内层先接走），按钮就点不动。
+      this.readerFloatingIconMenuItem(this.readerDayNightIcon(), false, () => this.handleReaderDayNightClick(
+        this.readerDayNightTouchX, this.readerDayNightTouchY))
     }
     .layoutWeight(1)
     .height(56)
-    .onClick((event: ClickEvent) => this.handleReaderDayNightClick(event.windowX, event.windowY))
+    .onTouch((event: TouchEvent) => {
+      if (event.type === TouchType.Down && event.touches.length > 0) {
+        this.readerDayNightTouchX = event.touches[0].windowX;
+        this.readerDayNightTouchY = event.touches[0].windowY;
+      }
+    })
     .gesture(
       LongPressGesture({ duration: 600, repeat: false })
         .onAction((event: GestureEvent) => this.handleReaderDayNightLongPress(
@@ -12215,7 +12239,8 @@ struct ReadBookPage {
 
   /** 胶囊底边离屏幕底边的距离：停在快速跳转面板上方 10vp。 */
   readerQuickJumpCapsuleBottom(): number {
-    const panelBottom = this.supportsReaderImmersiveMaterial() ? this.readerFloatingBarBottomMargin() : 14;
+    const panelBottom = this.supportsReaderImmersiveMaterial() ? this.readerFloatingBarBottomMargin() :
+      this.readerSolidMenuBottomGap();
     return panelBottom + this.readerBottomMenuPanelHeight() + 10;
   }
 
@@ -14460,20 +14485,23 @@ struct ReadBookPage {
         })
     }
 
-    ReaderSettingGroup({ title: '眼动', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
-      // Builder arguments are passed by value and do not refresh, so this text covers both recognition modes.
-      this.readerSwitchSettingItem('眼动翻页（beta）', '向上看即翻页；摄像头图像仅在本机处理',
-        this.readerEyeTurnEnabled, (checked: boolean) => {
-          this.eyeTurn().setEnabled(checked);
-        })
-
-      if (this.readerEyeTurnEnabled) {
-        this.readerSwitchSettingItem('新版识别模型（beta）',
-          '识别更稳，不怕暗光和眼镜；开启后看向屏幕上沿以外翻页，耗电略多',
-          this.readerEyeTurnModelEnabled, (checked: boolean) => {
-            this.eyeTurn().setModelEnabled(checked);
+    // 安卓首版不带眼动翻页（EyeTurnController 在安卓上不启动）。
+    if (!PlatformInfo.ANDROID) {
+      ReaderSettingGroup({ title: '眼动', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
+        // Builder arguments are passed by value and do not refresh, so this text covers both recognition modes.
+        this.readerSwitchSettingItem('眼动翻页（beta）', '向上看即翻页；摄像头图像仅在本机处理',
+          this.readerEyeTurnEnabled, (checked: boolean) => {
+            this.eyeTurn().setEnabled(checked);
           })
-        this.readerEyeTurnCalibrationSettingItem()
+
+        if (this.readerEyeTurnEnabled) {
+          this.readerSwitchSettingItem('新版识别模型（beta）',
+            '识别更稳，不怕暗光和眼镜；开启后看向屏幕上沿以外翻页，耗电略多',
+            this.readerEyeTurnModelEnabled, (checked: boolean) => {
+              this.eyeTurn().setModelEnabled(checked);
+            })
+          this.readerEyeTurnCalibrationSettingItem()
+        }
       }
     }
   }

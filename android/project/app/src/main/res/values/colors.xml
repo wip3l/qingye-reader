@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与 entry/src/main/resources/base/element/color.json 的 start_window_background 一致。 -->
+    <color name="launch_background">#F5F5F5</color>
+</resources>

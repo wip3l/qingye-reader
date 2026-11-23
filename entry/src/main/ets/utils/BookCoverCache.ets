@@ -1,12 +1,13 @@
 import { Context } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import http from '@ohos.net.http';
 import { HttpClient, SourceCoverLoader, SourceCoverUrl } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { CoverUrlNormalizer } from './CoverUrlNormalizer';
 import { CoverFailures } from './CoverFailures';
 import { CoverFailureStore } from './CoverFailureStore';
+import { copyFile } from '../platform/Files';
 
 export class BookCoverCache {
   private static resolvedCoverUris: Map<string, string> = new Map();
@@ -328,7 +329,7 @@ export class BookCoverCache {
     }
     try {
       const source = raw.startsWith('/') ? fileUri.getUriFromPath(raw) : raw;
-      await fs.copy(source, fileUri.getUriFromPath(path));
+      await copyFile(source, fileUri.getUriFromPath(path));
       return await BookCoverCache.existsAsync(path) ? path : '';
     } catch (e) {
       console.warn('复制书籍封面到缓存失败:', e);

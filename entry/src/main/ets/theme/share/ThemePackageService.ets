@@ -1,10 +1,10 @@
 import { common, Context } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
 import { bundleManager } from '@kit.AbilityKit';
-import { systemShare } from '@kit.ShareKit';
+import { shareFiles } from '../../platform/Share';
 import { uniformTypeDescriptor } from '@kit.ArkData';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../../platform/FileUri';
 import hash from '@ohos.file.hash';
 import picker from '@ohos.file.picker';
 import zlib from '@ohos.zlib';
@@ -80,6 +80,7 @@ import {
   ThemePackageTheme
 } from './ThemePackageFormat';
 import { ZipEntryInfo, ZipEntryInspector, ZipInspectLimits } from './ZipEntryInspector';
+import { copyFile, saveDocuments, selectDocuments } from '../../platform/Files';
 
 class CustomFontRecord {
   familyName: string = '';
@@ -460,11 +461,11 @@ export class ThemePackageService {
   static async saveToFile(context: Context, result: ThemeExportResult): Promise<boolean> {
     const options = new picker.DocumentSaveOptions();
     options.newFileNames = [result.fileName];
-    const uris = await new picker.DocumentViewPicker(context).save(options);
+    const uris = await saveDocuments(context, options);
     if (!uris || uris.length === 0) {
       return false;
     }
-    await fs.copy(fileUri.getUriFromPath(result.zipPath), uris[0]);
+    await copyFile(fileUri.getUriFromPath(result.zipPath), uris[0]);
     return true;
   }
 
@@ -479,16 +480,7 @@ export class ThemePackageService {
       utd = uniformTypeDescriptor.getUniformDataTypeByFilenameExtension(QYTHEME_EXTENSION, 'general.zip-archive');
     } catch (_) {
     }
-    const data = new systemShare.SharedData({
-      utd: utd,
-      uri: fileUri.getUriFromPath(sharePath),
-      title: result.fileName
-    });
-    const controller = new systemShare.ShareController(data);
-    await controller.show(context, {
-      previewMode: systemShare.SharePreviewMode.DEFAULT,
-      selectionMode: systemShare.SelectionMode.SINGLE
-    });
+    await shareFiles(context, [{ path: sharePath, utd: utd, title: result.fileName }], false);
   }
 
   static discardExport(result: ThemeExportResult | null): void {
@@ -500,7 +492,7 @@ export class ThemePackageService {
     const options = new picker.DocumentSelectOptions();
     options.maxSelectNumber = 1;
     options.fileSuffixFilters = [`主题包|${QYTHEME_EXTENSION}`];
-    const result = await new picker.DocumentViewPicker(context).select(options);
+    const result = await selectDocuments(context, options);
     return result && result.length > 0 ? result[0] : '';
   }
 
@@ -519,7 +511,7 @@ export class ThemePackageService {
         fs.copyFileSync(sourcePath, zipPath);
       } else {
         const copySource = uri.startsWith('/') ? fileUri.getUriFromPath(uri) : uri;
-        await fs.copy(copySource, fileUri.getUriFromPath(zipPath));
+        await copyFile(copySource, fileUri.getUriFromPath(zipPath));
       }
       const size = fs.statSync(zipPath).size;
       if (size > ThemePackageLimits.MAX_PACKAGE_BYTES) {

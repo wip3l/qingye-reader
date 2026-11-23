@@ -23,6 +23,7 @@ function harness(initial = -1) {
   const context = vm.createContext({
     console: { warn: (...args) => errors.push(args) },
     window: { getLastWindow: async () => mainWindow },
+    setWindowBrightness: (target, next) => target.setWindowBrightness(next),
     preferences: { getPreferences: async () => ({
       get: async (key, fallback) => disk.get(key) ?? fallback,
       put: async (key, next) => disk.set(key, next), flush: async () => {}

@@ -33,6 +33,8 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
+import { selectImages } from '../platform/Files';
+import { PlatformInfo } from '../platform/PlatformInfo';
 
 class BenefitCompareRow {
   title: string;
@@ -243,14 +245,37 @@ struct AccountCenterPage {
       await HuaweiAccountService.initialize(this.context);
       if (AccountSessionStore.isLoggedIn() && AccountCommerceConfig.isServerConfigured()) {
         await this.refreshMembership(true);
-        await this.loadIapProducts();
-        await this.recoverUnfinishedPurchases();
+        if (this.huaweiServicesAvailable()) {
+          await this.loadIapProducts();
+          await this.recoverUnfinishedPurchases();
+        }
       } else if (AccountCommerceConfig.isServerConfigured()) {
         await this.refreshMembership(false);
       }
     } catch (e) {
       console.warn('初始化账号中心失败:', e);
     }
+  }
+
+  /** 华为账号登录、应用内充值依赖华为账号服务和应用内支付，安卓上没有：只走用户名登录，不开放充值。 */
+  huaweiServicesAvailable(): boolean {
+    return !PlatformInfo.ANDROID;
+  }
+
+  openPasswordLogin(): void {
+    if (!AccountCommerceConfig.isServerConfigured()) {
+      HdsFeedback.showToast('请先配置账号服务端地址');
+      return;
+    }
+    router.pushUrl({ url: 'pages/AccountPasswordLogin' });
+  }
+
+  openRecharge(): void {
+    if (!this.huaweiServicesAvailable()) {
+      HdsFeedback.showToast('安卓版暂未开放充值，可在鸿蒙设备上充值，点数随账号同步');
+      return;
+    }
+    this.showRechargeSheet = true;
   }
 
   async login(): Promise<void> {
@@ -285,8 +310,10 @@ struct AccountCenterPage {
     CloudAutoSync.schedule(this.context, 0);
     try {
       await this.refreshMembership(false);
-      await this.loadIapProducts();
-      await this.recoverUnfinishedPurchases();
+      if (this.huaweiServicesAvailable()) {
+        await this.loadIapProducts();
+        await this.recoverUnfinishedPurchases();
+      }
     } catch (e) {
       console.warn('登录后刷新账号失败:', e);
     }
@@ -409,14 +436,11 @@ struct AccountCenterPage {
     let file: fs.File | null = null;
     let source: image.ImageSource | null = null;
     try {
-      const options: picker.PhotoSelectOptions = new picker.PhotoSelectOptions();
-      options.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
-      options.maxSelectNumber = 1;
-      const result = await new picker.PhotoViewPicker(this.context).select(options);
-      if (!result || result.photoUris.length === 0) {
+      const photoUris = await selectImages(this.context, 1);
+      if (photoUris.length === 0) {
         return;
       }
-      const uri = result.photoUris[0];
+      const uri = photoUris[0];
       file = fs.openSync(uri, fs.OpenMode.READ_ONLY);
       source = image.createImageSource(file.fd);
       const info = await source.getImageInfo();
@@ -958,7 +982,7 @@ struct AccountCenterPage {
             `${quote.payablePoints - this.paidPoints} 点。赠送点不可抵扣。`,
           buttons: [{ text: '取消', color: this.subTextColor() }, { text: '去充值', color: this.accentColor() }]
         });
-        if (recharge.index === 1) this.showRechargeSheet = true;
+        if (recharge.index === 1) this.openRecharge();
         return;
       }
       const credit = quote.creditPoints > 0 ? `\n升级抵扣 ${quote.creditPoints} 点` : '';
@@ -1120,14 +1144,18 @@ struct AccountCenterPage {
               this.beginEditProfile();
             })
         } else {
-          Button(this.loading ? '登录中' : '华为账号登录')
+          Button(this.loading ? '登录中' : (this.huaweiServicesAvailable() ? '华为账号登录' : '登录'))
             .height(36)
             .fontSize(AppFontSize.BODY)
             .enabled(!this.loading)
             .backgroundColor(this.accentColor())
             .fontColor(ThemeRuntime.onAccentColor(this.accentColor()))
             .onClick(() => {
-              this.login();
+              if (this.huaweiServicesAvailable()) {
+                this.login();
+              } else {
+                this.openPasswordLogin();
+              }
             })
         }
       }
@@ -1167,7 +1195,7 @@ struct AccountCenterPage {
             .border({ width: 1, color: MembershipIcons.cardSubTextColor(this.appDarkMode) })
             .margin({ right: AppSpacing.MD })
             .onClick(() => {
-              this.showRechargeSheet = true;
+              this.openRecharge();
             })
           Text('?')
             .fontSize(AppFontSize.CAPTION)

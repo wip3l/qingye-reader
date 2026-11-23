@@ -51,6 +51,7 @@ function fixture(settings = {}) {
       unlink: async path => { files.delete(path); },
       mkdir: async () => {}, copy: async (source, target) => { log.copies.push({ source, target }); files.set(target, files.get(source)); }
     },
+    copyFile: (source, target) => sandbox.fs.copy(source, target),
     fileUri: { getUriFromPath: path => path },
     AccountSessionStore: { account: () => ({ userId: 'u1' }), isLoggedIn: () => true, activeMembershipSku: () => sku },
     CloudFileClient: {

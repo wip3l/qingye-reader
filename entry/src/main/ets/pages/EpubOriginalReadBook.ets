@@ -5,7 +5,8 @@ import fs from '@ohos.file.fs';
 import image from '@ohos.multimedia.image';
 import { window } from '@kit.ArkUI';
 import { Book, BookChapter, Bookmark } from '@legado/sourceengine';
-import { inputConsumer, KeyCode, Action, KeyEvent as InputKeyEvent } from '@kit.InputKit';
+import { inputConsumer, KeyEvent as InputKeyEvent } from '../platform/KeyConsumer';
+import { KeyCode, Action } from '../platform/InputKeys';
 import { ReaderKeyboard, ReaderKeyboardSettings } from '../core/reader/ReaderKeyboard';
 import { ReaderKeyboardSettingsStore } from '../utils/ReaderKeyboardSettingsStore';
 import { SmartControlKey } from '../utils/SmartControlKey';
@@ -94,6 +95,7 @@ import { ReaderAnnotationLayer, ReaderAnnotationLayerMode } from '../components/
 import { ReaderAnnotationShare } from '../utils/ReaderAnnotationShare';
 import lazy { motion } from '@kit.MultimodalAwarenessKit';
 import deviceInfo from '@ohos.deviceInfo';
+import { systemBarContentColor } from '../platform/SystemInsets';
 
 /** 本书的文件排版设置与位置（书籍变量）。 */
 const SCROLL_KEY = 'epubOriginalScroll';
@@ -3530,7 +3532,7 @@ struct EpubOriginalReadBookPage {
       mainWindow.setWindowSystemBarProperties({
         statusBarColor: '#00000000',
         isStatusBarLightIcon: dark,
-        statusBarContentColor: ThemeRuntime.primaryTextColor(dark),
+        statusBarContentColor: systemBarContentColor(dark, ThemeRuntime.primaryTextColor(dark)),
         navigationBarColor: '#00000000',
         isNavigationBarLightIcon: dark,
         navigationBarContentColor: ThemeRuntime.primaryTextColor(dark)

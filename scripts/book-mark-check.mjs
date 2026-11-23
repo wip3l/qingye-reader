@@ -13,7 +13,8 @@ const context = vm.createContext({
   BookTypeSupport: { mediaCategoryOf: book => book.category || 'novel' },
   Book: class {},
   SearchBook: class {},
-  EncodedSourceUrl: { decode: value => value }
+  EncodedSourceUrl: { decode: value => value },
+  compareText: (a, b, locale) => a.localeCompare(b, locale)
 });
 vm.runInContext(compile(readEtsModule('model/book/BookMark.ts')) + '\n' +
   compile(readEtsModule('utils/BookIdentity.ts')) +

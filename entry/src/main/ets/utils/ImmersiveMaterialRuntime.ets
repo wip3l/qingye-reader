@@ -1,6 +1,7 @@
 import deviceInfo from '@ohos.deviceInfo';
 import { display, uiMaterial } from '@kit.ArkUI';
-import { hdsMaterial } from '@kit.UIDesignKit';
+import { hdsMaterial } from '../platform/Hds';
+import { PlatformInfo } from '../platform/PlatformInfo';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 
 export interface ImmersiveSurfaceBorder {
@@ -139,6 +140,7 @@ export class ImmersiveMaterialRuntime {
   private static deviceLevelWeak: boolean | null = null;
 
   static supportsHds(): boolean {
+    if (PlatformInfo.ANDROID) return false;
     // ArkUI uiMaterial.ImmersiveMaterial is an API 26 feature. Keep this
     // capability separate from HDS tabs/material, which starts at API 23.
     if (deviceInfo.sdkApiVersion < 26) return false;
@@ -156,6 +158,7 @@ export class ImmersiveMaterialRuntime {
 
   /** HDS tabs/floating bars and HDS system materials start at HarmonyOS 6/API 23. */
   static supportsHdsTabs(): boolean {
+    if (PlatformInfo.ANDROID) return false;
     return deviceInfo.sdkApiVersion >= 23;
   }
 
@@ -222,6 +225,8 @@ export class ImmersiveMaterialRuntime {
    * 用带透明度的实色底加组件模糊，各机型都能画出来。设置页仍显示用户选的“跟随系统”。
    */
   static effectiveLevel(level: string): string {
+    // 安卓上没有系统沉浸材质，跟随系统/高档的半透明底会直接露出背景，按弱档画实色底；用户手选的均衡档保留。
+    if (PlatformInfo.ANDROID) return level === 'balanced' ? 'balanced' : 'weak';
     return level === 'adaptive' && ImmersiveMaterialRuntime.deviceMaterialWeak() ? 'balanced' : level;
   }
 
@@ -276,8 +281,17 @@ export class ImmersiveMaterialRuntime {
     const base = fallback || ThemeRuntime.cardColor(darkMode);
     if (typeof base !== 'string' || !/^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(base)) return base;
     const rgb = ImmersiveMaterialRuntime.themeTintRgb(base.substring(base.length - 6), darkMode, themeTint);
+    if (ImmersiveMaterialRuntime.effectiveLevel(level) === 'weak') {
+      // 弱档要实色底。底色自带透明度（如强调色淡底 #1F+强调色）时不能直接去掉 alpha，否则变成整块强调色，
+      // 和用强调色写的字一样色、字就看不见了；按原透明度叠到卡片色上，得到看起来一样的实色。
+      const baseAlpha = base.length === 9 ? parseInt(base.substring(1, 3), 16) : 255;
+      if (baseAlpha >= 255) return `#${rgb}`;
+      const card = ThemeRuntime.cardColor(darkMode);
+      const cardRgb = /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(card) ? card.substring(card.length - 6) : 'FFFFFF';
+      return `#${ImmersiveMaterialRuntime.blendRgb(cardRgb, rgb, baseAlpha / 255)}`;
+    }
     // 统一替换旧 alpha，避免沿用上次过厚的底色。
-    return ImmersiveMaterialRuntime.effectiveLevel(level) === 'weak' ? `#${rgb}` : `#${alpha}${rgb}`;
+    return `#${alpha}${rgb}`;
   }
 
   /** 没有系统材质的旧系统用的不透明面板底，开关打开时同样混入少量强调色。 */

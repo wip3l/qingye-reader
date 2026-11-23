@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.legado.read">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 后台朗读、听书：前台服务和通知栏控件（PlaybackService）。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 隐私书架的指纹、人脸验证（BiometricBridge）。 -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+    <!-- Android 11 起要声明才能找到系统朗读引擎（TtsBridge）。 -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".MyApplication"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+        <!-- 类名固定为 <模块名><Ability 名>Activity，ArkUI-X 靠它找到对应的 Ability。 -->
+        <activity
+            android:name=".EntryEntryAbilityActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustNothing|stateHidden"
+            android:configChanges="orientation|keyboard|layoutDirection|screenSize|screenLayout|uiMode|smallestScreenSize|density">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 分享面板读取沙箱文件用（ShareBridge）。 -->
+        <provider
+            android:name=".ShareProvider"
+            android:authorities="io.legado.read.share"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
+        <service
+            android:name=".PlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+    </application>
+
+</manifest>

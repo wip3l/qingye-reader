@@ -1,7 +1,7 @@
 import { router } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import { Book } from '@legado/sourceengine';
 import { syncSystemBars } from '../utils/SystemBars';
 import { AppDatabase } from '../model/data/AppDatabase';

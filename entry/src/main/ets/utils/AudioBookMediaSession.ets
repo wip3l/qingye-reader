@@ -1,4 +1,4 @@
-import { avSession } from '@kit.AVSessionKit';
+import { avSession } from '../platform/MediaSession';
 import { Context } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { image } from '@kit.ImageKit';

@@ -122,26 +122,28 @@ struct OtherSettingsPage {
       .backgroundColor(this.cardColor())
     }
 
-    this.sectionTitle('交互')
-    Column() {
-      SettingSwitchRow({
-        title: '智感握姿',
-        description: '按左右手握持调整导航栏和按钮位置；需设备支持',
-        isOn: this.smartGripEnabled,
-        showDivider: false,
-        onChange: (value: boolean) => {
-          SmartGripSettingsStore.save(getContext(this), value).catch((error: Error) => {
-            console.warn('保存智感握姿设置失败:', error);
-            HdsFeedback.showToast('保存失败，请重试');
-          });
-        }
-      })
+    if (SmartGripSettingsStore.supported()) {
+      this.sectionTitle('交互')
+      Column() {
+        SettingSwitchRow({
+          title: '智感握姿',
+          description: '按左右手握持调整导航栏和按钮位置；需设备支持',
+          isOn: this.smartGripEnabled,
+          showDivider: false,
+          onChange: (value: boolean) => {
+            SmartGripSettingsStore.save(getContext(this), value).catch((error: Error) => {
+              console.warn('保存智感握姿设置失败:', error);
+              HdsFeedback.showToast('保存失败，请重试');
+            });
+          }
+        })
+      }
+      .width('calc(100% - 24vp)')
+      .margin({ left: AppSpacing.LG, right: AppSpacing.LG, bottom: AppSpacing.XXL })
+      .borderRadius(ThemeRuntime.cardRadius())
+      .clip(true)
+      .backgroundColor(this.cardColor())
     }
-    .width('calc(100% - 24vp)')
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG, bottom: AppSpacing.XXL })
-    .borderRadius(ThemeRuntime.cardRadius())
-    .clip(true)
-    .backgroundColor(this.cardColor())
   }
 
   pageColor(): string {

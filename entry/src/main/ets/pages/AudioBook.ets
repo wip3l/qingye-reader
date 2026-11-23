@@ -7,9 +7,10 @@ import { ThemeBookCoverSettings } from '../utils/ThemeBookCoverSettings';
 import { BookCover } from '../components/book/BookCover';
 import { NativeSourceService, NativeVoiceOption, Book, BookChapter, BookSource, BookTypeSupport } from '@legado/sourceengine';
 import { promptAction, router } from '@kit.ArkUI';
-import { common, WantAgent, wantAgent } from '@kit.AbilityKit';
+import { common, WantAgent } from '@kit.AbilityKit';
 import { BackgroundPermit } from '../utils/BackgroundPermit';
-import { avSession } from '@kit.AVSessionKit';
+import { avSession } from '../platform/MediaSession';
+import { createLaunchAgent } from '../platform/LaunchAgent';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { ReadBookEngine } from '../core/book/ReadBookEngine';
 import { WebBookService } from '../core/book/WebBookService';
@@ -1924,18 +1925,9 @@ struct AudioBookPage {
 
   async createAudioWantAgent(): Promise<WantAgent> {
     const context = getContext(this) as common.UIAbilityContext;
-    return await wantAgent.getWantAgent({
-      wants: [{
-        bundleName: context.abilityInfo.bundleName,
-        abilityName: 'EntryAbility',
-        parameters: {
-          audioBookAction: 'openPanel',
-          bookUrl: this.bookUrl
-        }
-      }],
-      actionType: wantAgent.OperationType.START_ABILITY,
-      requestCode: 1101,
-      actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+    return await createLaunchAgent(context, 1101, {
+      audioBookAction: 'openPanel',
+      bookUrl: this.bookUrl
     });
   }
 
