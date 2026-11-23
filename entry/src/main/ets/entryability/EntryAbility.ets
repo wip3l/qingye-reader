@@ -75,6 +75,7 @@ import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
 import { syncDesktopTitleBar, releaseSystemBarListeners } from '../utils/SystemBars';
 import { installCookiePort } from '../platform/Cookies';
 import { setSpeechCacheDir } from '../platform/SpeechKit';
+import { systemBarContentColor } from '../platform/SystemInsets';
 
 export default class EntryAbility extends UIAbility {
   private modeDependentThemeKey: string = '';
@@ -1061,7 +1062,7 @@ export default class EntryAbility extends UIAbility {
         mainWindow.setWindowSystemBarProperties({
           statusBarColor: '#00000000',
           isStatusBarLightIcon: darkMode,
-          statusBarContentColor: ThemeRuntime.primaryTextColor(darkMode),
+          statusBarContentColor: systemBarContentColor(darkMode, ThemeRuntime.primaryTextColor(darkMode)),
           navigationBarColor: bg,
           isNavigationBarLightIcon: darkMode,
           navigationBarContentColor: ThemeRuntime.primaryTextColor(darkMode)

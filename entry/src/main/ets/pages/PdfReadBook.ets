@@ -60,6 +60,7 @@ import { ReaderHaptics } from '../utils/ReaderHaptics';
 import { HoldingHandTracker } from '../utils/HoldingHandTracker';
 import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
 import { WatchReaderHost, WatchReaderSnapshot, WatchRemoteBridge } from '../utils/WatchRemoteBridge';
+import { systemBarContentColor } from '../platform/SystemInsets';
 import {
   ReaderSnapshotPageTurn, ReaderSnapshotTurnController, ReaderSnapshotTurnHost
 } from '../components/reader/ReaderSnapshotPageTurn';
@@ -474,7 +475,7 @@ struct PdfReadBookPage {
       mainWindow.setWindowSystemBarProperties({
         statusBarColor: '#00000000',
         isStatusBarLightIcon: dark,
-        statusBarContentColor: ThemeRuntime.primaryTextColor(dark),
+        statusBarContentColor: systemBarContentColor(dark, ThemeRuntime.primaryTextColor(dark)),
         navigationBarColor: '#00000000',
         isNavigationBarLightIcon: dark,
         navigationBarContentColor: ThemeRuntime.primaryTextColor(dark)

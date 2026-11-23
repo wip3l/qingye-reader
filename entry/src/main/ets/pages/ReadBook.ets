@@ -296,7 +296,7 @@ import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
 import { WatchReaderHost, WatchReaderSnapshot, WatchRemoteBridge } from '../utils/WatchRemoteBridge';
 import { READER_TURN_FRAME_RATE, applyReaderTurnFrameRate } from '../utils/ReaderTurnFrameRate';
 import { PlatformInfo } from '../platform/PlatformInfo';
-import { NAVIGATION_BAR_TAKES_TOUCHES } from '../platform/SystemInsets';
+import { NAVIGATION_BAR_TAKES_TOUCHES, systemBarContentColor } from '../platform/SystemInsets';
 
 const READER_CURRENT_PAGINATION_AHEAD_PAGE_COUNT = 4;
 /** 换到上一章时从最后一句开读的标记，传给 playPositionFromFloatingSession 的 sourceOffset。 */
@@ -453,6 +453,9 @@ struct ReadBookPage {
   @State isLoading: boolean = true;
   @State @Watch('onReaderShowMenuChange') showMenu: boolean = false;
   @State readerDayNightLongPressHandled: boolean = false;
+  /** 日夜按钮最近一次按下的位置（vp，相对窗口），揭开动画从这里扩开。 */
+  private readerDayNightTouchX: number = -1;
+  private readerDayNightTouchY: number = -1;
   // 展开屏上记住用户本次唤起菜单的手指侧：-1 左侧，1 右侧。
   @State readerMenuAnchorSide: number = 1;
   // 0 表示尚未识别，继续使用原有位置；左右手分别为 -1 / 1。
@@ -2008,7 +2011,7 @@ struct ReadBookPage {
       mainWindow.setWindowSystemBarProperties({
         statusBarColor: '#00000000',
         isStatusBarLightIcon: useLightIcons,
-        statusBarContentColor: systemTextColor,
+        statusBarContentColor: systemBarContentColor(useLightIcons, systemTextColor),
         navigationBarColor: comicMode ? '#00000000' : bg,
         isNavigationBarLightIcon: useLightIcons,
         navigationBarContentColor: systemTextColor
@@ -5249,11 +5252,18 @@ struct ReadBookPage {
   @Builder
   readerFloatingDayNightMenuItem() {
     Row() {
-      this.readerFloatingIconMenuItem(this.readerDayNightIcon(), false, () => {})
+      // 点击交给图标项本身：它自带 onClick，外层再挂 onClick 收不到点击（内层先接走），按钮就点不动。
+      this.readerFloatingIconMenuItem(this.readerDayNightIcon(), false, () => this.handleReaderDayNightClick(
+        this.readerDayNightTouchX, this.readerDayNightTouchY))
     }
     .layoutWeight(1)
     .height(56)
-    .onClick((event: ClickEvent) => this.handleReaderDayNightClick(event.windowX, event.windowY))
+    .onTouch((event: TouchEvent) => {
+      if (event.type === TouchType.Down && event.touches.length > 0) {
+        this.readerDayNightTouchX = event.touches[0].windowX;
+        this.readerDayNightTouchY = event.touches[0].windowY;
+      }
+    })
     .gesture(
       LongPressGesture({ duration: 600, repeat: false })
         .onAction((event: GestureEvent) => this.handleReaderDayNightLongPress(

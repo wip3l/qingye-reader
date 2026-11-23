@@ -26,6 +26,14 @@ export async function systemInsetsPx(): Promise<SystemInsetsPx | null> {
   return { top: Number(result['top']) || 0, bottom: Number(result['bottom']) || 0 };
 }
 
+/**
+ * 状态栏文字颜色。安卓的状态栏图标只有深浅两种，ArkUI-X 只认两个约定值来切换：#66000000 换深色图标、
+ * #E5FFFFFF 换浅色图标，别的颜色一概不理（深色主题下图标就一直是深的）。
+ */
+export function systemBarContentColor(lightIcons: boolean, _color: string): string {
+  return lightIcons ? '#E5FFFFFF' : '#66000000';
+}
+
 /** 三键导航栏是单独的系统窗口，落在上面的点击到不了应用。 */
 export const NAVIGATION_BAR_TAKES_TOUCHES: boolean = true;
 

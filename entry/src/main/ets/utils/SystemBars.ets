@@ -4,7 +4,7 @@ import { deviceInfo } from '@kit.BasicServicesKit';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { PlatformInfo } from '../platform/PlatformInfo';
 import {
-  READER_ALWAYS_HIDES_NAVIGATION, setNavigationHidden, SystemInsetsPx, systemInsetsPx
+  READER_ALWAYS_HIDES_NAVIGATION, setNavigationHidden, systemBarContentColor, SystemInsetsPx, systemInsetsPx
 } from '../platform/SystemInsets';
 
 let safeAreaWindow: window.Window | undefined;
@@ -115,7 +115,7 @@ export function syncSystemBars(context: Context, darkMode: boolean, backgroundCo
     mainWindow.setWindowSystemBarProperties({
       statusBarColor: '#00000000',
       isStatusBarLightIcon: darkMode,
-      statusBarContentColor: ThemeRuntime.primaryTextColor(darkMode),
+      statusBarContentColor: systemBarContentColor(darkMode, ThemeRuntime.primaryTextColor(darkMode)),
       navigationBarColor: '#00000000',
       isNavigationBarLightIcon: darkMode,
       navigationBarContentColor: ThemeRuntime.primaryTextColor(darkMode)

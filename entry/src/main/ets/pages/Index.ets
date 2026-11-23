@@ -39,6 +39,7 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { AudioSheetTransition, AUDIO_SHEET_ENTER_DURATION, AUDIO_SHEET_EXIT_DURATION } from '../utils/AudioSheetTransition';
 import { BookMarkService } from '../core/mark/BookMarkService';
+import { systemBarContentColor } from '../platform/SystemInsets';
 
 @Entry
 @Component
@@ -1827,7 +1828,7 @@ struct Index {
       mainWindow.setWindowSystemBarProperties({
         statusBarColor: '#00000000',
         isStatusBarLightIcon: this.appDarkMode,
-        statusBarContentColor: ThemeRuntime.primaryTextColor(this.appDarkMode),
+        statusBarContentColor: systemBarContentColor(this.appDarkMode, ThemeRuntime.primaryTextColor(this.appDarkMode)),
         navigationBarColor: '#00000000',
         isNavigationBarLightIcon: this.appDarkMode,
         navigationBarContentColor: ThemeRuntime.primaryTextColor(this.appDarkMode)

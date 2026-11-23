@@ -23,6 +23,11 @@ export const READER_ALWAYS_HIDES_NAVIGATION: boolean = false;
  */
 export const NAVIGATION_BAR_TAKES_TOUCHES: boolean = false;
 
+/** 状态栏文字颜色。鸿蒙按给的颜色画。 */
+export function systemBarContentColor(_lightIcons: boolean, color: string): string {
+  return color;
+}
+
 /** 隐藏或恢复底部导航条。 */
 export function setNavigationHidden(mainWindow: window.Window, hidden: boolean): Promise<void> {
   return mainWindow.setSpecificSystemBarEnabled('navigationIndicator', !hidden);
