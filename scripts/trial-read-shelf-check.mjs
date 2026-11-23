@@ -47,6 +47,8 @@ function harness() {
     BookMarkService: { carryTagsToShelfBook: async () => {} },
     // 新书默认分组：这里按“未分组”设置，分组不变。
     NewBookGroupStore: { apply: async () => '' },
+    // 加入书架通知书源：这里的书源没有事件回调。
+    SourceShelfEvents: { added() {}, removed() {} },
     NewBookGroup: { addedToast: name => name ? `已加入书架 · ${name}` : '已加入书架' }
   });
   vm.runInContext([
