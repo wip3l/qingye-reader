@@ -1262,6 +1262,12 @@ struct WebDavBrowsePage {
     run();
   }
 
+  /** 书架页挂在下面不会重读数据库，加书、移出后要发 shelfUpdateTime 让它刷新；同一毫秒内连发也要保证值变化。 */
+  private notifyShelfChanged(): void {
+    const previous = AppStorage.get<number>('shelfUpdateTime') || 0;
+    AppStorage.setOrCreate('shelfUpdateTime', Math.max(Date.now(), previous + 1));
+  }
+
   isOnShelf(entry: WebDavEntry): boolean {
     if (this.shelfRevision < 0 || this.shelfUrls.size === 0) return false;
     return this.shelfUrls.has(LocalBookService.webDavBookUrl(this.connection.id, entry.relativePath));
@@ -1606,6 +1612,7 @@ struct WebDavBrowsePage {
         this.busyText = '';
         this.busyProgress = 0;
         this.loadShelfUrls();
+        this.notifyShelfChanged();
         onReady(book);
       }).catch((error: Object): void => {
         this.busy = false;
@@ -1658,6 +1665,7 @@ struct WebDavBrowsePage {
           await LocalBookService.deleteBookWithFiles(getContext(this), book.bookUrl);
           this.showFileDetail = false;
           this.loadShelfUrls();
+          this.notifyShelfChanged();
           HdsFeedback.showToast('已移出书架');
         } catch (error) {
           HdsFeedback.showToast(`移出失败：${this.message(error as Object)}`);
@@ -1684,6 +1692,7 @@ struct WebDavBrowsePage {
         try {
           await LocalBookService.deleteBookWithFiles(getContext(this), book.bookUrl);
           this.loadShelfUrls();
+          this.notifyShelfChanged();
           HdsFeedback.showToast('已移出书架');
         } catch (error) {
           HdsFeedback.showToast(`移出失败：${this.message(error as Object)}`);
