@@ -15,7 +15,7 @@ import {
 } from '../components/reader/ReaderShelfCoverOpening';
 import { ReaderCacheCoordinator } from '../core/book/ReaderCacheCoordinator';
 import { BookCoverResolver } from '../utils/BookCoverResolver';
-import { applyReaderSystemBars, syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
+import { applyReaderSystemBars, restoreReaderNavigation, syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
 import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation';
 import { ReaderScreenScrollMotion } from '../core/reader/ReaderScreenScrollMotion';
 import displaySync from '@ohos.graphics.displaySync';
@@ -296,6 +296,7 @@ import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
 import { WatchReaderHost, WatchReaderSnapshot, WatchRemoteBridge } from '../utils/WatchRemoteBridge';
 import { READER_TURN_FRAME_RATE, applyReaderTurnFrameRate } from '../utils/ReaderTurnFrameRate';
 import { PlatformInfo } from '../platform/PlatformInfo';
+import { NAVIGATION_BAR_TAKES_TOUCHES } from '../platform/SystemInsets';
 
 const READER_CURRENT_PAGINATION_AHEAD_PAGE_COUNT = 4;
 /** 换到上一章时从最后一句开读的标记，传给 playPositionFromFloatingSession 的 sourceOffset。 */
@@ -2042,6 +2043,7 @@ struct ReadBookPage {
     window.getLastWindow(getContext(this)).then((mainWindow: window.Window) => {
       mainWindow.setWindowLayoutFullScreen(true);
       mainWindow.setWindowSystemBarEnable(['navigation', 'status']);
+      restoreReaderNavigation(mainWindow);
       this.statusBarSafeHeight = 0;
     }).catch((err: Error) => {
       console.error('退出阅读沉浸模式失败:', err);
@@ -4716,7 +4718,15 @@ struct ReadBookPage {
     if (this.readerBottomChromeMode() !== 'menu') return this.readerBottomActionOverlayHeight();
     // 旧系统的实色底栏自带 14vp 底边距，外壳至少要容得下整条栏，否则顶边一截点不到。
     return this.supportsReaderImmersiveMaterial() ? this.readerBottomMenuOverlayHeight() :
-      Math.max(this.readerBottomMenuOverlayHeight(), this.readerBottomMenuPanelHeight() + 14);
+      Math.max(this.readerBottomMenuOverlayHeight(), this.readerBottomMenuPanelHeight() + this.readerSolidMenuBottomGap());
+  }
+
+  /**
+   * 旧系统实色底栏离屏幕底边的距离。导航条接走点击的平台（安卓三键导航）要整条抬到导航条上面，
+   * 否则最下面一排按钮点不到。
+   */
+  readerSolidMenuBottomGap(): number {
+    return NAVIGATION_BAR_TAKES_TOUCHES ? 14 + Math.max(0, this.navBarHeight) : 14;
   }
 
   @Builder
@@ -5182,7 +5192,7 @@ struct ReadBookPage {
       }
     }
     .width(this.readerFloatingBarWidth())
-    .padding({ bottom: 14 })
+    .padding({ bottom: this.readerSolidMenuBottomGap() })
     .position({ x: this.readerFloatingBarLeft(), y: '100%' })
     .translate({ y: '-100%' })
   }
@@ -12213,7 +12223,8 @@ struct ReadBookPage {
 
   /** 胶囊底边离屏幕底边的距离：停在快速跳转面板上方 10vp。 */
   readerQuickJumpCapsuleBottom(): number {
-    const panelBottom = this.supportsReaderImmersiveMaterial() ? this.readerFloatingBarBottomMargin() : 14;
+    const panelBottom = this.supportsReaderImmersiveMaterial() ? this.readerFloatingBarBottomMargin() :
+      this.readerSolidMenuBottomGap();
     return panelBottom + this.readerBottomMenuPanelHeight() + 10;
   }
 

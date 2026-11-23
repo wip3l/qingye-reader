@@ -6,6 +6,7 @@ import android.os.Build;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
 
 import org.json.JSONException;
@@ -109,6 +110,32 @@ public class SystemBridge extends BridgePlugin {
             // put 数值不会失败
         }
         return result.toString();
+    }
+
+    /**
+     * 隐藏或恢复导航栏。value 为 "1" 时隐藏，从屏幕边缘滑动可临时唤出；其它值恢复。
+     * 阅读页的页脚贴近屏幕底边，安卓的三键导航栏和手势条都比鸿蒙的导航条高，会压在页脚上。
+     */
+    public String setNavigationBarHidden(String value) {
+        final boolean hidden = "1".equals(value);
+        activity.runOnUiThread(() -> {
+            View decor = activity.getWindow().getDecorView();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                WindowInsetsController controller = decor.getWindowInsetsController();
+                if (controller == null) return;
+                if (hidden) {
+                    controller.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                    controller.hide(WindowInsets.Type.navigationBars());
+                } else {
+                    controller.show(WindowInsets.Type.navigationBars());
+                }
+            } else {
+                int flags = decor.getSystemUiVisibility();
+                int immersive = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+                decor.setSystemUiVisibility(hidden ? flags | immersive : flags & ~immersive);
+            }
+        });
+        return "{}";
     }
 
     private static String error(String message) {

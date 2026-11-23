@@ -88,6 +88,7 @@ import { BookMark, BookMarkStatus } from '../../model/book/BookMark';
 import { BookIdentity } from '../../utils/BookIdentity';
 import { copyFile, selectDocuments } from '../../platform/Files';
 import { compareText } from '../../platform/TextCompare';
+import { PlatformInfo } from '../../platform/PlatformInfo';
 
 const SHELF_FULL_TEXT_CACHE_NOTIFICATION_INTERVAL_MS: number = 5000;
 /** 有声书同时下载的章数。 */
@@ -6700,7 +6701,7 @@ export struct BookshelfPage {
     }
     this.cloudBookOpenRequest++;
     this.shelfLastOpenedBookUrl = book.bookUrl;
-    if (this.bookshelfBookOpenAnimation) {
+    if (this.bookOpenAnimationEnabled()) {
       AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
         Date.now() + SHELF_COVER_OPEN_START_CAP + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
       // 读完回来才挪位（playShelfReorder），阅读期间书架怎么刷新这本书都留在点开的那一格。
@@ -6720,7 +6721,7 @@ export struct BookshelfPage {
     let backdropWanted = false;
     let windowWidthPx = 0;
     let windowHeightPx = 0;
-    if (this.bookshelfBookOpenAnimation) {
+    if (this.bookOpenAnimationEnabled()) {
       // 位置要在点击的这一刻量，截图可以慢一步。
       const opening = this.shelfOpeningCover(book, touchX, touchY);
       AppStorage.setOrCreate<ShelfOpeningCover>(SHELF_OPENING_COVER_KEY, opening);
@@ -6745,8 +6746,8 @@ export struct BookshelfPage {
         params: {
           bookUrl: book.bookUrl,
           formatChecked: 'true',
-          shelfBookOpening: this.bookshelfBookOpenAnimation ? 'true' : 'false',
-          shelfSharedCoverId: this.bookshelfBookOpenAnimation ? SharedElementMotion.coverId('shelf', book.origin, book.bookUrl) : ''
+          shelfBookOpening: this.bookOpenAnimationEnabled() ? 'true' : 'false',
+          shelfSharedCoverId: this.bookOpenAnimationEnabled() ? SharedElementMotion.coverId('shelf', book.origin, book.bookUrl) : ''
         }
       }).then(() => {
         this.shelfBookRoutePending = false;
@@ -6785,7 +6786,7 @@ export struct BookshelfPage {
     this.discardShelfOpeningBackdrop();
     router.pushUrl({
       url: 'pages/AudioBook',
-      params: { bookUrl: book.bookUrl, shelfBookOpening: this.bookshelfBookOpenAnimation ? 'true' : 'false' }
+      params: { bookUrl: book.bookUrl, shelfBookOpening: this.bookOpenAnimationEnabled() ? 'true' : 'false' }
     }).then((): void => {
       this.shelfBookRoutePending = false;
     }).catch((error: Error): void => {
@@ -6794,9 +6795,17 @@ export struct BookshelfPage {
     });
   }
 
+  /**
+   * 书籍打开动画开着且本平台做得出来。安卓上量不到封面位置（componentUtils 缺失），整页截图还会卡住渲染
+   * 好几秒（ArkUI-X 截图等渲染线程超时），所以一律直接打开。
+   */
+  bookOpenAnimationEnabled(): boolean {
+    return this.bookshelfBookOpenAnimation && !PlatformInfo.ANDROID;
+  }
+
   /** 手指按下时先截一张首页；正在截或刚截过的沿用。 */
   prewarmShelfOpeningBackdrop(): void {
-    if (!this.bookshelfBookOpenAnimation || this.shelfBookRoutePending || this.isBookMultiSelect) return;
+    if (!this.bookOpenAnimationEnabled() || this.shelfBookRoutePending || this.isBookMultiSelect) return;
     if (this.shelfOpeningBackdropPending &&
       Date.now() - this.shelfOpeningBackdropRequestedAt < BookshelfPage.SHELF_OPENING_BACKDROP_FRESH) {
       return;
@@ -7681,7 +7690,7 @@ export struct BookshelfPage {
       })
     }
     .id(measure ? this.shelfCoverElementId(book, idScope) : '')
-    .sharedTransition(measure && this.bookshelfBookOpenAnimation ? SharedElementMotion.coverId('shelf', book.origin, book.bookUrl) : '', {
+    .sharedTransition(measure && this.bookOpenAnimationEnabled() ? SharedElementMotion.coverId('shelf', book.origin, book.bookUrl) : '', {
       duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut, type: SharedTransitionEffectType.Exchange
     })
     .width(width)
