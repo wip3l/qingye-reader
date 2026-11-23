@@ -73,6 +73,9 @@
   两个约定色（`#66000000` 深色图标、`#E5FFFFFF` 浅色图标），别的颜色不理，所以 `statusBarContentColor` 一律经
   `platform/SystemInsets.systemBarContentColor` 取。阅读正文时安卓总是收起导航栏（三键导航栏、手势条都会压住页脚），从边缘滑动可临时唤出；
   三键导航栏会接走落在上面的点击，实色底栏（非 HDS）因此整条抬到导航栏上面（`NAVIGATION_BAR_TAKES_TOUCHES`）。
+- **网络超时**：ArkUI-X 安卓版的网络栈把 `readTimeout` 当成整个请求的时限（不是多久没数据），大文件下到一半就被掐断。
+  流式下载的 `readTimeout` 一律经 `platform/HttpTimeouts.streamReadTimeout(空闲时限, 总时限)` 取，安卓上取总时限。
+- **文件地址**：`@ohos.file.fileuri` 在安卓上没有实现，一律从 `platform/FileUri` 取 `fileUri`（检查脚本会拦）。
 - **截图**：离屏组件截图（`getComponentSnapshot().get` 截被盖住的页面）在安卓上会连续超时三次、每次卡住渲染 2 秒。
   书架点按时截首页给“书籍打开动画”用，安卓上量不到封面位置（`componentUtils` 缺失），动画本来就做不出，所以安卓上关掉动画和截图，
   设置里也不显示开关。屏幕上可见组件的截图（仿真翻页、日夜切换揭开动画）正常。
@@ -126,12 +129,19 @@ Redmi Note 11 Pro（Android 13，MIUI，三键导航，arm64）。
 - 冷启动（到首个界面）2.0–2.3 秒，装好后第一次 5.5 秒。打开书约 1.0 秒。
 - 帧率：翻页动画 60 帧（每页约 14 帧、16 ms）；书架 41 本快速滑动平均 16.6–17.0 ms，最坏 33 ms；“我的”页平均 17.6 ms。
 - 内存（PSS）：书架约 360 MB（41 本时约 470 MB），阅读页约 480 MB；其中原生堆 85–160 MB。
-- 未测：指纹解锁（要先录入指纹）、离线音色（要会员账号）、网页解析书源（要先同意使用须知并自备规则）。
+- 会员账号：登录、云同步（含自定义主题图片）、在线朗读额度显示正常；离线音色（超文，62 MB）下载、校验、sherpa-onnx 加载（1.5 秒）并播放。
+- 网页解析书源：用本机测试源（`adb reverse` 转到电脑上的小服务器）走通导入、搜索、详情、目录、正文、预读下一章；书源调试页全链路通过。
+  注意“精确搜索”时书名要和关键词一致才算命中。
+- 未测：指纹解锁（要先录入指纹）。
 - MIUI 第一次朗读会弹出系统语音引擎自己的同意页，要用户点同意。
 
 ## 发布
 
-- **签名**：设置环境变量 `QINGYE_ANDROID_KEYSTORE`（keystore 路径）、`QINGYE_ANDROID_KEYSTORE_PASSWORD`、
+- **签名**：本机已生成发布密钥 `C:/Users/apart/.qingye/qingye-android-release.jks`（别名 `qingye`，RSA 4096，有效期约 27 年，
+  证书 SHA-256 `6B:0D:09:2B:0D:B9:34:74:24:51:BD:63:D1:42:29:EB:46:0C:88:90:D6:C7:58:F2:FE:84:A3:BA:00:D5:64:9A`），
+  口令在同目录的 `qingye-android-release.env`。**务必另外备份这两个文件**：丢了以后已发布的安装包无法再升级。
+  发布构建前在 Git Bash 里 `set -a; . ~/.qingye/qingye-android-release.env; set +a`。
+  原有说明：设置环境变量 `QINGYE_ANDROID_KEYSTORE`（keystore 路径）、`QINGYE_ANDROID_KEYSTORE_PASSWORD`、
   `QINGYE_ANDROID_KEY_ALIAS`、`QINGYE_ANDROID_KEY_PASSWORD` 后构建即用正式签名（V1 + V2）；缺任何一个都退回调试签名，
   Gradle 会给出警告，这样的包不能发布。
 - **版本号**：`versionCode`、`versionName` 由构建脚本从 `AppScope/app.json5` 读取，与鸿蒙端一致。
