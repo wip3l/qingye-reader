@@ -28,7 +28,7 @@
 | 项目 | 信息 |
 | --- | --- |
 | 应用包名 | `io.legado.read` |
-| 当前版本 | `4.6.034`（以 `AppScope/app.json5` 为准） |
+| 当前版本 | `4.6.035`（以 `AppScope/app.json5` 为准） |
 | 支持设备 | `phone`、`tablet`、`2in1`、`pc` |
 | 最低 / 目标 API | HarmonyOS 6.0.0（API 20）/ API 26 |
 | 开源协议 | GPL-3.0 |
@@ -142,8 +142,8 @@
 ### 局域网阅读、OPDS 与 WebDAV
 
 - 在 App 内启动局域网浏览器阅读服务，同一局域网的浏览器可查看书架、搜索、发现并阅读小说或漫画，章节进度同步；可设置访问密码（加密存储，连续输错会暂时锁定）。段评显示为段尾角标和热评卡片（工具栏可关），后台任务被系统取消后回前台自动补申请，网页连不上手机时显示提示并自动重试。
-- 添加 Calibre、Komga、Kavita、talebook 等 OPDS 书库（不预置任何服务器地址），支持目录浏览、站内搜索、Basic / Digest 认证（自动协商）与网页登录；入口连不上时自动换尾斜杠写法或补 `/opds` 重试，Kavita 可用账号密码自动获取 OPDS 地址，下载的 EPUB/TXT/MOBI/CBZ 作为本地书导入。
-- 添加 WebDAV 服务并指定书籍目录，支持 Basic / Digest 认证和匿名访问，可浏览、上传、新建文件夹、重命名和删除，下载 TXT/EPUB/MOBI 到书架。
+- 添加 Calibre、Komga、Kavita、talebook 等 OPDS 书库（不预置任何服务器地址），支持目录浏览、站内搜索、Basic / Digest 认证（自动协商）与网页登录；入口连不上时自动换尾斜杠写法或补 `/opds` 重试，Kavita 可用账号密码自动获取 OPDS 地址，下载的 EPUB/TXT/MOBI/CBZ 作为本地书导入。 浏览页带可点击的路径条，任一级可直接跳回；返回上一层 5 分钟内直接恢复已加载条目与滚动位置；书籍行显示作者、格式与大小，已加入书架的标注“已在书架”；搜索可选“整个书库”（书库自带搜索）或“当前列表”（按书名、作者筛已加载条目）。
+- 添加 WebDAV 服务并指定书籍目录，支持 Basic / Digest 认证和匿名访问，可浏览、上传、新建文件夹、重命名和删除，下载 TXT/EPUB/MOBI 到书架。 列表分文件夹、书籍两组，书籍按格式显示色块并标注“已在书架”，不能阅读的文件默认折叠；可按名称、修改时间、大小排序（按连接记住）；路径条任一级可直接跳回；按文件名搜索当前文件夹，或选“含子文件夹”逐层查找，边查边出结果、可停止和继续。
 
 ### 数据、同步与个性化
 
@@ -299,8 +299,8 @@ qingye-reader/
 | 配置 | 值 |
 | --- | --- |
 | 主模块 / 入口 Ability | `entry` / `EntryAbility` |
-| `versionName` | `4.6.034` |
-| `versionCode` / `buildVersion` | `4060034` |
+| `versionName` | `4.6.035` |
+| `versionCode` / `buildVersion` | `4060035` |
 | `minAPIVersion` / `targetAPIVersion` | `20` / `26` |
 | 权限 | `INTERNET`、`GET_NETWORK_INFO`、`KEEP_BACKGROUND_RUNNING`、`VIBRATE`（翻页震感）、`DETECT_GESTURE`（握姿感知）、`ACCESS_BIOMETRIC`（隐私书架指纹或人脸解锁）、`CAMERA`（仅在用户启用眼动翻页时请求） |
 
