@@ -34,7 +34,7 @@ import { KnockShare } from '../utils/KnockShare';
 import { AudioSheetTransition, AUDIO_SHEET_ENTER_DURATION, AUDIO_SHEET_EXIT_DURATION } from '../utils/AudioSheetTransition';
 import { BookMark, BookMarkRules, BookMarkStatus } from '../model/book/BookMark';
 import { BookMarkService } from '../core/mark/BookMarkService';
-import { BookMarkStars } from '../components/book/BookMarkStars';
+import { BookMarkStars, bookMarkStarColor } from '../components/book/BookMarkStars';
 import { TicketStubRow } from '../components/ticket/TicketStubRow';
 import { TicketIssueOverlay } from '../components/ticket/TicketIssueOverlay';
 import { ReadingTicket, ReadingTicketRules } from '../core/ticket/ReadingTicket';
@@ -142,6 +142,12 @@ struct SearchBookDetailPage {
   private markDraft: BookMark = new BookMark();
   private markCategories: string[] = [];
   private markLoadVersion: number = 0;
+  /** 标记页签里直接点选的常用标签：用过的标记标签和书架标签。 */
+  @State markQuickTags: string[] = [];
+  /** 打开标记面板后直接聚焦短评框。 */
+  private markSheetFocusReview: boolean = false;
+  /** 页签里连点星星、状态、标签时按顺序保存，后一次在前一次存好的标记上改。 */
+  private markSaveChain: Promise<void> = Promise.resolve();
   /**
    * 操作行下面的页签：简介、统计（有阅读记录才有）、标记。进详情页默认从简介开始；
    * 从我的标记、足迹的标记卡进来（参数 initialTab=mark）时直接显示标记。
@@ -150,6 +156,8 @@ struct SearchBookDetailPage {
   static readonly TAB_STATS: number = 1;
   static readonly TAB_MARK: number = 2;
   static readonly TAB_LABELS: string[] = ['简介', '统计', '标记'];
+  /** 标记页签里最多直接列出几个标签（已选的不受限）。 */
+  static readonly MARK_QUICK_TAG_COUNT: number = 6;
   @State detailTabBarWidth: number = 0;
   private static readonly TAB_BAR_PADDING: number = 8;
   private static readonly TAB_INDICATOR_WIDTH: number = 18;
@@ -343,6 +351,10 @@ struct SearchBookDetailPage {
                   .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
                   .attributeModifier(this.neutralTagModifier())
                   .margin({ right: AppSpacing.MD, bottom: AppSpacing.MD })
+              }
+
+              if (this.name) {
+                this.markSummaryChip()
               }
             }
             .width('100%')
@@ -854,44 +866,57 @@ struct SearchBookDetailPage {
   }
 
   /**
-   * “标记”页签：没有标记时一排空星，点一下就打分保存；有标记后显示星级、状态、标签和完整短评。
-   * 点“编辑”、短评或下面那行文字打开标记面板。
+   * 标签行末尾的标记摘要：有评分或状态时显示“★4.0 · 养肥”，标过但只有标签、短评时显示“已标记”，
+   * 没标过显示“☆ 标记”。点它切到标记页签，不用先进页签才看得到评分和状态。
+   */
+  @Builder
+  markSummaryChip() {
+    Row({ space: 3 }) {
+      if (this.bookMark && this.bookMark.rating > 0) {
+        Text('★')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(bookMarkStarColor(this.appDarkMode))
+      } else if (!this.bookMark) {
+        Text('☆')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.subTextColor())
+      }
+      Text(this.markSummaryText())
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.bookMark ? this.primaryTextColor() : this.secondaryTextColor())
+        .maxLines(1)
+    }
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
+    .attributeModifier(this.neutralTagModifier())
+    .margin({ right: AppSpacing.MD, bottom: AppSpacing.MD })
+    .accessibilityText(this.bookMark ? `我的标记，${this.markSummaryText()}` : '标记这本书')
+    .onClick(() => {
+      this.selectDetailTab(SearchBookDetailPage.TAB_MARK);
+    })
+  }
+
+  private markSummaryText(): string {
+    const mark = this.bookMark;
+    if (!mark) return '标记';
+    const parts: string[] = [];
+    if (mark.rating > 0) parts.push(BookMarkRules.ratingText(mark.rating));
+    if (mark.status !== BookMarkStatus.NONE) parts.push(BookMarkStatus.label(mark.status));
+    return parts.length > 0 ? parts.join(' · ') : '已标记';
+  }
+
+  /**
+   * “标记”页签：评分、阅读状态、常用标签、短评按标记面板的顺序直接摆出来，没标过的书也不留空白。
+   * 星星、状态、标签点一下就保存（再点同一项取消）；“＋ 新标签”打开面板，点短评打开面板并聚焦短评框。
    */
   @Builder
   detailMarkBlock() {
     Column({ space: AppSpacing.MD }) {
-      Row({ space: AppSpacing.MD }) {
-        if (this.bookMark && this.bookMark.status !== BookMarkStatus.NONE) {
-          Text(BookMarkStatus.label(this.bookMark.status))
-            .fontSize(AppFontSize.CAPTION)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.accentColor())
-            .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: 1, bottom: 1 })
-            .borderRadius(10)
-            .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
-        }
-        Blank()
-        if (this.bookMark) {
-          Text('编辑')
-            .fontSize(AppFontSize.BODY)
-            .fontColor(this.accentColor())
-            .padding({ left: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
-            .onClick(() => {
-              this.openMarkSheet();
-            })
-        } else {
-          Text('轻点星星打分')
-            .fontSize(AppFontSize.CAPTION)
-            .fontColor(this.subTextColor())
-        }
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
+      this.markFieldLabel('评分', this.bookMark ? this.markDateText() : '点一下就保存')
       Row({ space: AppSpacing.MD }) {
         BookMarkStars({
           rating: this.bookMark ? this.bookMark.rating : 0,
-          starSize: this.bookMark ? 22 : 30,
+          starSize: 28,
           darkMode: this.appDarkMode,
           emptyColor: ThemeRuntime.softFillColor(this.appDarkMode),
           interactive: true,
@@ -899,38 +924,75 @@ struct SearchBookDetailPage {
             this.rateFromDetail(rating);
           }
         })
-        if (this.bookMark) {
-          Text(this.bookMark.rating > 0 ?
-            `${BookMarkRules.ratingText(this.bookMark.rating)} · ${BookMarkRules.ratingLabel(this.bookMark.rating)}` :
-            '未打分')
+        if (this.bookMark && this.bookMark.rating > 0) {
+          Text(`${BookMarkRules.ratingText(this.bookMark.rating)} · ${BookMarkRules.ratingLabel(this.bookMark.rating)}`)
             .fontSize(AppFontSize.BODY)
             .fontColor(this.secondaryTextColor())
-          Blank()
-          Text(this.markDateText())
-            .fontSize(AppFontSize.CAPTION)
-            .fontColor(this.subTextColor())
-            .maxLines(1)
         }
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      if (this.bookMark && this.bookMark.categories.length > 0) {
-        Flex({ wrap: FlexWrap.Wrap }) {
-          ForEach(this.bookMark.categories, (name: string) => {
-            Text(name)
-              .fontSize(AppFontSize.CAPTION)
-              .fontColor(this.accentColor())
-              .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: 3, bottom: 3 })
-              .borderRadius(12)
-              .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
-              .margin({ right: AppSpacing.SM, bottom: AppSpacing.SM })
-          }, (name: string) => name)
-        }
-        .width('100%')
-        .margin({ bottom: -AppSpacing.SM })
+      this.markFieldLabel('阅读状态', '')
+      Row({ space: 3 }) {
+        ForEach(BookMarkStatus.ALL, (value: number) => {
+          Text(BookMarkStatus.label(value))
+            .fontSize(AppFontSize.BODY)
+            .fontWeight(this.detailMarkStatus() === value ? FontWeight.Medium : FontWeight.Normal)
+            .fontColor(this.detailMarkStatus() === value ? this.primaryTextColor() : this.secondaryTextColor())
+            .textAlign(TextAlign.Center)
+            .layoutWeight(1)
+            .height(34)
+            .borderRadius(ThemeRuntime.mediumRadius() - 2)
+            .backgroundColor(this.detailMarkStatus() === value ? ThemeRuntime.cardColor(this.appDarkMode) :
+              Color.Transparent)
+            .shadow(this.detailMarkStatus() === value ? { radius: 4, color: '#1A000000', offsetY: 1 } :
+              { radius: 0, color: Color.Transparent })
+            .accessibilityText(`${BookMarkStatus.label(value)}${this.detailMarkStatus() === value ? '，已选' : ''}`)
+            .onClick(() => {
+              this.statusFromDetail(value);
+            })
+        }, (value: number) => `${value}`)
       }
+      .width('100%')
+      .padding(3)
+      .borderRadius(ThemeRuntime.mediumRadius())
+      .backgroundColor(ThemeRuntime.softFillColor(this.appDarkMode))
 
+      this.markFieldLabel(this.markQuickTags.length > 0 ? '常用标签' : '标签', '')
+      Flex({ wrap: FlexWrap.Wrap }) {
+        ForEach(this.detailTagChoices(), (name: string) => {
+          Text(name)
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.detailHasTag(name) ? this.accentColor() : this.secondaryTextColor())
+            .height(30)
+            .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+            .borderRadius(15)
+            .border({ width: 1, color: this.detailHasTag(name) ? this.accentColor() : Color.Transparent })
+            .backgroundColor(this.detailHasTag(name) ? ThemeRuntime.accentSurfaceColor(this.appDarkMode) :
+              ThemeRuntime.softFillColor(this.appDarkMode))
+            .margin({ right: AppSpacing.SM, bottom: AppSpacing.SM })
+            .accessibilityText(`${name}${this.detailHasTag(name) ? '，已选' : ''}`)
+            .onClick(() => {
+              this.toggleTagFromDetail(name);
+            })
+        }, (name: string) => name)
+        Text('＋ 新标签')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.accentColor())
+          .height(30)
+          .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+          .borderRadius(15)
+          .backgroundColor(ThemeRuntime.softFillColor(this.appDarkMode))
+          .margin({ right: AppSpacing.SM, bottom: AppSpacing.SM })
+          .onClick(() => {
+            this.openMarkSheet();
+          })
+      }
+      .width('100%')
+      .margin({ bottom: -AppSpacing.SM })
+
+      this.markFieldLabel('短评', '')
       if (this.bookMark && this.bookMark.review.trim()) {
         Text(this.bookMark.review.trim())
           .fontSize(AppFontSize.BODY_LARGE)
@@ -939,21 +1001,22 @@ struct SearchBookDetailPage {
           .wordBreak(WordBreak.BREAK_WORD)
           .width('100%')
           .onClick(() => {
-            this.openMarkSheet();
+            this.openMarkSheet(true);
           })
       } else {
-        Row({ space: AppSpacing.XXS }) {
-          Text(this.bookMark ? '写一句短评' : '加标签、写短评')
-            .fontSize(AppFontSize.BODY)
-            .fontColor(this.accentColor())
-          SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(13)
-            .fontColor([this.accentColor()])
-        }
-        .alignItems(VerticalAlign.Center)
-        .onClick(() => {
-          this.openMarkSheet();
-        })
+        Text('读完的感受、推荐给谁、记住的一个细节……')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.subTextColor())
+          .width('100%')
+          .constraintSize({ minHeight: 72 })
+          .align(Alignment.TopStart)
+          .padding(AppSpacing.LG)
+          .borderRadius(ThemeRuntime.mediumRadius())
+          .backgroundColor(ThemeRuntime.softFillColor(this.appDarkMode))
+          .accessibilityText('写短评')
+          .onClick(() => {
+            this.openMarkSheet(true);
+          })
       }
 
       if (this.bookMark && ReadingTicketRules.hasTicket(this.bookMark as BookMark)) {
@@ -968,6 +1031,42 @@ struct SearchBookDetailPage {
     .width('100%')
     .alignItems(HorizontalAlign.Start)
     .padding({ top: AppSpacing.XL })
+  }
+
+  @Builder
+  markFieldLabel(title: string, hint: string) {
+    Row() {
+      Text(title)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+      Blank()
+      if (hint) {
+        Text(hint)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .maxLines(1)
+      }
+    }
+    .width('100%')
+    .margin({ top: AppSpacing.XS })
+  }
+
+  private detailMarkStatus(): number {
+    return this.bookMark ? this.bookMark.status : BookMarkStatus.NONE;
+  }
+
+  private detailHasTag(name: string): boolean {
+    return this.bookMark !== null && this.bookMark.categories.includes(name);
+  }
+
+  /** 已选的标签全部列出，再用常用标签补到 6 个。 */
+  private detailTagChoices(): string[] {
+    const result: string[] = this.bookMark ? this.bookMark.categories.slice() : [];
+    for (const name of this.markQuickTags) {
+      if (result.length >= SearchBookDetailPage.MARK_QUICK_TAG_COUNT) break;
+      if (!result.includes(name)) result.push(name);
+    }
+    return result;
   }
 
   private markDateText(): string {
@@ -988,6 +1087,7 @@ struct SearchBookDetailPage {
       existing: this.bookMark !== null,
       coverBookUrl: this.bookUrl,
       coverOrigin: this.origin,
+      focusReview: this.markSheetFocusReview,
       onSave: (mark: BookMark): void => {
         this.saveMarkFromSheet(mark);
       },
@@ -2308,6 +2408,8 @@ struct SearchBookDetailPage {
       await AppDatabase.getInstance().initWithContext(getContext(this));
       const mark = await AppDatabase.getInstance().getBookMark(key);
       if (version === this.markLoadVersion) this.bookMark = mark;
+      const tags = await BookMarkService.knownTags();
+      if (version === this.markLoadVersion) this.markQuickTags = tags;
       // 书架上这本还没有标签时把标记的标签补过去（打通之前保存的、被旧快照写回空的）。
       if (mark && mark.categories.length > 0) await BookMarkService.fillMissingShelfTags(mark);
     } catch (error) {
@@ -2315,21 +2417,65 @@ struct SearchBookDetailPage {
     }
   }
 
-  private async rateFromDetail(rating: number): Promise<void> {
-    if (!this.markKey()) return;
-    try {
-      ++this.markLoadVersion;
-      const saved = await BookMarkService.rate(this.buildCurrentBook(), this.bookMark, rating);
-      this.bookMark = saved;
-      HdsFeedback.showToast(saved ? `已标记 · ${BookMarkRules.ratingText(saved.rating)} 星` : '已删除标记');
-    } catch (error) {
-      console.error('保存评分失败:', error);
-      HdsFeedback.showToast('保存失败，请重试');
-    }
+  private rateFromDetail(rating: number): void {
+    this.quickSaveMark((draft: BookMark): string => {
+      draft.rating = rating;
+      return rating > 0 ? `已标记 · ${BookMarkRules.ratingText(rating)} 星` : '已清除评分';
+    });
   }
 
-  private async openMarkSheet(): Promise<void> {
+  /** 再点已选的状态就取消。 */
+  private statusFromDetail(status: number): void {
+    this.quickSaveMark((draft: BookMark): string => {
+      draft.status = draft.status === status ? BookMarkStatus.NONE : status;
+      return draft.status === BookMarkStatus.NONE ? '已清除阅读状态' : `已标为${BookMarkStatus.label(draft.status)}`;
+    });
+  }
+
+  private toggleTagFromDetail(name: string): void {
+    this.quickSaveMark((draft: BookMark): string => {
+      if (draft.categories.includes(name)) {
+        draft.categories = draft.categories.filter((tag: string): boolean => tag !== name);
+        return `已移除标签 ${name}`;
+      }
+      if (draft.categories.length >= BookMarkRules.MAX_CATEGORIES) {
+        return `最多 ${BookMarkRules.MAX_CATEGORIES} 个标签`;
+      }
+      draft.categories = [...draft.categories, name];
+      return `已加标签 ${name}`;
+    });
+  }
+
+  /**
+   * 页签里的快捷保存：在最新的标记上改一项再存，全清空就删掉标记。
+   * 排队执行，连点几下也不会拿旧标记覆盖刚存的那次；刚标成读过时照常出票。
+   */
+  private quickSaveMark(edit: (draft: BookMark) => string): void {
+    if (!this.markKey()) return;
+    this.markSaveChain = this.markSaveChain.then(async (): Promise<void> => {
+      try {
+        ++this.markLoadVersion;
+        const before = this.bookMark;
+        const wasRead = before !== null && before.status === BookMarkStatus.READ;
+        const draft = await BookMarkService.prepareDraft(this.buildCurrentBook(), before);
+        const message = edit(draft);
+        const saved = await BookMarkService.save(draft);
+        this.bookMark = saved;
+        if (saved && !wasRead && saved.status === BookMarkStatus.READ) {
+          await this.issueReadTicket(saved);
+        } else {
+          HdsFeedback.showToast(saved || before === null ? message : '已删除标记');
+        }
+      } catch (error) {
+        console.error('保存书籍标记失败:', error);
+        HdsFeedback.showToast('保存失败，请重试');
+      }
+    });
+  }
+
+  private async openMarkSheet(focusReview: boolean = false): Promise<void> {
     if (!this.markKey() || this.showMarkSheet) return;
+    this.markSheetFocusReview = focusReview;
     try {
       this.markCategories = await BookMarkService.knownTags();
       this.markDraft = await BookMarkService.prepareDraft(this.buildCurrentBook(), this.bookMark);

@@ -17,6 +17,7 @@ import { BookMarkStars } from './BookMarkStars';
  */
 @Component
 export struct BookMarkSheet {
+  static readonly REVIEW_INPUT_ID: string = 'bookMarkSheetReview';
   @StorageProp('appDarkMode') darkMode: boolean = false;
   @StorageProp('themeRevision') themeRevision: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
@@ -28,6 +29,8 @@ export struct BookMarkSheet {
   existing: boolean = false;
   coverBookUrl: string = '';
   coverOrigin: string = '';
+  /** 打开后直接聚焦短评框（详情页点短评进来）。 */
+  focusReview: boolean = false;
   onSave: (mark: BookMark) => void = (_mark: BookMark): void => {
   };
   onDelete: () => void = (): void => {
@@ -76,6 +79,12 @@ export struct BookMarkSheet {
     }
     this.choices = choices;
     this.watchKeyboard();
+    if (this.focusReview) {
+      // 等面板升起、短评框挂上树再要焦点；键盘弹出后照常进入专注写短评。
+      setTimeout(() => {
+        if (!this.finished) focusControl.requestFocus(BookMarkSheet.REVIEW_INPUT_ID);
+      }, 360);
+    }
   }
 
   aboutToDisappear(): void {
@@ -509,6 +518,7 @@ export struct BookMarkSheet {
       this.reviewHeadHeight = Number(next.height ?? 0);
     })
     TextArea({ text: this.review, placeholder: '读完的感受、推荐给谁、记住的一个细节……' })
+      .id(BookMarkSheet.REVIEW_INPUT_ID)
       .width('100%')
       .height(this.focusMode ? this.focusedReviewHeight() : undefined)
       .constraintSize({ minHeight: 110 })
