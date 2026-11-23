@@ -72,8 +72,10 @@ struct SearchBookDetailPage {
   @State tocUrl: string = '';
   @State @Watch('refreshSourceCustomButton') origin: string = '';
   @State originName: string = '';
-  /** 当前书源声明了自定义按钮（兼容书源的 customButton 加事件回调），标签行末尾多一个“书源功能”。 */
+  /** 当前书源声明了自定义按钮（兼容书源的 customButton 加事件回调），顶栏“加入书架”左边多一个图标按钮。 */
   @State sourceHasCustomButton: boolean = false;
+  /** 按钮的名字（读屏和打开的网页标题用）：从书源脚本看得出是评论就叫“评论”，看不出用“书源功能”。 */
+  @State sourceCustomButtonLabel: string = '书源功能';
   private customButtonSource: BookSource | null = null;
   private customButtonRunning: boolean = false;
   @State name: string = '';
@@ -366,9 +368,6 @@ struct SearchBookDetailPage {
               if (this.name) {
                 this.markSummaryChip()
               }
-              if (this.sourceHasCustomButton) {
-                this.sourceFunctionChip()
-              }
             }
             .width('100%')
             .margin({ top: AppSpacing.XL })
@@ -581,7 +580,20 @@ struct SearchBookDetailPage {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
 
-        // 书架与目录在顶栏右侧，和返回按钮同一种沉浸光感圆钮。同作者、换源分别是点作者行、书源行。
+        // 书源的自定义按钮（有才出现）、书架、目录在顶栏右侧，和返回按钮同一种沉浸光感圆钮。
+        // 同作者、换源分别是点作者行、书源行。
+        if (this.sourceHasCustomButton) {
+          ImmersiveHeaderAction({
+            // 认得出是评论就用气泡，认不出用通用的宫格图标。
+            icon: this.sourceCustomButtonLabel === '评论' ? $r('sys.symbol.message') :
+              $r('sys.symbol.square_grid_2x2'),
+            accessibilityLabel: this.sourceCustomButtonLabel,
+            onTap: (): void => {
+              this.openSourceCustomButton();
+            }
+          })
+            .margin({ left: AppSpacing.MD })
+        }
         ImmersiveHeaderAction({
           icon: this.isInShelf ? $r('sys.symbol.bookshelf_badge_checkmark_fill') :
             $r('sys.symbol.bookshelf_badge_plus'),
@@ -909,22 +921,6 @@ struct SearchBookDetailPage {
     })
   }
 
-  /** 书源的自定义按钮。做什么由书源决定（常见的是书评），所以只叫“书源功能”。 */
-  @Builder
-  sourceFunctionChip() {
-    Text('书源功能')
-      .fontSize(AppFontSize.BODY)
-      .fontColor(this.accentColor())
-      .maxLines(1)
-      .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
-      .attributeModifier(this.neutralTagModifier())
-      .margin({ right: AppSpacing.MD, bottom: AppSpacing.MD })
-      .accessibilityText('书源功能')
-      .onClick(() => {
-        this.openSourceCustomButton();
-      })
-  }
-
   /** 书源换了（进页面、换源）就重新看它有没有自定义按钮。 */
   refreshSourceCustomButton(): void {
     const origin = this.origin;
@@ -937,6 +933,7 @@ struct SearchBookDetailPage {
       .then((source: BookSource | null): void => {
         if (origin !== this.origin || !SourceEventCallback.hasCustomButton(source)) return;
         this.customButtonSource = source;
+        this.sourceCustomButtonLabel = SourceEventCallback.customButtonLabel(source) || '书源功能';
         this.sourceHasCustomButton = true;
       })
       .catch((): void => undefined);
@@ -952,14 +949,14 @@ struct SearchBookDetailPage {
       if (/^https?:\/\//i.test(result.requestedUrl)) {
         await router.pushUrl({
           url: 'pages/VerifyWeb',
-          params: { url: result.requestedUrl, title: '书源功能', readerCommentMode: 'true' }
+          params: { url: result.requestedUrl, title: this.sourceCustomButtonLabel, readerCommentMode: 'true' }
         });
         return;
       }
       if (result.toastMessage) {
         HdsFeedback.showToast(result.toastMessage);
       } else if (result.error) {
-        HdsFeedback.showToast(`书源功能执行失败：${result.error.split('\n')[0]}`);
+        HdsFeedback.showToast(`${this.sourceCustomButtonLabel}打开失败：${result.error.split('\n')[0]}`);
       } else if (!result.handled) {
         HdsFeedback.showToast('书源没有处理这次点击');
       }
