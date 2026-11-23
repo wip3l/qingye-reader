@@ -967,7 +967,12 @@ struct AccountCenterPage {
 
   async buyMembership(): Promise<void> {
     if (!this.accountLoggedIn) {
-      this.login();
+      // 安卓上没有华为账号，未登录时去用户名登录页（可切到注册）。
+      if (this.huaweiServicesAvailable()) {
+        this.login();
+      } else {
+        this.openPasswordLogin();
+      }
       return;
     }
     const product = this.selectedProduct();
