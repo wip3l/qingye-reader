@@ -24,6 +24,7 @@ function harness() {
   const writes = [];
   const storage = new Map();
   const offlineLookups = [];
+  const shelfEvents = [];
   const context = vm.createContext({
     console: { log() {}, info() {}, warn: console.warn, error: console.error },
     relationalStore: { RdbPredicates: class {
@@ -47,7 +48,10 @@ function harness() {
     BookMarkService: { carryTagsToShelfBook: async () => {} },
     // 新书默认分组：这里按“未分组”设置，分组不变。
     NewBookGroupStore: { apply: async () => '' },
-    NewBookGroup: { addedToast: name => name ? `已加入书架 · ${name}` : '已加入书架' }
+    NewBookGroup: { addedToast: name => name ? `已加入书架 · ${name}` : '已加入书架' },
+    // 加入、移出书架时通知书源（不等待结果）；这里只记下调用。
+    SourceShelfEvents: { added: book => shelfEvents.push(['added', book.bookUrl]),
+      removed: book => shelfEvents.push(['removed', book.bookUrl]) }
   });
   vm.runInContext([
     'model/data/Book.ts', 'core/book/BookTypeSupport.ts', 'utils/SearchExplorePendingBook.ets',

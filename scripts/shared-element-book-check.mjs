@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { stripTypeScriptTypes } from 'node:module';
 const source = fs.readFileSync(new URL('../entry/src/main/ets/components/home/BookshelfPage.ets', import.meta.url), 'utf8');
-const names = ['openShelfBook', 'closeShelfBook', 'cancelShelfBookOpening'];
+const names = ['openShelfBook', 'closeShelfBook', 'cancelShelfBookOpening', 'bookOpenAnimationEnabled'];
 const methods = names.map(name => {
   const start = source.indexOf(`  ${name}(`);
   return source.slice(start, source.indexOf('\n  }', start) + 4);
@@ -30,6 +30,8 @@ const context = vm.createContext({
   },
   BookshelfPage: { SHELF_OPENING_BACKDROP_WAIT: 100 },
   getContext: () => ({}),
+  // 鸿蒙构建：书籍打开动画按设置走（安卓上恒关，见 BookshelfPage.bookOpenAnimationEnabled）。
+  PlatformInfo: { ANDROID: false },
   SHELF_OPENING_COVER_KEY: 'shelfOpeningCover',
   SHELF_OPENING_BACKDROP_KEY: 'shelfOpeningBackdrop',
   SHELF_OPENING_PAGE_SNAPSHOT_KEY: 'shelfOpeningPageSnapshot',
