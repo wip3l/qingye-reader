@@ -25,15 +25,16 @@ class ContentPageData {
 /** 书源自带的本章说图卡拆出的条数与那一条评论。 */
 class ReaderDataImageChapter {
   count: string = '';
-  user: string = '';
-  text: string = '';
+  /** 卡面上依次列出的评论；常见的只有一条，也有书源把几条都画在同一张卡上。 */
+  items: ReaderActionHot[] = [];
+
+  /** 第一条评论的文字，卡面没有评论时为空。 */
+  get text(): string {
+    return this.items.length ? this.items[0].text : '';
+  }
 
   hots(): ReaderActionHot[] {
-    if (!this.text) return [];
-    const hot = new ReaderActionHot();
-    hot.user = this.user;
-    hot.text = this.text;
-    return [hot];
+    return this.items.filter((item: ReaderActionHot): boolean => !!item.text);
   }
 }
 
@@ -1887,7 +1888,7 @@ export class WebBookService {
     try {
       const bytes = new util.Base64Helper().decodeSync(encoded || '');
       const svg = util.TextDecoder.create('utf-8').decodeWithStream(bytes, { stream: false });
-      const found = (svg.match(/<text\b[^>]*>[\s\S]{0,8000}?<\/text>/gi) || []).slice(0, 24)
+      const found = (svg.match(/<text\b[^>]*>[\s\S]{0,8000}?<\/text>/gi) || []).slice(0, 48)
         .concat((svg.match(/<foreignObject\b[^>]*>[\s\S]{0,8000}?<\/foreignObject>/gi) || []).slice(0, 4));
       return found.map((item: string): string => this.decodeHtmlEntities(item.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim())
         .filter((text: string): boolean => !!text);
@@ -1967,12 +1968,15 @@ export class WebBookService {
 
   /**
    * A 本章说 SVG card split into its parts: the comment count (“79 条评论” → “79条评论”) for the card's title row,
-   * and the one comment it shows — a short first line is the nickname, the remaining lines are the wrapped comment.
+   * and the comments it shows. A card listing several comments draws each as nickname, a bare number in a pill,
+   * then the comment's wrapped lines, so a short line followed by a bare number starts the next comment. A card
+   * with no such numbers shows one comment: a short first line is the nickname, the remaining lines its text.
    * Numbers on these cards mean different things per source, so none is read as a like count.
    */
   private readerDataImageChapter(texts: string[]): ReaderDataImageChapter {
     const found = new ReaderDataImageChapter();
     const parts: string[] = [];
+    const numbers: boolean[] = [];
     for (const raw of texts) {
       const text = raw.replace(/^(?:本章说|章评|章末评论)\s*/, '').replace(/[\s〉›>»]+$/, '').trim();
       if (!text) continue;
@@ -1981,16 +1985,47 @@ export class WebBookService {
         found.count = `${count[1]}条评论`;
         continue;
       }
-      if (/^(?:\d+(?:\.\d+)?[kKwW万千]?\+?|99\+)$/.test(text)) continue;
       parts.push(text);
+      numbers.push(/^(?:\d+(?:\.\d+)?[kKwW万千]?\+?|99\+)$/.test(text));
     }
-    if (parts.length >= 2 && parts[0].length <= 16 && !/[，。！？：；,.!?:;…]$/.test(parts[0])) {
-      found.user = parts.shift() as string;
+    const nickname = (text: string): boolean => text.length <= 16 && !/[，。！？：；,.!?:;…]$/.test(text);
+    const headsAt = (i: number): boolean => !numbers[i] && i + 1 < parts.length && numbers[i + 1] &&
+      nickname(parts[i]);
+    let listed = false;
+    for (let i = 0; i < parts.length; i++) {
+      if (headsAt(i)) {
+        listed = true;
+        break;
+      }
     }
-    found.text = parts.join('');
+    if (listed) {
+      let current: ReaderActionHot | null = null;
+      for (let i = 0; i < parts.length; i++) {
+        if (headsAt(i)) {
+          current = new ReaderActionHot();
+          current.user = parts[i];
+          found.items.push(current);
+          i++;
+          continue;
+        }
+        if (numbers[i]) continue;
+        if (!current) {
+          current = new ReaderActionHot();
+          found.items.push(current);
+        }
+        current.text += parts[i];
+      }
+      return found;
+    }
+    const lines = parts.filter((_: string, i: number): boolean => !numbers[i]);
+    const hot = new ReaderActionHot();
+    if (lines.length >= 2 && nickname(lines[0])) {
+      hot.user = lines.shift() as string;
+    }
+    hot.text = lines.join('');
+    if (hot.text) found.items.push(hot);
     return found;
   }
-
 
   /**
    * iOS-style Legado markup puts the action on the image itself:
