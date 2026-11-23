@@ -10,6 +10,7 @@ import { ReaderV2DocumentParser } from '../core/reader/ReaderV2Document';
 import { ReaderV2BubbleFrame, ReaderV2Color, ReaderV2SpanStyleRange } from '../core/reader/ReaderV2Style';
 import { ReaderParagraphIndentMatcher } from '../core/reader/ReaderParagraphIndent';
 import { ReaderTextNormalizer } from '../core/reader/ReaderTextNormalizer';
+import { ReaderRegexSample } from '../core/reader/ReaderRegexSample';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { ReaderFontHelper, ReaderFontItem } from '../utils/ReaderFontHelper';
@@ -65,6 +66,19 @@ export const READER_FONT_SECTION_BODY: number = 1;
 /** 共用规则控件时，编辑页草稿用的下标（-1 已被标题强调占用）。 */
 const EDITING_REGEX_RULE_INDEX: number = -2;
 const TITLE_PREVIEW_BOX_ID: string = 'reader_title_preview_box';
+/** 规则预览没有命中时，直接画成强调效果的那几个字。 */
+const REGEX_PREVIEW_FALLBACK_SAMPLE: string = '强调文字';
+
+/** 规则预览的排版结果，带上标题强调占掉的范围，规则命中和它重叠时让给标题强调。 */
+class RegexRulePreview {
+  config: ReaderTypographyPreviewConfig;
+  titleStyles: ReaderV2SpanStyleRange[];
+
+  constructor(config: ReaderTypographyPreviewConfig, titleStyles: ReaderV2SpanStyleRange[]) {
+    this.config = config;
+    this.titleStyles = titleStyles;
+  }
+}
 
 class ReaderBubbleStyleOption {
   styleId: string = '';
@@ -2063,17 +2077,22 @@ export struct ReaderFontSettingsEditor {
     return new ReaderRegexFontRule();
   }
 
-  regexPreviewText(rule: ReaderRegexFontRule): string {
+  /**
+   * 规则预览的候选正文，按顺序试，取第一个真被规则命中的：内置“对话”“关键字匹配”先用写好的样例，
+   * 再用按正则拼出的样例（ReaderRegexSample）的几种放法。
+   */
+  regexPreviewBodies(rule: ReaderRegexFontRule): string[] {
+    const bodies: string[] = [];
     if (rule.name === '对话') {
-      return '他说：“你好。”她点头说：「走吧。」\n“这就来。”她应了一声。';
+      bodies.push('他说：“你好。”她点头说：「走吧。」\n“这就来。”她应了一声。');
+    } else if (rule.name === '关键字匹配') {
+      bodies.push(`这里包含${this.regexPreviewKeyword(rule.pattern)}，命中后会使用当前正则字体。`);
     }
-    if (rule.name === '关键字匹配') {
-      return `这里包含${this.regexPreviewKeyword(rule.pattern)}，命中后会使用当前正则字体。`;
+    const sample = ReaderRegexSample.generate(rule.pattern);
+    if (sample) {
+      for (const body of ReaderRegexSample.placements(sample)) bodies.push(body);
     }
-    if (rule.pattern.trim()) {
-      return `命中示例：${rule.pattern}`;
-    }
-    return '正则规则预览文本';
+    return bodies;
   }
 
   regexPreviewKeyword(pattern: string): string {
@@ -2182,9 +2201,76 @@ export struct ReaderFontSettingsEditor {
 
   /**
    * 规则预览走阅读页同一套排版与绘制（ReaderTypographyPreview），主题包的边框、端饰和正文里一致；
-   * 只是颜色按设置卡片取，和卡片底色相配。
+   * 只是颜色按设置卡片取，和卡片底色相配。正文取 regexPreviewBodies 里第一个被命中的；都没命中
+   * （或正则没填、写错）时末尾加一行说明，把“强调文字”直接画成这条规则的强调效果，气泡和颜色照样看得到。
    */
   regexRulePreviewConfig(index: number, refreshKey: number): ReaderTypographyPreviewConfig {
+    const rule = this.regexRuleAt(index);
+    const pattern = rule.pattern.trim();
+    let regex: RegExp | null = null;
+    if (pattern) {
+      try { regex = new RegExp(rule.pattern, 'g'); } catch (_) { regex = null; }
+    }
+    if (regex && refreshKey >= -1) {
+      for (const body of this.regexPreviewBodies(rule)) {
+        const preview = this.regexRulePreviewBase(rule, body, false);
+        if (this.applyRegexPreviewMatches(preview, rule, regex) > 0) return preview.config;
+      }
+    }
+    const note = !pattern ? '还没填正则，强调效果：' :
+      (regex ? '示例正文没有命中这条规则，强调效果：' : '正则写法有误，强调效果：');
+    const preview = this.regexRulePreviewBase(rule,
+      `${ReaderRegexSample.LEAD_LINE}\n${ReaderRegexSample.TAIL_LINE}\n${note}${REGEX_PREVIEW_FALLBACK_SAMPLE}`, true);
+    const config = preview.config;
+    const content = config.document.displayText;
+    const sampleStart = content.lastIndexOf(REGEX_PREVIEW_FALLBACK_SAMPLE);
+    if (sampleStart < 0) return config;
+    const noteStart = content.lastIndexOf(note, sampleStart);
+    const input = config.input;
+    if (noteStart >= 0) {
+      const dimColor = ((input.textColor & 0x00FFFFFF) | 0x80000000) >>> 0;
+      config.styles.push(this.regexPreviewDimStyle(noteStart, sampleStart, input.fontSizePx * 0.85,
+        input.bodyFontFamily, this.readerFontWeight, dimColor));
+    }
+    const style = this.typographyPreviewEmphasis(rule, rule.fontSize,
+      this.previewFontFamily(rule.fontMode, rule.fontFamily), rule.fontWeight, this.regexEmphasisContext());
+    style.start = sampleStart;
+    style.end = sampleStart + REGEX_PREVIEW_FALLBACK_SAMPLE.length;
+    config.styles.push(style);
+    return config;
+  }
+
+  /** 规则在预览正文里的命中逐个画上强调，返回画了几处；范围外、和标题强调重叠的不算。 */
+  applyRegexPreviewMatches(preview: RegexRulePreview, rule: ReaderRegexFontRule, regex: RegExp): number {
+    const config = preview.config;
+    const emphasisContext = this.regexEmphasisContext();
+    const content = config.document.displayText;
+    const titleRanges = this.previewTitleRanges(config);
+    let count = 0;
+    regex.lastIndex = 0;
+    let match = regex.exec(content);
+    while (match) {
+      const start = match.index;
+      const end = start + match[0].length;
+      if (end <= start) {
+        if (start >= content.length) break;
+        regex.lastIndex = Math.max(regex.lastIndex + 1, start + 1);
+      } else if (ReaderRegexScope.accepts(rule.scope, start, end, titleRanges) &&
+        !preview.titleStyles.some((item: ReaderV2SpanStyleRange): boolean => start < item.end && end > item.start)) {
+        const style = this.typographyPreviewEmphasis(rule, rule.fontSize,
+          this.previewFontFamily(rule.fontMode, rule.fontFamily), rule.fontWeight, emphasisContext);
+        style.start = start;
+        style.end = end;
+        config.styles.push(style);
+        count++;
+      }
+      match = regex.exec(content);
+    }
+    return count;
+  }
+
+  /** 预览的排版与标题部分：标题强调、范围没管到的行调淡。keepLastLine 时最后一行正文不调淡（兜底样本行）。 */
+  regexRulePreviewBase(rule: ReaderRegexFontRule, body: string, keepLastLine: boolean): RegexRulePreview {
     const config = new ReaderTypographyPreviewConfig();
     const layout = this.previewLayoutSettings;
     const uiContext = this.getUIContext();
@@ -2199,19 +2285,24 @@ export struct ReaderFontSettingsEditor {
     input.textColor = ReaderV2Color.parse(this.primaryTextColor(), 0xFF202124);
     input.commentsEnabled = false;
     config.fontSizeVp = this.readerFontSize;
-    const rule = this.regexRuleAt(index);
     const title = this.regexPreviewTitle(rule);
     config.document = ReaderV2DocumentParser.parse(
-      `${title}\n${this.previewIndentedBody(this.regexPreviewText(rule), [rule])}`, 0, title, [], this.titleStyle);
+      `${title}\n${this.previewIndentedBody(body, [rule])}`, 0, title, [], this.titleStyle);
     const emphasisContext = this.regexEmphasisContext();
     const titlePlan = this.titleEmphasisPlan(emphasisContext);
     const titleInScope = ReaderRegexScope.includesTitle(rule.scope);
     const bodyInScope = ReaderRegexScope.includesBody(rule.scope);
     const dimColor = ((input.textColor & 0x00FFFFFF) | 0x60000000) >>> 0;
+    let lastBodyBlock = -1;
+    for (let blockIndex = 0; keepLastLine && blockIndex < config.document.blocks.length; blockIndex++) {
+      const block = config.document.blocks[blockIndex];
+      if (!block.title && block.displayEnd > block.displayStart) lastBodyBlock = blockIndex;
+    }
     // 和阅读页一致：标题强调画出来时标题归它；范围没管到的那一行调淡。
     const titleStyles: ReaderV2SpanStyleRange[] = [];
-    for (const block of config.document.blocks) {
-      if (block.displayEnd <= block.displayStart) continue;
+    for (let blockIndex = 0; blockIndex < config.document.blocks.length; blockIndex++) {
+      const block = config.document.blocks[blockIndex];
+      if (block.displayEnd <= block.displayStart || blockIndex === lastBodyBlock) continue;
       if (block.title) {
         const size = this.readerTitleFontSize * (block.titleSegment > 0 ? this.titleStyle.secondaryScale : 1);
         if (titleInScope && titlePlan) {
@@ -2231,29 +2322,7 @@ export struct ReaderFontSettingsEditor {
           input.bodyFontFamily, this.readerFontWeight, dimColor));
       }
     }
-    if (!rule.pattern.trim() || refreshKey < -1) return config;
-    let regex: RegExp;
-    try { regex = new RegExp(rule.pattern, 'g'); } catch (_) { return config; }
-    const content = config.document.displayText;
-    const titleRanges = this.previewTitleRanges(config);
-    let match = regex.exec(content);
-    while (match) {
-      const start = match.index;
-      const end = start + match[0].length;
-      if (end <= start) {
-        if (start >= content.length) break;
-        regex.lastIndex = Math.max(regex.lastIndex + 1, start + 1);
-      } else if (ReaderRegexScope.accepts(rule.scope, start, end, titleRanges) &&
-        !titleStyles.some((item: ReaderV2SpanStyleRange): boolean => start < item.end && end > item.start)) {
-        const style = this.typographyPreviewEmphasis(rule, rule.fontSize,
-          this.previewFontFamily(rule.fontMode, rule.fontFamily), rule.fontWeight, emphasisContext);
-        style.start = start;
-        style.end = end;
-        config.styles.push(style);
-      }
-      match = regex.exec(content);
-    }
-    return config;
+    return new RegexRulePreview(config, titleStyles);
   }
 
   /** 正则规则三项；标题强调（rule -1）四项：跟随主题（标题）、同正文强调、无强调、自定义。 */
