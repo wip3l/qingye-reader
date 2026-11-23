@@ -21,6 +21,12 @@ export class TicketAlbumStore {
   private static readonly KEY_STYLE: string = 'style';
   private static readonly KEY_SINGLE: string = 'single';
   private static readonly KEY_ISSUE: string = 'issueAnimation';
+  private static readonly KEY_COVER_SR: string = 'coverSuperResolution';
+  /** 票面封面超分开关在 AppStorage 里的键，票面组件据此即时开关；默认开。 */
+  static readonly COVER_SR_STORAGE_KEY: string = 'ticketCoverSuperResolution';
+  private static readonly KEY_ORIGINAL_COVER: string = 'originalCover';
+  /** 票面用书籍原始封面的开关在 AppStorage 里的键；默认关（跟书架一样的封面）。 */
+  static readonly ORIGINAL_COVER_STORAGE_KEY: string = 'ticketOriginalCover';
   private static loaded: boolean = false;
   private static style: string = 'paper';
   private static single: boolean = false;
@@ -42,10 +48,14 @@ export class TicketAlbumStore {
       const style = await store.get(TicketAlbumStore.KEY_STYLE, TicketAlbumStore.STYLE_PAPER);
       const single = await store.get(TicketAlbumStore.KEY_SINGLE, false);
       const issue = await store.get(TicketAlbumStore.KEY_ISSUE, true);
+      const coverSr = await store.get(TicketAlbumStore.KEY_COVER_SR, true);
+      const originalCover = await store.get(TicketAlbumStore.KEY_ORIGINAL_COVER, false);
       if (!TicketAlbumStore.loaded) {
         TicketAlbumStore.style = TicketAlbumStore.normalizeStyle(typeof style === 'string' ? style : '');
         TicketAlbumStore.single = single === true;
         TicketAlbumStore.issue = issue !== false;
+        AppStorage.setOrCreate(TicketAlbumStore.COVER_SR_STORAGE_KEY, coverSr !== false);
+        AppStorage.setOrCreate(TicketAlbumStore.ORIGINAL_COVER_STORAGE_KEY, originalCover === true);
       }
     } catch (error) {
       console.warn('读取票夹设置失败:', error);
@@ -81,6 +91,26 @@ export class TicketAlbumStore {
     TicketAlbumStore.issue = enabled;
     TicketAlbumStore.loaded = true;
     await TicketAlbumStore.put(context, TicketAlbumStore.KEY_ISSUE, enabled);
+  }
+
+  static coverSuperResolution(): boolean {
+    return AppStorage.get<boolean>(TicketAlbumStore.COVER_SR_STORAGE_KEY) !== false;
+  }
+
+  static async saveCoverSuperResolution(context: Context, enabled: boolean): Promise<void> {
+    AppStorage.setOrCreate(TicketAlbumStore.COVER_SR_STORAGE_KEY, enabled);
+    TicketAlbumStore.loaded = true;
+    await TicketAlbumStore.put(context, TicketAlbumStore.KEY_COVER_SR, enabled);
+  }
+
+  static originalCover(): boolean {
+    return AppStorage.get<boolean>(TicketAlbumStore.ORIGINAL_COVER_STORAGE_KEY) === true;
+  }
+
+  static async saveOriginalCover(context: Context, enabled: boolean): Promise<void> {
+    AppStorage.setOrCreate(TicketAlbumStore.ORIGINAL_COVER_STORAGE_KEY, enabled);
+    TicketAlbumStore.loaded = true;
+    await TicketAlbumStore.put(context, TicketAlbumStore.KEY_ORIGINAL_COVER, enabled);
   }
 
   private static async put(context: Context, key: string, value: string | boolean): Promise<void> {

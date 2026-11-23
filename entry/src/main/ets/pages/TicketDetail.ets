@@ -1,4 +1,6 @@
 import { router } from '@kit.ArkUI';
+import { ReaderComicSuperResolution, ReaderComicSuperResolutionAccess } from '@legado/aiengine';
+import { AiAccessPolicy } from '../account/AiAccessPolicy';
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
 import { fileIo } from '@kit.CoreFileKit';
@@ -32,6 +34,8 @@ struct TicketDetailPage {
   @StorageProp('appDarkMode') darkMode: boolean = false;
   @StorageProp('themeRevision') themeRevision: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
+  @StorageProp('ticketCoverSuperResolution') coverSrEnabled: boolean = true;
+  @StorageProp('ticketOriginalCover') originalCover: boolean = false;
   @State ticket: ReadingTicket | null = null;
   @State back: ReadingTicketBack = new ReadingTicketBack();
   @State loaded: boolean = false;
@@ -167,15 +171,53 @@ struct TicketDetailPage {
   @Builder
   pageActions() {
     if (this.ticket) {
-      ImmersiveHeaderAction({
-        icon: $r('sys.symbol.arrow_left_arrow_right'),
-        accessibilityLabel: this.showBack ? '翻到正面' : '翻到背面',
-        onTap: (): void => {
-          this.flip();
+      Row({ space: AppSpacing.MD }) {
+        // 封面超分：系统不支持（API 26 以下等）时不显示；会员不可用时点了提示。
+        if (ReaderComicSuperResolution.supported()) {
+          ImmersiveHeaderAction({
+            label: '超分',
+            tint: this.coverSrEnabled ? ThemeRuntime.accentColor(this.darkMode) : ThemeRuntime.subTextColor(this.darkMode),
+            accessibilityLabel: this.coverSrEnabled ? '封面超分，已开启' : '封面超分，已关闭',
+            onTap: (): void => {
+              this.toggleCoverSr();
+            }
+          })
         }
-      })
-        .margin({ right: AppSpacing.XL })
+        ImmersiveHeaderAction({
+          label: '原封面',
+          tint: this.originalCover ? ThemeRuntime.accentColor(this.darkMode) : ThemeRuntime.subTextColor(this.darkMode),
+          accessibilityLabel: this.originalCover ? '使用书籍原始封面，已开启' : '使用书籍原始封面，已关闭',
+          onTap: (): void => {
+            this.toggleOriginalCover();
+          }
+        })
+        ImmersiveHeaderAction({
+          icon: $r('sys.symbol.arrow_left_arrow_right'),
+          accessibilityLabel: this.showBack ? '翻到正面' : '翻到背面',
+          onTap: (): void => {
+            this.flip();
+          }
+        })
+      }
+      .margin({ right: AppSpacing.XL })
     }
+  }
+
+  private toggleCoverSr(): void {
+    const next = !this.coverSrEnabled;
+    // 开关照存；会员不可用时先不超分，开通后自动生效。
+    TicketAlbumStore.saveCoverSuperResolution(this.context(), next);
+    if (next && ReaderComicSuperResolution.access() === ReaderComicSuperResolutionAccess.MEMBER_REQUIRED) {
+      HdsFeedback.showToast(`封面超分是会员功能，${AiAccessPolicy.blockedMessage()}`);
+      return;
+    }
+    HdsFeedback.showToast(next ? '封面超分已开启，所有票的封面会自动变清晰' : '封面超分已关闭');
+  }
+
+  private toggleOriginalCover(): void {
+    const next = !this.originalCover;
+    TicketAlbumStore.saveOriginalCover(this.context(), next);
+    HdsFeedback.showToast(next ? '票上改用书籍原始封面' : '票上改用书架上的封面');
   }
 
   @Builder
