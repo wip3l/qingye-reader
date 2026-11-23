@@ -1,5 +1,5 @@
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../../platform/FileUri';
 import http from '@ohos.net.http';
 import picker from '@ohos.file.picker';
 import statvfs from '@ohos.file.statvfs';

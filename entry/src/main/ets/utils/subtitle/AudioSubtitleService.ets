@@ -1,5 +1,5 @@
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../../platform/FileUri';
 import worker, { MessageEvents } from '@ohos.worker';
 import subtitleAudio from 'libsubtitle_audio.so';
 import { Book, BookChapter } from '@legado/sourceengine';

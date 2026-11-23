@@ -135,7 +135,9 @@ const FORBIDDEN = [
   [/\bfs\.copy\(/, 'fs.copy（用 platform/Files 的 copyFile）'],
   [/\.localeCompare\([^,()]+,\s*'/, '带区域的 localeCompare（用 platform/TextCompare 的 compareText）'],
   [/\.setWindowBrightness\(/, 'setWindowBrightness（用 platform/WindowBrightness）'],
-  [/\bCookieStore\./, 'CookieStore 的静态方法（用 platform/Cookies 的 AppCookies）']
+  [/\bCookieStore\./, 'CookieStore 的静态方法（用 platform/Cookies 的 AppCookies）'],
+  [/from '@ohos\.file\.fileuri'|\bfileUri\b[^;]*from '@kit\.CoreFileKit'/,
+    'fileuri（用 platform/FileUri 的 fileUri；安卓上没有 @ohos.file.fileuri）']
 ];
 /** 只在鸿蒙上有意义的功能，允许直接用系统能力：碰一碰分享。 */
 const ALLOWED = new Map([['utils/KnockShare.ets', ['@kit.ShareKit']]]);
