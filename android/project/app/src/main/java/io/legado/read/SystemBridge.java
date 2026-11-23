@@ -1,6 +1,9 @@
 package io.legado.read;
 
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
+import android.net.Uri;
 import android.graphics.Insets;
 import android.os.Build;
 import android.view.View;
@@ -135,6 +138,23 @@ public class SystemBridge extends BridgePlugin {
                 decor.setSystemUiVisibility(hidden ? flags | immersive : flags & ~immersive);
             }
         });
+        return "{}";
+    }
+
+    /**
+     * 用系统浏览器打开网页（充值收银台等）。只接受 https 地址；支付宝 App 装了的话收银台会自动拉起它。
+     */
+    public String openUrl(String url) {
+        Uri uri = Uri.parse(url == null ? "" : url);
+        if (!"https".equals(uri.getScheme())) return error("只能打开 https 地址");
+        Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+        intent.addCategory(Intent.CATEGORY_BROWSABLE);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            activity.startActivity(intent);
+        } catch (ActivityNotFoundException e) {
+            return error("没有可用的浏览器");
+        }
         return "{}";
     }
 
