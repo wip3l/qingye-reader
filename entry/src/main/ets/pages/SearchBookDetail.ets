@@ -25,6 +25,7 @@ import { BookChangeSourceDialog } from '../components/BookChangeSourceDialog';
 import { BookCatalogSheet } from '../components/BookCatalogSheet';
 import { WebBookFetchRuntimeHost } from '../components/WebBookFetchRuntimeHost';
 import { LocalBookService } from '../core/book/LocalBookService';
+import { CUSTOM_INTRO_SOURCE_KEY } from '../core/book/NetworkIntroSearch';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { SourceShelfEvents } from '../utils/SourceShelfEvents';
 import { VideoBookPlayer } from '../utils/VideoBookPlayer';
@@ -85,6 +86,10 @@ struct SearchBookDetailPage {
   @State coverUrl: string = '';
   @State sharedCoverId: string = '';
   @State intro: string = '';
+  /** 书架上这本书的自定义简介取自哪个书源；手写的或没有自定义简介时为空。 */
+  @State introSourceName: string = '';
+  /** 书架记录里的自定义简介。页面显示它，但不能当成书源简介写回书的 intro。 */
+  private shelfCustomIntro: string = '';
   @State latestChapterTitle: string = '';
   @State totalChapterNum: number = 0;
   @State wordCount: string = '';
@@ -1243,7 +1248,16 @@ struct SearchBookDetailPage {
           .fontSize(AppFontSize.BODY_LARGE)
           .fontWeight(FontWeight.Medium)
           .fontColor(this.primaryTextColor())
+        if (this.introSourceName) {
+          Blank()
+          Text(`来自 ${this.introSourceName}`)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
       }
+      .width('100%')
       .alignItems(VerticalAlign.Center)
 
       Text(this.intro || (this.isLoadingBookInfo ? '简介加载中...' : '暂无简介'))
@@ -1370,7 +1384,7 @@ struct SearchBookDetailPage {
         }
         existing.kind = BookFieldSanitizer.prefer(this.kind, existing.kind);
         existing.status = BookFieldSanitizer.prefer(this.status, existing.status);
-        existing.intro = BookFieldSanitizer.prefer(this.intro, existing.intro);
+        existing.intro = BookFieldSanitizer.prefer(this.sourceIntroFor(existing, this.intro), existing.intro);
         existing.latestChapterTitle = BookFieldSanitizer.prefer(this.latestChapterTitle, existing.latestChapterTitle);
         existing.wordCount = BookFieldSanitizer.prefer(this.wordCount, existing.wordCount);
         existing.updateTime = BookFieldSanitizer.prefer(this.updateTime, existing.updateTime);
@@ -1441,7 +1455,8 @@ struct SearchBookDetailPage {
         }
         resolvedExisting.kind = BookFieldSanitizer.prefer(book.kind, resolvedExisting.kind);
         resolvedExisting.status = BookFieldSanitizer.prefer(book.status, resolvedExisting.status);
-        resolvedExisting.intro = BookFieldSanitizer.prefer(book.intro, resolvedExisting.intro);
+        resolvedExisting.intro = BookFieldSanitizer.prefer(this.sourceIntroFor(resolvedExisting, book.intro),
+          resolvedExisting.intro);
         resolvedExisting.latestChapterTitle = BookFieldSanitizer.prefer(book.latestChapterTitle, resolvedExisting.latestChapterTitle);
         resolvedExisting.updateTime = BookFieldSanitizer.prefer(book.updateTime, resolvedExisting.updateTime);
         resolvedExisting.wordCount = BookFieldSanitizer.prefer(book.wordCount, resolvedExisting.wordCount);
@@ -1858,11 +1873,17 @@ struct SearchBookDetailPage {
     }
   }
 
+  /** 页面上的简介若就是这本书的自定义简介，不拿它覆盖书源简介，免得“恢复原简介”回不去。 */
+  private sourceIntroFor(book: Book, intro: string): string {
+    const custom = BookFieldSanitizer.clean(book.customIntro || this.shelfCustomIntro);
+    return custom && BookFieldSanitizer.clean(intro) === custom ? '' : intro;
+  }
+
   private mergeResolvedDetailIntoBook(book: Book): boolean {
     let changed = false;
     const kind = BookFieldSanitizer.prefer(this.kind, book.kind);
     const status = BookFieldSanitizer.prefer(this.status, book.status);
-    const intro = BookFieldSanitizer.prefer(this.intro, book.intro);
+    const intro = BookFieldSanitizer.prefer(this.sourceIntroFor(book, this.intro), book.intro);
     const latestChapterTitle = BookFieldSanitizer.prefer(this.latestChapterTitle, book.latestChapterTitle);
     const wordCount = BookFieldSanitizer.prefer(this.wordCount, book.wordCount);
     const updateTime = BookFieldSanitizer.prefer(this.updateTime, book.updateTime);
@@ -2452,7 +2473,11 @@ struct SearchBookDetailPage {
     this.kind = book.kind || this.kind;
     this.status = book.status || this.status;
     this.coverUrl = CoverUrlNormalizer.prefer(book.coverUrl, this.coverUrl);
-    this.intro = book.intro || this.intro;
+    if (shelfRecord) {
+      this.shelfCustomIntro = book.customIntro || '';
+      this.introSourceName = this.shelfCustomIntro ? (book.getVariable(CUSTOM_INTRO_SOURCE_KEY) || '') : '';
+    }
+    this.intro = this.shelfCustomIntro || book.intro || this.intro;
     this.latestChapterTitle = book.latestChapterTitle || this.latestChapterTitle;
     this.wordCount = book.wordCount || this.wordCount;
     this.updateTime = book.updateTime || this.updateTime;

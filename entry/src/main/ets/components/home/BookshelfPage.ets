@@ -24,6 +24,7 @@ import picker from '@ohos.file.picker';
 import { Book, BookChapter, BookGroup, SearchBook, BookTypeSupport, sleepMs } from '@legado/sourceengine';
 import { AppDatabase } from '../../model/data/AppDatabase';
 import { SearchCoordinator, SearchProgress } from '../../core/book/SearchCoordinator';
+import { CUSTOM_INTRO_SOURCE_KEY, NetworkIntroCandidate, NetworkIntroSearch } from '../../core/book/NetworkIntroSearch';
 import { ReadBookEngine } from '../../core/book/ReadBookEngine';
 import { BatchSourceSwitch, BatchSwitchItem } from '../../core/book/BatchSourceSwitch';
 import { AudioOfflineStore } from '../../core/book/AudioOfflineStore';
@@ -495,6 +496,10 @@ export struct BookshelfPage {
   @State showEditBookInfoDialog: boolean = false;
   @State editingBookName: string = '';
   @State editingBookAuthor: string = '';
+  @State editingBookIntro: string = '';
+  /** 编辑框里的简介最近一次从哪个书源填进来；保存时内容没再改动就记下这个来源。 */
+  private editingIntroFilledText: string = '';
+  private editingIntroFilledSource: string = '';
   @State showTagDialog: boolean = false;
   private cacheDialogSession: SystemDialogSession = new SystemDialogSession();
   private chapterCacheDialogSession: SystemDialogSession = new SystemDialogSession();
@@ -506,6 +511,19 @@ export struct BookshelfPage {
   @State networkCoverSearching: boolean = false;
   @State networkCoverStatus: string = '';
   @State showCustomNetworkCoverDialog: boolean = false;
+  @State showNetworkIntroSheet: boolean = false;
+  @State networkIntroTargetBook: Book | null = null;
+  @State networkIntroCandidates: NetworkIntroCandidate[] = [];
+  @State networkIntroSearching: boolean = false;
+  @State networkIntroStatus: string = '';
+  @State networkIntroExpandedKey: string = '';
+  @State networkIntroFetchingKey: string = '';
+  @State networkIntroUseCover: boolean = false;
+  /** apply：选中即存进书里；fill：填回“编辑书籍信息”的简介框，由用户改完再保存。 */
+  private networkIntroMode: string = 'apply';
+  private networkIntroCoordinator: SearchCoordinator | null = null;
+  private networkIntroSearchToken: number = 0;
+  private networkIntroSeen: Set<string> = new Set();
   @State customNetworkCoverUrl: string = '';
   @State showGalleryCoverSheet: boolean = false;
   @State galleryCoverTargetBook: Book | null = null;
@@ -817,6 +835,7 @@ export struct BookshelfPage {
     this.cloudBookOpenRequest++;
     this.cancelShelfBookOpening();
     this.cancelNetworkCoverSearch();
+    this.cancelNetworkIntroSearch();
     this.clearShelfScopeTransition();
     this.clearPrivateShelfLayerTimer();
     this.shelfCoverCacheRevision++;
@@ -1697,6 +1716,213 @@ export struct BookshelfPage {
     }
   }
 
+  /**
+   * 获取网络简介：和网络封面一样按书名精确搜启用的书源，搜索结果自带的简介按内容合并成候选。
+   * mode 为 fill 时从“编辑书籍信息”进来，选中的简介填回编辑框，关面板后重新打开编辑弹窗。
+   */
+  async openNetworkIntroPicker(book: Book, mode: string = 'apply', name: string = '', author: string = ''): Promise<void> {
+    const keyword = (name || book.name || '').trim();
+    if (!keyword) {
+      HdsFeedback.showToast('书名为空，无法搜索简介');
+      if (mode === 'fill') this.resumeEditBookInfoDialog();
+      return;
+    }
+    const wantedAuthor = mode === 'fill' ? author : book.author;
+    this.cancelNetworkIntroSearch();
+    this.networkIntroMode = mode;
+    this.networkIntroTargetBook = book;
+    this.networkIntroCandidates = [];
+    this.networkIntroSeen.clear();
+    this.networkIntroExpandedKey = '';
+    this.networkIntroFetchingKey = '';
+    this.networkIntroUseCover = false;
+    this.networkIntroSearching = true;
+    this.networkIntroStatus = '正在从启用的书源中搜索...';
+    this.showNetworkIntroSheet = true;
+    const token = this.networkIntroSearchToken;
+    const coordinator = new SearchCoordinator(SearchExploreSettingsStore.getSearchConcurrency());
+    this.networkIntroCoordinator = coordinator;
+    try {
+      await AppDatabase.getInstance().initWithContext(getContext(this));
+      const results = await coordinator.search(keyword, (progress: SearchProgress) => {
+        if (token !== this.networkIntroSearchToken || this.networkIntroCoordinator !== coordinator) return;
+        const incoming = progress.finished ? progress.results : (progress.deltaResults || []);
+        if (incoming.length > 0) this.appendNetworkIntroCandidates(incoming, wantedAuthor);
+        this.networkIntroStatus = progress.finished ? this.networkIntroDoneStatus() :
+          `${progress.status}，找到 ${this.networkIntroCandidates.length} 段简介`;
+        if (progress.finished) this.networkIntroSearching = false;
+      }, {
+        exactMatch: true,
+        exactMatchAuthor: false
+      });
+      if (token !== this.networkIntroSearchToken || this.networkIntroCoordinator !== coordinator) return;
+      this.appendNetworkIntroCandidates(results, wantedAuthor);
+      this.networkIntroSearching = false;
+      this.networkIntroStatus = this.networkIntroDoneStatus();
+    } catch (e) {
+      if (token !== this.networkIntroSearchToken) return;
+      console.error('搜索网络简介失败:', e);
+      this.networkIntroSearching = false;
+      this.networkIntroStatus = '搜索网络简介失败，请稍后重试';
+    } finally {
+      if (token === this.networkIntroSearchToken && this.networkIntroCoordinator === coordinator) {
+        this.networkIntroCoordinator = null;
+      }
+    }
+  }
+
+  networkIntroDoneStatus(): string {
+    return this.networkIntroCandidates.length > 0 ?
+      `搜索完成，找到 ${this.networkIntroCandidates.length} 段简介` : '搜索完成，没有找到带简介的同名书';
+  }
+
+  /** 进度回调和最终结果会给出同一批书，按书源+地址去重，免得“另 N 个书源相同”算重。 */
+  appendNetworkIntroCandidates(results: SearchBook[], author: string): void {
+    const fresh: SearchBook[] = [];
+    for (const result of results) {
+      const id = `${result.origin}\n${result.bookUrl}`;
+      if (this.networkIntroSeen.has(id)) continue;
+      this.networkIntroSeen.add(id);
+      fresh.push(result);
+    }
+    if (fresh.length === 0) return;
+    this.networkIntroCandidates = NetworkIntroSearch.merge(this.networkIntroCandidates, fresh, author);
+  }
+
+  /** 点开一段简介；搜索列表里的看着被截短了，就去这个书源的详情页取完整的。 */
+  async expandNetworkIntro(candidate: NetworkIntroCandidate): Promise<void> {
+    if (this.networkIntroExpandedKey === candidate.key) return;
+    this.networkIntroExpandedKey = candidate.key;
+    this.networkIntroUseCover = false;
+    if (candidate.completed || !NetworkIntroSearch.looksTruncated(candidate.intro)) return;
+    const token = this.networkIntroSearchToken;
+    this.networkIntroFetchingKey = candidate.key;
+    let full = '';
+    try {
+      full = await NetworkIntroSearch.fetchFullIntro(candidate);
+    } catch (e) {
+      console.warn('读取完整简介失败:', e);
+    }
+    if (token !== this.networkIntroSearchToken) return;
+    if (this.networkIntroFetchingKey === candidate.key) this.networkIntroFetchingKey = '';
+    this.networkIntroCandidates = this.networkIntroCandidates.map((item: NetworkIntroCandidate): NetworkIntroCandidate => {
+      if (item.key !== candidate.key) return item;
+      const next = NetworkIntroSearch.copy(item);
+      next.completed = true;
+      if (full) next.intro = full;
+      return next;
+    });
+  }
+
+  networkIntroHasCover(candidate: NetworkIntroCandidate): boolean {
+    return /^https?:\/\//i.test((candidate.book.coverUrl || '').trim());
+  }
+
+  async applyNetworkIntro(candidate: NetworkIntroCandidate): Promise<void> {
+    const target = this.networkIntroTargetBook;
+    const intro = candidate.intro;
+    const sourceName = (candidate.book.originName || '').trim();
+    if (!target || !intro || this.networkIntroFetchingKey === candidate.key) return;
+    if (this.networkIntroMode === 'fill') {
+      this.editingBookIntro = intro;
+      this.editingIntroFilledText = intro;
+      this.editingIntroFilledSource = sourceName;
+      this.closeNetworkIntroPicker();
+      return;
+    }
+    const coverUrl = this.networkIntroUseCover && this.networkIntroHasCover(candidate) ?
+      (candidate.book.coverUrl || '').trim() : '';
+    try {
+      const db = AppDatabase.getInstance();
+      const current = await db.getBook(target.bookUrl);
+      if (!current) {
+        HdsFeedback.showToast('书籍已不在书架中');
+        this.closeNetworkIntroPicker();
+        return;
+      }
+      current.customIntro = intro;
+      current.putVariable(CUSTOM_INTRO_SOURCE_KEY, sourceName);
+      const previousCover = current.customCoverUrl;
+      if (coverUrl) current.customCoverUrl = coverUrl;
+      await db.updateBook(current);
+      if (coverUrl) {
+        this.removeLocalBookCoverFile(previousCover, coverUrl);
+        this.applyShelfBookCoverState(current);
+      } else {
+        this.allBooks = this.allBooks.map((book: Book) => book.bookUrl === current.bookUrl ? current : book);
+        this.applyShelfScope();
+      }
+      this.closeNetworkIntroPicker();
+      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+      HdsFeedback.showToast(coverUrl ? '简介和封面已更新' : '简介已更新');
+    } catch (e) {
+      console.error('应用网络简介失败:', e);
+      HdsFeedback.showToast('应用网络简介失败');
+    }
+  }
+
+  /** 去掉自定义简介，回到导入时解析出的那段（TXT 多半就是空的）。 */
+  async restoreOriginalIntro(book: Book): Promise<void> {
+    if (!book.customIntro) return;
+    try {
+      const db = AppDatabase.getInstance();
+      const current = await db.getBook(book.bookUrl);
+      if (!current) {
+        HdsFeedback.showToast('书籍已不在书架中');
+        return;
+      }
+      current.customIntro = '';
+      current.putVariable(CUSTOM_INTRO_SOURCE_KEY, '');
+      await db.updateBook(current);
+      this.allBooks = this.allBooks.map((item: Book) => item.bookUrl === current.bookUrl ? current : item);
+      this.applyShelfScope();
+      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+      HdsFeedback.showToast('已恢复原简介');
+    } catch (e) {
+      console.error('恢复原简介失败:', e);
+      HdsFeedback.showToast('恢复原简介失败');
+    }
+  }
+
+  closeNetworkIntroPicker(): void {
+    const resumeEdit = this.networkIntroMode === 'fill' && this.networkIntroTargetBook !== null;
+    this.cancelNetworkIntroSearch();
+    this.showNetworkIntroSheet = false;
+    this.networkIntroTargetBook = null;
+    this.networkIntroCandidates = [];
+    this.networkIntroSeen.clear();
+    this.networkIntroStatus = '';
+    this.networkIntroExpandedKey = '';
+    this.networkIntroFetchingKey = '';
+    this.networkIntroUseCover = false;
+    this.networkIntroMode = 'apply';
+    // 等半模态收起再弹回编辑框，免得系统对话框压在面板的退场动画上。
+    if (resumeEdit) setTimeout(() => this.resumeEditBookInfoDialog(), 320);
+  }
+
+  cancelNetworkIntroSearch(): void {
+    this.networkIntroSearchToken++;
+    this.networkIntroCoordinator?.cancel();
+    this.networkIntroCoordinator = null;
+    this.networkIntroSearching = false;
+  }
+
+  /** 编辑弹窗里点“从书源获取”：先收起弹窗（保留已输入的内容），再打开简介面板。 */
+  searchIntroFromEditDialog(): void {
+    const book = this.pendingActionBook;
+    if (!book) return;
+    this.showEditBookInfoDialog = false;
+    this.editBookInfoDialogSession.close(this.getUIContext());
+    setTimeout(() => {
+      this.openNetworkIntroPicker(book, 'fill', this.editingBookName.trim(), this.editingBookAuthor.trim());
+    }, 0);
+  }
+
+  resumeEditBookInfoDialog(): void {
+    if (!this.pendingActionBook) return;
+    this.openEditBookInfoDialog();
+  }
+
   /** 上传本地图片作封面：复制进沙箱后写入 customCoverUrl，与网络封面同一优先级。 */
   async pickLocalBookCover(book: Book): Promise<void> {
     try {
@@ -2262,6 +2488,7 @@ export struct BookshelfPage {
     .onAreaChange((_oldValue: Area, newValue: Area) => this.updateContextViewport(newValue))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet(this.showNetworkCoverDialog, this.networkCoverSheet(), this.networkCoverSheetOptions())
+    .bindSheet(this.showNetworkIntroSheet, this.networkIntroSheet(), this.networkIntroSheetOptions())
   }
 
   @Builder
@@ -3275,11 +3502,33 @@ export struct BookshelfPage {
               })
           }
           if (LocalBookService.isLocalBook(this.pendingActionBook)) {
+            this.contextActionItem($r('sys.symbol.doc_text'), '获取网络简介', this.primaryTextColor(), () => {
+              if (this.pendingActionBook) {
+                const book = this.pendingActionBook;
+                this.closeBookActions();
+                this.openNetworkIntroPicker(book);
+              }
+            })
+            if (this.pendingActionBook.customIntro) {
+              this.contextActionItem($r('sys.symbol.arrow_counterclockwise'), '恢复原简介', this.primaryTextColor(), () => {
+                if (this.pendingActionBook) {
+                  const book = this.pendingActionBook;
+                  this.closeBookActions();
+                  this.restoreOriginalIntro(book);
+                }
+              })
+            }
+          }
+          if (LocalBookService.isLocalBook(this.pendingActionBook)) {
             this.contextActionItem($r('sys.symbol.square_and_pencil'), '编辑书籍信息',
               this.primaryTextColor(), () => {
                 if (this.pendingActionBook) {
                   this.editingBookName = this.pendingActionBook.name;
                   this.editingBookAuthor = this.pendingActionBook.author;
+                  this.editingBookIntro = this.pendingActionBook.customIntro ||
+                    NetworkIntroSearch.cleanIntro(this.pendingActionBook.intro);
+                  this.editingIntroFilledText = '';
+                  this.editingIntroFilledSource = '';
                   this.showActionDialog = false;
                   this.openEditBookInfoDialog();
                 }
@@ -3492,6 +3741,222 @@ export struct BookshelfPage {
     .width('100%')
     .height('100%')
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: Math.max(this.navBarHeight, 12) + 12 })
+  }
+
+  /** 获取网络简介：与网络封面同款半模态，候选是一段段简介，点开看全文再采用。 */
+  @Builder
+  networkIntroSheet() {
+    Column() {
+      Row() {
+        Column() {
+          Text('获取网络简介')
+            .fontSize(AppFontSize.SUBTITLE)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(this.primaryTextColor())
+          Text(this.networkIntroSubtitle())
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.secondaryTextColor())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .margin({ top: 3 })
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Button('取消')
+          .height(36)
+          .backgroundColor(this.inputColor())
+          .fontColor(this.primaryTextColor())
+          .onClick(() => this.closeNetworkIntroPicker())
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: AppSpacing.MD }) {
+        if (this.networkIntroSearching) {
+          LoadingProgress()
+            .width(18)
+            .height(18)
+        }
+        Text(this.networkIntroStatus || '正在准备搜索...')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .maxLines(2)
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .margin({ top: AppSpacing.LG, bottom: 10 })
+
+      if (this.networkIntroCandidates.length === 0 && !this.networkIntroSearching) {
+        Column({ space: 10 }) {
+          SymbolGlyph($r('sys.symbol.doc_text'))
+            .fontSize(42)
+            .fontColor([this.subTextColor()])
+          Text('没有找到可用的网络简介')
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.secondaryTextColor())
+        }
+        .width('100%')
+        .height(220)
+        .justifyContent(FlexAlign.Center)
+      } else {
+        List({ space: AppSpacing.MD }) {
+          ForEach(this.networkIntroCandidates, (candidate: NetworkIntroCandidate) => {
+            ListItem() {
+              this.networkIntroCard(candidate)
+            }
+          }, (candidate: NetworkIntroCandidate) =>
+            `${candidate.key}_${candidate.sourceCount}_${candidate.completed ? 1 : 0}_${candidate.authorMatched ? 1 : 0}`)
+          ListItem() {
+            Column()
+              .height(68)
+          }
+        }
+        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+        .scrollBar(BarState.Off)
+        .layoutWeight(1)
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: Math.max(this.navBarHeight, 12) + 12 })
+  }
+
+  @Builder
+  networkIntroCard(candidate: NetworkIntroCandidate) {
+    Column({ space: 5 }) {
+      Row({ space: 6 }) {
+        Text(candidate.book.originName || '启用书源')
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .flexShrink(1)
+        if (this.networkIntroTargetHasAuthor()) {
+          Text(candidate.authorMatched ? '作者一致' : '仅书名一致')
+            .fontSize(AppFontSize.MICRO)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(candidate.authorMatched ? ThemeRuntime.successColor(this.appDarkMode) :
+              ThemeRuntime.warningColor(this.appDarkMode))
+            .backgroundColor(candidate.authorMatched ? ThemeRuntime.successSurfaceColor(this.appDarkMode) :
+              this.inputColor())
+            .borderRadius(5)
+            .padding({ left: 5, right: 5, top: 1, bottom: 1 })
+            .flexShrink(0)
+        }
+        if (candidate.sourceCount > 1) {
+          Text(`另 ${candidate.sourceCount - 1} 个书源相同`)
+            .fontSize(AppFontSize.MICRO)
+            .fontColor(this.subTextColor())
+            .maxLines(1)
+            .flexShrink(0)
+        }
+        Blank()
+        Text(`${candidate.intro.length} 字`)
+          .fontSize(AppFontSize.MICRO)
+          .fontColor(this.subTextColor())
+          .flexShrink(0)
+      }
+      .width('100%')
+
+      Text(candidate.book.author ? `${candidate.book.name} · ${candidate.book.author}` : candidate.book.name)
+        .fontSize(AppFontSize.MICRO)
+        .fontColor(this.subTextColor())
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+
+      Text(candidate.intro)
+        .fontSize(AppFontSize.CAPTION)
+        .lineHeight(20)
+        .fontColor(this.networkIntroExpandedKey === candidate.key ? this.primaryTextColor() : this.secondaryTextColor())
+        .maxLines(this.networkIntroExpandedKey === candidate.key ? 400 : 3)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+
+      if (this.networkIntroFetchingKey === candidate.key) {
+        Row({ space: 6 }) {
+          LoadingProgress()
+            .width(14)
+            .height(14)
+            .color(this.accentColor())
+          Text('正在读取完整简介…')
+            .fontSize(AppFontSize.MICRO)
+            .fontColor(this.accentColor())
+        }
+        .width('100%')
+      }
+
+      if (this.networkIntroExpandedKey === candidate.key) {
+        Row({ space: AppSpacing.MD }) {
+          if (this.networkIntroMode === 'apply' && this.networkIntroHasCover(candidate)) {
+            Row({ space: 6 }) {
+              Checkbox()
+                .select(this.networkIntroUseCover)
+                .selectedColor(this.accentColor())
+                .width(16)
+                .height(16)
+                .onChange((value: boolean) => {
+                  this.networkIntroUseCover = value;
+                })
+              Text('同时用这本的封面')
+                .fontSize(AppFontSize.MICRO)
+                .fontColor(this.secondaryTextColor())
+                .onClick(() => {
+                  this.networkIntroUseCover = !this.networkIntroUseCover;
+                })
+            }
+          }
+          Blank()
+          Button(this.networkIntroMode === 'fill' ? '填入简介' : '使用这段简介')
+            .height(32)
+            .fontSize(AppFontSize.CAPTION)
+            .backgroundColor(this.buttonColor())
+            .fontColor(ThemeRuntime.onAccentColor())
+            .enabled(this.networkIntroFetchingKey !== candidate.key)
+            .opacity(this.networkIntroFetchingKey === candidate.key ? 0.45 : 1)
+            .onClick(() => this.applyNetworkIntro(candidate))
+        }
+        .width('100%')
+        .margin({ top: 4 })
+      }
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .borderRadius(ThemeRuntime.mediumRadius())
+    .backgroundColor(this.glassCardColor())
+    .border({
+      width: this.networkIntroExpandedKey === candidate.key ? 1.5 : ThemeRuntime.glassBorderWidth(),
+      color: this.networkIntroExpandedKey === candidate.key ? this.accentColor() : this.glassBorderColor()
+    })
+    .onClick(() => this.expandNetworkIntro(candidate))
+  }
+
+  networkIntroSubtitle(): string {
+    const book = this.networkIntroTargetBook;
+    if (!book) return '';
+    const name = this.networkIntroMode === 'fill' ? (this.editingBookName.trim() || book.name) : book.name;
+    const author = this.networkIntroMode === 'fill' ? this.editingBookAuthor.trim() : book.author;
+    return author ? `《${name}》· ${author}` : `《${name}》`;
+  }
+
+  networkIntroTargetHasAuthor(): boolean {
+    const book = this.networkIntroTargetBook;
+    if (!book) return false;
+    return !!(this.networkIntroMode === 'fill' ? this.editingBookAuthor.trim() : book.author);
+  }
+
+  networkIntroSheetOptions(): SheetOptions {
+    return ImmersiveMaterialRuntime.applySheetMaterial(this.immersiveLightLevel, {
+      detents: ['72%', SheetSize.LARGE],
+      dragBar: true,
+      showClose: false,
+      scrollSizeMode: ScrollSizeMode.CONTINUOUS,
+      onWillDismiss: (): void => this.closeNetworkIntroPicker(),
+      onWillSpringBackWhenDismiss: (): void => {}
+    }, this.appDarkMode, this.accentColor());
   }
 
   networkCoverSheetOptions(): SheetOptions {
@@ -4027,6 +4492,44 @@ export struct BookshelfPage {
         .borderRadius(ThemeRuntime.mediumRadius())
         .onChange((value: string) => {
           this.editingBookAuthor = value;
+        })
+
+      Row({ space: AppSpacing.SM }) {
+        Text('简介')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.secondaryTextColor())
+        if (this.editingBookIntro.trim()) {
+          Text(`${this.editingBookIntro.trim().length} 字`)
+            .fontSize(AppFontSize.MICRO)
+            .fontColor(this.subTextColor())
+        }
+        Blank()
+        Row({ space: 4 }) {
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(14)
+            .fontColor([this.accentColor()])
+          Text('从书源获取')
+            .fontSize(AppFontSize.BODY)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.accentColor())
+        }
+        .padding({ top: 4, bottom: 4, left: 6 })
+        .onClick(() => this.searchIntroFromEditDialog())
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .margin({ top: 10, bottom: AppSpacing.XS })
+
+      TextArea({ placeholder: '暂无简介，可手动填写或从书源获取', text: this.editingBookIntro })
+        .width('100%')
+        .height(132)
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.primaryTextColor())
+        .placeholderColor(this.subTextColor())
+        .backgroundColor(this.inputColor())
+        .borderRadius(ThemeRuntime.mediumRadius())
+        .onChange((value: string) => {
+          this.editingBookIntro = value;
         })
 
       Row({ space: 10 }) {
@@ -8595,7 +9098,28 @@ export struct BookshelfPage {
     this.editBookInfoDialogSession.close(this.getUIContext());
     this.editingBookName = '';
     this.editingBookAuthor = '';
+    this.editingBookIntro = '';
+    this.editingIntroFilledText = '';
+    this.editingIntroFilledSource = '';
     this.pendingActionBook = null;
+  }
+
+  /** 编辑框里的简介和导入时解析出的一样（或清空）就不另存；改过的存进自定义简介，来源只在没再改动时保留。 */
+  applyEditedIntro(book: Book): void {
+    const intro = NetworkIntroSearch.normalizeManual(this.editingBookIntro);
+    const original = NetworkIntroSearch.cleanIntro(book.intro);
+    if (intro === (book.customIntro || original)) return;
+    if (!intro || intro === original) {
+      book.customIntro = '';
+      book.putVariable(CUSTOM_INTRO_SOURCE_KEY, '');
+      return;
+    }
+    let source = '';
+    if (intro === NetworkIntroSearch.normalizeManual(this.editingIntroFilledText)) {
+      source = this.editingIntroFilledSource;
+    }
+    book.customIntro = intro;
+    book.putVariable(CUSTOM_INTRO_SOURCE_KEY, source);
   }
 
   async saveLocalBookInfo(): Promise<void> {
@@ -8621,6 +9145,7 @@ export struct BookshelfPage {
       }
       book.name = name;
       book.author = author;
+      this.applyEditedIntro(book);
       book.putVariable('localMetadataCustomized', '1');
       book.putVariable('localCustomName', name);
       book.putVariable('localCustomAuthor', author);
