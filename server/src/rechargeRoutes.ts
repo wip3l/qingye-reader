@@ -3,6 +3,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AlipayClient } from './alipay.js';
 import { yuanToFen } from './alipay.js';
 import { creditPaidPoints, PointCreditError, PointDb, reversePaidCredit } from './pointCredit.js';
+import { MembershipSku, membershipProduct } from './membershipPolicy.js';
+import { purchaseMembership, quoteMembership } from './membershipService.js';
 
 /**
  * 安卓端充值（docs/android-recharge.md）：支付宝手机网站支付和兑换码。鸿蒙端不走这里，仍用 /v1/iap/credit。
@@ -132,6 +134,27 @@ export async function applyAlipayTrade(db: PointDb, event: AlipayTradeEvent,
   return 'unchanged';
 }
 
+/**
+ * 会员兑换码：在调用方的事务里先报价（会锁账号、检查欠款与是否在售、是否已有更高的终身权益），
+ * 再记入充值点（码面值与实付取大，涨价后码仍能开通该档），最后按报价购买。任何一步失败整笔回滚，码不作废。
+ * 实付少于码面值（升级抵扣、促销价、自动用券）时差额留作充值点。流水：REDEEM_CODE 加点（幂等键 redeem:<哈希>），
+ * MEMBERSHIP_PURCHASE 扣点（购买请求号 redeem:<哈希前 32 位>，同一个码只能买一次）。
+ */
+export async function redeemMembershipCode(db: PointDb, userId: string, hash: string, sku: MembershipSku,
+  codePoints: number, now = Date.now()) {
+  const product = membershipProduct(sku);
+  const quote = await quoteMembership(db, userId, sku, now);
+  const points = Math.max(codePoints, quote.payablePoints);
+  await creditPaidPoints(db, userId, points, 'REDEEM_CODE', hash.slice(0, 16), `redeem:${hash}`);
+  const order = await purchaseMembership(db, userId, quote.quoteId, `redeem:${hash.slice(0, 32)}`, now);
+  if (order.duplicate) throw new RechargeError(409, 'CODE_USED', '兑换码已被使用');
+  return {
+    kind: 'membership', sku, membershipName: product.name, orderId: order.orderId, points,
+    // 留作充值点的差额。
+    creditedPoints: points - quote.payablePoints, debtOffsetPoints: 0
+  };
+}
+
 export function registerRechargeRoutes(app: FastifyInstance, deps: RechargeRouteDependencies): void {
   const products = RECHARGE_PRODUCTS.map(product => ({ ...product, amountFen: product.points * FEN_PER_POINT }));
 
@@ -205,18 +228,24 @@ export function registerRechargeRoutes(app: FastifyInstance, deps: RechargeRoute
     const hash = redeemCodeHash(code);
     return deps.transaction(async db => {
       const found = await db.query<{ points: number; expires_at: Date | null; redeemed_by: string | null;
-        revoked_at: Date | null }>(
-        `SELECT points, expires_at, redeemed_by, revoked_at FROM redeem_codes WHERE code_hash = $1 FOR UPDATE`, [hash]);
+        revoked_at: Date | null; membership_sku: MembershipSku | null }>(
+        `SELECT points, expires_at, redeemed_by, revoked_at, membership_sku FROM redeem_codes
+         WHERE code_hash = $1 FOR UPDATE`, [hash]);
       if (!found.rowCount) throw new RechargeError(404, 'INVALID_CODE', '兑换码不存在');
       const row = found.rows[0]!;
       if (row.revoked_at || (row.expires_at && row.expires_at.getTime() < Date.now())) {
         throw new RechargeError(410, 'CODE_EXPIRED', '兑换码已失效');
       }
       if (row.redeemed_by) throw new RechargeError(409, 'CODE_USED', '兑换码已被使用');
+      if (row.membership_sku) {
+        const result = await redeemMembershipCode(db, userId, hash, row.membership_sku, row.points);
+        await db.query(`UPDATE redeem_codes SET redeemed_by = $2, redeemed_at = now() WHERE code_hash = $1`, [hash, userId]);
+        return { ...result, account: await deps.account(db, userId) };
+      }
       const credit = await creditPaidPoints(db, userId, row.points, 'REDEEM_CODE', hash.slice(0, 16), `redeem:${hash}`);
       await db.query(`UPDATE redeem_codes SET redeemed_by = $2, redeemed_at = now() WHERE code_hash = $1`, [hash, userId]);
       return {
-        points: row.points, creditedPoints: credit.creditedPoints, debtOffsetPoints: credit.debtOffsetPoints,
+        kind: 'points', points: row.points, creditedPoints: credit.creditedPoints, debtOffsetPoints: credit.debtOffsetPoints,
         account: await deps.account(db, userId)
       };
     });

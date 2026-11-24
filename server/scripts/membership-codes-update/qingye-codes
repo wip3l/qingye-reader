@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# 兑换码管理：在服务的运行目录里、带服务的环境文件执行 redeem-codes.mjs。用法见 qingye-codes 不带参数时的提示，
+# 或运行目录里 redeem-codes.mjs 开头的说明。明文写在 /root/qingye-codes/，需要 root。
+set -euo pipefail
+if [ "$(id -u)" -ne 0 ]; then echo 'qingye-codes 需要 root' >&2; exit 1; fi
+exec systemd-run --quiet --wait --pipe --collect -p EnvironmentFile=/etc/legado-account.env \
+  -p WorkingDirectory=/www/wwwroot/qingye.icynol.com \
+  /www/server/nodejs/v22.23.1/bin/node /www/wwwroot/qingye.icynol.com/redeem-codes.mjs "$@"
