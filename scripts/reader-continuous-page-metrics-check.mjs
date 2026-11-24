@@ -42,6 +42,8 @@ vm.runInContext(stripTypeScriptTypes(
     'model/reader/ReaderRegexFontRule.ets', 'model/reader/ReaderTitleStyle.ets']
     .map(file => readEtsModule(file).replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '')).join('\n') + '\n' +
   readEtsModule('core/reader/ReaderPageOffsets.ts').replace(/^export /gm, '') + '\n' +
+  // 双页判定与横屏翻页动画共用 ReaderPageTurnAnimation.wideViewport。
+  readEtsModule('core/reader/ReaderPageTurnAnimation.ts').replace(/^export /gm, '') + '\n' +
   readEtsModule('core/reader/ReaderInfoBarModel.ts').replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '') +
   `\nclass Reader { ${names.map(method).join('\n')} }\n` +
   'globalThis.Reader = Reader; globalThis.Text = ReaderInfoBarText; globalThis.Item = ReaderInfoItem;'), sandbox);
