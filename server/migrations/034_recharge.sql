@@ -1,6 +1,8 @@
 -- 安卓端点数充值：支付宝手机网站支付订单与兑换码（见 docs/android-recharge.md）。
 -- 鸿蒙端仍只走华为应用内支付（iap_orders），两条渠道入账都记到 point_wallets.paid_balance。
 
+BEGIN;
+
 CREATE TABLE IF NOT EXISTS recharge_orders (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
@@ -42,3 +44,19 @@ CREATE TABLE IF NOT EXISTS redeem_codes (
 );
 
 CREATE INDEX IF NOT EXISTS redeem_codes_batch_idx ON redeem_codes(batch);
+
+-- 迁移以 postgres 执行，新表归 postgres 所有；服务账号（现有表的属主）要能读写。
+-- redeem_codes 的 INSERT 给 scripts/redeem-codes.mjs（用服务的 DATABASE_URL 写库）。
+DO $$
+DECLARE application_role NAME;
+BEGIN
+  SELECT tableowner INTO application_role FROM pg_tables
+    WHERE schemaname='public' AND tablename='point_wallets';
+  IF application_role IS NOT NULL AND application_role <> current_user THEN
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE ON TABLE recharge_orders TO %I', application_role);
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE ON TABLE redeem_codes TO %I', application_role);
+  END IF;
+END
+$$;
+
+COMMIT;
