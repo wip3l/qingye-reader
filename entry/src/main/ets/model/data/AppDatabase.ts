@@ -1,5 +1,6 @@
 import { ReaderCacheCoordinator } from '../../core/book/ReaderCacheCoordinator';
 import { ReaderImageReferences } from '../../core/book/ReaderImageReferences';
+import { ChapterWordCounts } from '../../core/book/ChapterWordCounts';
 import { CachedChapterAssignment, CachedChapterRealign, CachedChapterRow, ChapterBookmarkSlot } from '../../core/book/CachedChapterRealign';
 import relationalStore from '@ohos.data.relationalStore';
 import fs from '@ohos.file.fs';
@@ -168,7 +169,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   cacheDatabaseName(): string { return this.openedDatabaseName; }
   cacheDatabaseDirectory(): string { return this.databaseDirectory; }
   private readonly DATABASE_NAME = 'legado.db';
-  private readonly SCHEMA_VERSION = 28;
+  private readonly SCHEMA_VERSION = 29;
 
   private constructor() {}
 
@@ -350,6 +351,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
         pinned INTEGER DEFAULT 1,
         contentBytes INTEGER DEFAULT -1,
         accessDate INTEGER DEFAULT 0,
+        contentChars INTEGER DEFAULT -1,
         PRIMARY KEY (bookUrl, chapterIndex)
       )
     `);
@@ -670,6 +672,8 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       { table: 'book_contents', column: 'accessDate', definition: 'accessDate INTEGER DEFAULT 0' },
       { table: 'book_contents', column: 'cacheRevision', definition: 'cacheRevision INTEGER DEFAULT 0' },
       { table: 'book_contents', column: 'imagesIndexed', definition: 'imagesIndexed INTEGER DEFAULT 0' },
+      // 目录显示的章节字数；-1 表示还没算，后台补算。
+      { table: 'book_contents', column: 'contentChars', definition: 'contentChars INTEGER DEFAULT -1' },
       { table: 'book_annotations', column: 'excerpt', definition: 'excerpt INTEGER DEFAULT 0' },
       { table: 'book_groups', column: 'pinned', definition: 'pinned INTEGER DEFAULT 0' }
     ];
@@ -2747,7 +2751,8 @@ export class AppDatabase implements BookSourceRuntimePersistence {
         chapterUrl: chapter.url,
         chapterName: chapter.title,
         content: contents[i] || ' ',
-        cacheDate: cacheDate
+        cacheDate: cacheDate,
+        contentChars: ChapterWordCounts.count(contents[i] || '')
       });
       chapter.cacheDate = cacheDate;
     }
@@ -3045,21 +3050,25 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       const transaction = await this.store.createTransaction();
       try {
         const now = Date.now();
+        const chars = ChapterWordCounts.count(content);
         // Preserve pinning atomically; a concurrent reader must never downgrade an offline chapter.
         await transaction.execute('INSERT INTO book_contents ' +
-          '(bookUrl,chapterIndex,chapterUrl,chapterName,content,cacheDate,pinned,contentBytes,accessDate,cacheRevision,imagesIndexed) ' +
-          'VALUES (?,?,?,?,?,?,?,?,?,1,1) ON CONFLICT(bookUrl,chapterIndex) DO UPDATE SET ' +
+          '(bookUrl,chapterIndex,chapterUrl,chapterName,content,cacheDate,pinned,contentBytes,accessDate,cacheRevision,' +
+          'imagesIndexed,contentChars) ' +
+          'VALUES (?,?,?,?,?,?,?,?,?,1,1,?) ON CONFLICT(bookUrl,chapterIndex) DO UPDATE SET ' +
           'chapterUrl=excluded.chapterUrl,chapterName=excluded.chapterName,content=excluded.content,' +
           'cacheDate=excluded.cacheDate,pinned=MAX(book_contents.pinned,excluded.pinned),contentBytes=excluded.contentBytes,' +
-          'accessDate=excluded.accessDate,cacheRevision=book_contents.cacheRevision+1,imagesIndexed=1',
+          'accessDate=excluded.accessDate,cacheRevision=book_contents.cacheRevision+1,imagesIndexed=1,' +
+          'contentChars=excluded.contentChars',
           [bookUrl, chapter.index, chapter.url, chapter.title, content, now, pinned ? 1 : 0,
-            AppDatabase.utf8ByteLength(content), now]);
+            AppDatabase.utf8ByteLength(content), now, chars]);
         await transaction.execute('DELETE FROM reader_image_refs WHERE bookUrl=? AND chapterIndex=?', [bookUrl, chapter.index]);
         for (const path of ReaderImageReferences.paths(content)) {
           await transaction.execute('INSERT OR IGNORE INTO reader_image_refs VALUES (?,?,?)', [bookUrl, chapter.index, path]);
         }
         await transaction.commit();
         chapter.cacheDate = now;
+        ChapterWordCounts.remember(bookUrl, chapter.index, chars);
       } catch (e) { await transaction.rollback(); throw e; }
     });
   }
@@ -3114,7 +3123,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
    * 一并读出来；整表扫或按书扫时，页缓存一冷就是整段读盘，主线程卡满 6 秒被判 THREAD_BLOCK。
    * - 两个部分索引：补算检查只看待补的行，补完即为空；
    * - budget 覆盖索引：缓存统计、列出缓存、离线书只读索引；
-   * - book 覆盖索引：按书取各章缓存时间（每次读目录都要）、按章判断是否手动缓存，不碰正文。
+   * - book 覆盖索引：按书取各章缓存时间与字数（每次读目录都要）、按章判断是否手动缓存，不碰正文。
    * 首次在大表上建索引要扫全表，不放进 init 的等待链：打开数据库后在 RDB 线程上后台建，用到的查询先等它建完。
    */
   ensureContentIndexes(): Promise<void> {
@@ -3130,8 +3139,12 @@ export class AppDatabase implements BookSourceRuntimePersistence {
           'ON book_contents(bookUrl) WHERE imagesIndexed = 0');
         await store.executeSql('CREATE INDEX IF NOT EXISTS idx_book_contents_budget ' +
           'ON book_contents(pinned, bookUrl, contentBytes, accessDate, cacheDate, chapterIndex, cacheRevision)');
-        await store.executeSql('CREATE INDEX IF NOT EXISTS idx_book_contents_book ' +
-          'ON book_contents(bookUrl, chapterIndex, pinned, cacheDate)');
+        // 读目录时连字数一起取，字数列也要在覆盖索引里；旧的 idx_book_contents_book 少这一列，换掉。
+        await store.executeSql('CREATE INDEX IF NOT EXISTS idx_book_contents_book_chars ' +
+          'ON book_contents(bookUrl, chapterIndex, pinned, cacheDate, contentChars)');
+        await store.executeSql('DROP INDEX IF EXISTS idx_book_contents_book');
+        await store.executeSql('CREATE INDEX IF NOT EXISTS idx_book_contents_uncounted ' +
+          'ON book_contents(contentChars) WHERE contentChars < 0');
       })().catch((e: Error): void => {
         // 建不成就下次再试；查询照常进行，只是慢。
         if (this.contentIndexStore === store) this.contentIndexStore = null;
@@ -3158,6 +3171,34 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       `WHERE rowid IN (SELECT rowid FROM book_contents WHERE contentBytes < 0 AND ${AppDatabase.ONLINE_CONTENT_WHERE} ` +
       'LIMIT ?)', [batchSize]);
     return pending;
+  }
+
+  /**
+   * 升级前写入的正文没有字数，分批补算（本地导入书也算，目录同样显示）；返回本批补了多少行，0 表示已补完。
+   * 正文要读出来数，每批少取几行；cacheRevision 对不上说明这期间重写过，新写入自己带了字数，不覆盖。
+   */
+  async backfillChapterWordCounts(batchSize: number = 40): Promise<number> {
+    return await ReaderCacheCoordinator.run(async (): Promise<number> => {
+      if (!this.store) return 0;
+      const rs = await this.store.querySql('SELECT rowid AS rid, cacheRevision, content FROM book_contents ' +
+        'WHERE contentChars < 0 LIMIT ?', [batchSize]);
+      const rows: number[][] = [];
+      try {
+        while (rs.goToNextRow()) {
+          rows.push([rs.getLong(0), rs.getLong(1), ChapterWordCounts.count(rs.getString(2))]);
+        }
+      } finally { rs.close(); }
+      if (rows.length === 0) return 0;
+      const transaction = await this.store.createTransaction();
+      try {
+        for (const row of rows) {
+          await transaction.execute('UPDATE book_contents SET contentChars=? WHERE rowid=? AND cacheRevision=? AND contentChars<0',
+            [row[2], row[0], row[1]]);
+        }
+        await transaction.commit();
+      } catch (e) { await transaction.rollback(); throw e as Error; }
+      return rows.length;
+    });
   }
 
   /** 在线正文缓存的总字节数（不含本地导入书）。 */
@@ -3270,7 +3311,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       'ON c.bookUrl=r.bookUrl AND c.chapterIndex=r.chapterIndex';
     if (offlineOnly) {
       // 写成行值 IN 子查询：按 JOIN 写时规划器走主键索引回表取 pinned，要读正文溢出页；
-      // 子查询只扫 idx_book_contents_book 覆盖索引，不碰正文。
+      // 子查询只扫 idx_book_contents_book_chars 覆盖索引，不碰正文。
       await this.ensureContentIndexes();
       sql = 'SELECT DISTINCT r.path FROM reader_image_refs r WHERE (r.bookUrl, r.chapterIndex) IN ' +
         '(SELECT c.bookUrl, c.chapterIndex FROM book_contents c WHERE c.pinned=1 OR c.bookUrl LIKE \'local://%\' OR ' +
@@ -3606,19 +3647,25 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     await this.ensureContentIndexes();
     const predicates = new relationalStore.RdbPredicates('book_contents');
     predicates.equalTo('bookUrl', bookUrl);
-    const resultSet = await this.store.querySql('SELECT c.chapterIndex,c.cacheDate FROM book_contents c WHERE c.bookUrl=? ' +
+    // 字数顺带取回，记进 ChapterWordCounts 给目录显示；两列都在 idx_book_contents_book_chars 覆盖索引里，不读正文。
+    const resultSet = await this.store.querySql('SELECT c.chapterIndex,c.cacheDate,c.contentChars FROM book_contents c ' +
+      'WHERE c.bookUrl=? ' +
       'AND NOT EXISTS (SELECT 1 FROM reader_image_refs r JOIN reader_image_resources i ON i.path=r.path ' +
       'WHERE r.bookUrl=c.bookUrl AND r.chapterIndex=c.chapterIndex AND i.state=\'missing\')', [bookUrl]);
+    const counts: Map<number, number> = new Map();
     try {
+      const indexColumn = resultSet.getColumnIndex('chapterIndex');
+      const dateColumn = resultSet.getColumnIndex('cacheDate');
+      const charsColumn = resultSet.getColumnIndex('contentChars');
       while (resultSet.goToNextRow()) {
-        cacheDates.set(
-          resultSet.getLong(resultSet.getColumnIndex('chapterIndex')),
-          resultSet.getLong(resultSet.getColumnIndex('cacheDate'))
-        );
+        const index = resultSet.getLong(indexColumn);
+        cacheDates.set(index, resultSet.getLong(dateColumn));
+        if (charsColumn >= 0) counts.set(index, resultSet.getLong(charsColumn));
       }
     } finally {
       resultSet.close();
     }
+    ChapterWordCounts.replaceBook(bookUrl, counts);
     return cacheDates;
   }
 

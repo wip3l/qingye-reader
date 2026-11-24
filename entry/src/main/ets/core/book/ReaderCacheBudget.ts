@@ -73,6 +73,13 @@ export class ReaderCacheBudget {
       ReaderCacheBudget.startupTimer = -1;
       ReaderCacheBudget.scheduleText(0);
       ReaderCacheBudget.scheduleComic(0);
+      ReaderCacheBudget.enqueue(async (): Promise<void> => {
+        await appDb.ensureContentIndexes();
+        // 升级前缓存的正文补算目录字数。本地导入书的整本正文也在里面，行数可能上万，每批之间歇 50ms 让出主线程。
+        while (await appDb.backfillChapterWordCounts() > 0) {
+          await new Promise<void>((resolve: () => void): void => { setTimeout(resolve, 50); });
+        }
+      });
     }, delayMs);
   }
 

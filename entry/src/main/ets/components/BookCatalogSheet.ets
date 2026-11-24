@@ -1,4 +1,5 @@
 import { Book, BookChapter, BookTypeSupport } from '@legado/sourceengine';
+import { ChapterWordCounts } from '../core/book/ChapterWordCounts';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { WebBookService } from '../core/book/WebBookService';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
@@ -379,7 +380,7 @@ export struct BookCatalogSheet {
                 .width(18)
                 .textAlign(TextAlign.Center)
 
-              // 书源目录给了章节更新时间、字数时显示在章节名下方。
+              // 章节名下方：书源目录给的更新时间、字数；书源没给字数时显示缓存正文的字数。
               Column({ space: 2 }) {
                 Text(chapter.title || `第${chapter.index + 1}${this.unitText()}`)
                   .fontSize(AppFontSize.BODY_LARGE)
@@ -387,8 +388,8 @@ export struct BookCatalogSheet {
                   .fontColor(chapter.index === this.currentIndex ? this.accentColor() : this.primaryTextColor())
                   .maxLines(2)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
-                if (BookChapter.metaTextOf(chapter)) {
-                  Text(BookChapter.metaTextOf(chapter))
+                if (ChapterWordCounts.metaText(chapter, this.book.bookUrl)) {
+                  Text(ChapterWordCounts.metaText(chapter, this.book.bookUrl))
                     .fontSize(AppFontSize.MICRO)
                     .fontColor(this.subTextColor())
                     .maxLines(1)
