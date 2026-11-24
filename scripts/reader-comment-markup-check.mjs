@@ -133,6 +133,18 @@ assert.deepEqual(Array.from(chapterAction.hots, hot => [hot.user, hot.text, hot.
   [['凌啸绝顶21', '正如周海说的，石膏里藏的东西才是关键…', '']], 'nickname and comment are kept apart');
 assert.equal(chapterAction.preview, '正如周海说的，石膏里藏的东西才是关键…');
 
+// A 本章说 card listing several comments, each as nickname, like pill, wrapped lines. 起点's default
+// nickname “书友” + 15 digits runs past the short-nickname limit and must still be read as the nickname.
+const listedCard = `<img src="data:image/svg+xml;base64,${svg('本章说', '2333 条评论 〉', '书友161015153026477', '180',
+  '短小无力短小无力短小无力短小无力短小', '无力短小无力…', '19720111冬', '37', '历史的发展，就像春夏秋冬的轮回，这东',
+  '西不会因为某个人')}" onClick="java.startBrowser('${page}0')"/>`;
+const listedAction = actions(convert(listedCard))[0];
+assert.equal(listedAction.count, '2333条评论');
+assert.deepEqual(Array.from(listedAction.hots, hot => [hot.user, hot.text]), [
+  ['书友161015153026477', '短小无力短小无力短小无力短小无力短小无力短小无力…'],
+  ['19720111冬', '历史的发展，就像春夏秋冬的轮回，这东西不会因为某个人']
+], 'a long default nickname is kept apart from its comment');
+
 // <note> inline cards; a server that wraps each line in rs-native can split a multi-line text attribute
 // across two divs. The whole tag becomes one action and nothing of it leaks into the paragraph text.
 const noted = [

@@ -1988,9 +1988,12 @@ export class WebBookService {
       parts.push(text);
       numbers.push(/^(?:\d+(?:\.\d+)?[kKwW万千]?\+?|99\+)$/.test(text));
     }
-    const nickname = (text: string): boolean => text.length <= 16 && !/[，。！？：；,.!?:;…]$/.test(text);
+    const nickname = (text: string, limit: number = 16): boolean => text.length <= limit &&
+      !/[，。！？：；,.!?:;…]$/.test(text);
+    // A line followed by a bare number is already a strong sign of a nickname, so allow longer names there:
+    // 起点's default “书友” + 15 digits is 17 characters and used to merge into the comment.
     const headsAt = (i: number): boolean => !numbers[i] && i + 1 < parts.length && numbers[i + 1] &&
-      nickname(parts[i]);
+      nickname(parts[i], 24);
     let listed = false;
     for (let i = 0; i < parts.length; i++) {
       if (headsAt(i)) {
