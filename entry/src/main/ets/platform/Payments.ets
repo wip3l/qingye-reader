@@ -5,8 +5,14 @@ export interface ExternalRechargeResult {
   /** PENDING（还没付款或通知未到）/ PAID / CLOSED / REFUNDED */
   status: string;
   points: number;
+  /** 到账的充值点；会员兑换码时是实付之外留作充值点的差额。 */
   creditedPoints: number;
   debtOffsetPoints: number;
+  /** 兑换码种类：'points' 点数码 / 'membership' 会员码；充值订单为空。 */
+  kind: string;
+  /** 会员码开通的档位（MONTHLY…）和名称；其余为空。 */
+  sku: string;
+  membershipName: string;
 }
 
 /** 本平台是否提供应用外充值（支付宝 + 兑换码）。 */

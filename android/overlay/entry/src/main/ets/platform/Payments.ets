@@ -9,8 +9,14 @@ const SYSTEM_BRIDGE_NAME = 'io.legado.read/system';
 export interface ExternalRechargeResult {
   status: string;
   points: number;
+  /** 到账的充值点；会员兑换码时是实付之外留作充值点的差额。 */
   creditedPoints: number;
   debtOffsetPoints: number;
+  /** 兑换码种类：'points' 点数码 / 'membership' 会员码；充值订单为空。 */
+  kind: string;
+  /** 会员码开通的档位（MONTHLY…）和名称；其余为空。 */
+  sku: string;
+  membershipName: string;
 }
 
 interface OrderResponse {
@@ -35,7 +41,10 @@ function toResult(value: string): ExternalRechargeResult {
     status: String(raw['status'] || 'PAID'),
     points: Number(raw['points']) || 0,
     creditedPoints: Number(raw['creditedPoints']) || 0,
-    debtOffsetPoints: Number(raw['debtOffsetPoints']) || 0
+    debtOffsetPoints: Number(raw['debtOffsetPoints']) || 0,
+    kind: String(raw['kind'] || ''),
+    sku: String(raw['sku'] || ''),
+    membershipName: String(raw['membershipName'] || '')
   };
 }
 

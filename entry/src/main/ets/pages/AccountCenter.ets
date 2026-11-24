@@ -859,7 +859,7 @@ struct AccountCenterPage {
     }
   }
 
-  /** 安卓：兑换码充值。 */
+  /** 安卓：兑换码。点数码到账充值点；会员码直接开通会员（差额留作充值点）。 */
   async redeemCode(): Promise<void> {
     if (this.redeeming) return;
     if (!this.accountLoggedIn) {
@@ -874,9 +874,20 @@ struct AccountCenterPage {
     this.redeeming = true;
     try {
       const result = await redeemRechargeCode(code, AccountSessionStore.token());
-      await HuaweiAccountService.refresh(this.context);
       this.redeemCodeInput = '';
-      HdsFeedback.showToast(this.creditedMessage(result));
+      if (result.kind === 'membership') {
+        this.showRechargeSheet = false;
+        HdsFeedback.showToast(this.membershipRedeemedMessage(result));
+        // 与应用内开通一样：订单列表作废，升级为终身超级会员后立即开始云端同步。
+        this.orders = [];
+        this.ordersExpanded = false;
+        CloudAutoSync.schedule(this.context, 0);
+      } else {
+        HdsFeedback.showToast(this.creditedMessage(result));
+      }
+      await HuaweiAccountService.refresh(this.context);
+      this.membership = AccountSessionStore.account().membership || new MembershipSnapshot();
+      this.ensureSelectableSku();
     } catch (e) {
       HdsFeedback.showToast(this.errorMessage(e, '兑换失败'));
     } finally {
@@ -887,6 +898,11 @@ struct AccountCenterPage {
   creditedMessage(result: ExternalRechargeResult): string {
     const debtMessage = result.debtOffsetPoints > 0 ? `，其中 ${result.debtOffsetPoints} 点用于抵扣退款欠款` : '';
     return `充值成功，已到账 ${result.creditedPoints} 点${debtMessage}`;
+  }
+
+  membershipRedeemedMessage(result: ExternalRechargeResult): string {
+    const rest = result.creditedPoints > 0 ? `，另有 ${result.creditedPoints} 点（升级抵扣或优惠）存入充值点` : '';
+    return `已开通${result.membershipName || '会员'}${rest}`;
   }
 
   async recoverUnfinishedPurchases(): Promise<void> {
@@ -1077,12 +1093,14 @@ struct AccountCenterPage {
       const purchaseUserId = AccountSessionStore.account().userId;
       const quote = await AccountCommerceApi.quoteMembership(product.sku, AccountSessionStore.token());
       if (quote.payablePoints > this.paidPoints) {
-        // 充值入口收进了点数行的面板，点数不够时在这里直接引导过去。
+        // 充值入口收进了点数行的面板，点数不够时在这里直接引导过去。安卓的面板里还有兑换码：会员码可直接开通。
+        const codeHint = EXTERNAL_RECHARGE_AVAILABLE ? `\n有${product.name}兑换码的话，在面板里输入即可直接开通，不用充值。` : '';
         const recharge = await promptAction.showDialog({
           title: '充值点不足',
           message: `本次需扣除 ${quote.payablePoints} 充值点，当前 ${this.paidPoints} 点，还差 ` +
-            `${quote.payablePoints - this.paidPoints} 点。赠送点不可抵扣。`,
-          buttons: [{ text: '取消', color: this.subTextColor() }, { text: '去充值', color: this.accentColor() }]
+            `${quote.payablePoints - this.paidPoints} 点。赠送点不可抵扣。${codeHint}`,
+          buttons: [{ text: '取消', color: this.subTextColor() },
+            { text: EXTERNAL_RECHARGE_AVAILABLE ? '充值或兑换' : '去充值', color: this.accentColor() }]
         });
         if (recharge.index === 1) this.openRecharge();
         return;
@@ -2036,6 +2054,20 @@ struct AccountCenterPage {
         .onClick(() => {
           if (this.purchaseEnabled()) this.buyMembership();
         })
+      if (EXTERNAL_RECHARGE_AVAILABLE) {
+        // 安卓：会员兑换码不经过充值点，直接开通。
+        Text('有会员兑换码？点此兑换')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.accentColor())
+          .padding({ top: AppSpacing.XS })
+          .onClick(() => {
+            if (!this.accountLoggedIn) {
+              this.openPasswordLogin();
+              return;
+            }
+            this.openRecharge();
+          })
+      }
     }
     .width('100%')
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG,
@@ -2439,7 +2471,7 @@ struct AccountCenterPage {
           })
       }
       .width('100%')
-      Text('付款用支付宝；点数仅用于本应用数字内容，不支持转让或提现')
+      Text('会员兑换码直接开通会员，点数兑换码到账充值点；点数仅用于本应用数字内容，不支持转让或提现')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
         .width('100%')

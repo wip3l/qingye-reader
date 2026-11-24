@@ -8,6 +8,7 @@ import { AlipayClient, AlipayFetch, extractResponseNode, loadPrivateKey, loadPub
   signContent, yuanToFen } from './alipay.js';
 import { PointCreditError, PointDb } from './pointCredit.js';
 import { outTradeNo, redeemCodeHash, registerRechargeRoutes } from './rechargeRoutes.js';
+import { MembershipError } from './membershipPolicy.js';
 
 // 测试用密钥：appKey 代表商户应用私钥，alipayKey 代表“支付宝”的签名私钥。
 function keyPair() {
@@ -48,7 +49,9 @@ async function setup(t: test.TestContext, fetcher?: AlipayFetch) {
   const app = Fastify();
   t.after(() => app.close());
   app.setErrorHandler((error, _req, reply) => {
-    if (error instanceof PointCreditError) return reply.code(error.statusCode).send({ code: error.code });
+    if (error instanceof PointCreditError || error instanceof MembershipError) {
+      return reply.code(error.statusCode).send({ code: error.code });
+    }
     return reply.code(500).send({ code: 'UNEXPECTED', message: String(error) });
   });
   registerRechargeRoutes(app, {
@@ -194,6 +197,67 @@ test('redeem codes credit paid points once and respect expiry and revocation', a
   assert.equal((await redeem('ABCDEFGHJKLMNPQR')).statusCode, 409);
   assert.equal((await redeem('ABCDEFGHJKLMNPQR', await user())).statusCode, 409);
   assert.deepEqual(await wallet(id), { balance: 300, paid: 300, debt: 0 });
+});
+
+test('membership codes open the membership directly; upgrades keep the difference as paid points', async t => {
+  const { app, db, user, wallet, auth } = await setup(t);
+  const id = await user();
+  const code = async (sku: string, points: number) => {
+    const plain = randomUUID().replaceAll('-', '').slice(0, 16).toUpperCase();
+    await db.query(`INSERT INTO redeem_codes(code_hash,batch,points,membership_sku) VALUES ($1,'m',$2,$3)`,
+      [redeemCodeHash(plain), points, sku]);
+    return plain;
+  };
+  const redeem = (plain: string, who = id) => app.inject({ method: 'POST', url: '/v1/recharge/redeem', headers: auth(who),
+    payload: { code: plain } });
+  const membershipOf = async (who: string) => (await db.query<{ sku: string; expires_at: Date | null }>(
+    `SELECT p.sku, p.expires_at FROM membership_accounts a JOIN membership_periods p ON p.id = a.period_id
+     WHERE a.user_id = $1`, [who])).rows[0];
+  const used = async (plain: string) => (await db.query<{ redeemed_by: string | null }>(
+    'SELECT redeemed_by FROM redeem_codes WHERE code_hash=$1', [redeemCodeHash(plain)])).rows[0]!.redeemed_by;
+
+  // No points needed: the code pays for exactly the annual price (or less under a promotion).
+  const annual = await code('ANNUAL', 480);
+  const first = await redeem(annual);
+  assert.equal(first.statusCode, 200, first.body);
+  assert.equal(first.json().kind, 'membership');
+  assert.equal(first.json().sku, 'ANNUAL');
+  assert.equal((await membershipOf(id))!.sku, 'ANNUAL');
+  assert.deepEqual(await wallet(id), { balance: first.json().creditedPoints, paid: first.json().creditedPoints, debt: 0 });
+  const ledger = (await db.query<{ reason: string; delta: number }>(
+    `SELECT reason, delta::integer AS delta FROM point_ledger WHERE user_id=$1 ORDER BY delta DESC`, [id])).rows;
+  assert.deepEqual(ledger.map(r => r.reason), ['REDEEM_CODE', 'MEMBERSHIP_PURCHASE']);
+  assert.equal(ledger[0]!.delta + ledger[1]!.delta, first.json().creditedPoints);
+  assert.equal((await redeem(annual)).json().code, 'CODE_USED');
+
+  // Upgrading to lifetime credits the unused annual term; the difference stays as paid points.
+  const before = (await wallet(id)).paid;
+  const lifetime = await code('LIFETIME', 1290);
+  const upgrade = await redeem(lifetime);
+  assert.equal(upgrade.statusCode, 200, upgrade.body);
+  assert.equal((await membershipOf(id))!.sku, 'LIFETIME');
+  assert.equal((await membershipOf(id))!.expires_at, null);
+  assert.ok(upgrade.json().creditedPoints > 0, 'unused annual term comes back as paid points');
+  assert.equal((await wallet(id)).paid, before + upgrade.json().creditedPoints);
+
+  // A lifetime owner cannot redeem a lower code: refused, and the code stays usable by someone else.
+  const monthly = await code('MONTHLY', 60);
+  const owned = await redeem(monthly);
+  assert.equal(owned.statusCode, 409);
+  assert.equal(owned.json().code, 'MEMBERSHIP_ALREADY_OWNED');
+  assert.equal(await used(monthly), null);
+  assert.equal((await wallet(id)).paid, before + upgrade.json().creditedPoints);
+  const other = await user();
+  assert.equal((await redeem(monthly, other)).statusCode, 200);
+  assert.equal((await membershipOf(other))!.sku, 'MONTHLY');
+
+  // Refund debt blocks a membership code without consuming it.
+  const debtor = await user(0, 50);
+  const blocked = await code('MONTHLY', 60);
+  assert.equal((await redeem(blocked, debtor)).json().code, 'ACCOUNT_PAYMENT_RESTRICTED');
+  assert.equal(await used(blocked), null);
+  assert.deepEqual(await wallet(debtor), { balance: 0, paid: 0, debt: 50 });
+  assert.equal(await membershipOf(debtor), undefined);
 });
 
 test('without Alipay configuration orders are refused but redeem codes still work', async t => {
