@@ -691,7 +691,61 @@ export class ReaderV2Paginator {
     if (block.title) return paragraphGap + session.titleMarginTopPx;
     const previous = session.blockIndex > 0 ? session.document.blocks[session.blockIndex - 1] : null;
     if (snapshot.titleSinglePage && previous && previous.title) return 0;
-    return paragraphGap + (hasContent && previous && previous.title ? session.titleMarginBottomPx : 0);
+    if (hasContent && previous && previous.title) return paragraphGap + session.titleMarginBottomPx;
+    // 正文接正文：段间距 0 时两段之间的行距和段内一样，设置值加在这个行距上面。
+    const textAfterText = hasContent && !previousWasImage && !!previous && !previous.image;
+    return paragraphGap + (textAfterText ? ReaderV2Paginator.paragraphJoinPx(snapshot) : 0);
+  }
+
+  private static readonly paragraphJoinCache: Map<string, number> = new Map();
+
+  /**
+   * 正文两段相接时要补上（多为负数，即收回）的距离，使前段末行与后段首行的基线距离等于段内相邻两行。
+   * 每段单独排版：首行上方、末行下方各带一份字体内边距（includeFontPadding），末行下方算不算行距也由排版
+   * 引擎决定，所以拿一段三行的正文样本量出“段内行距”与“直接相接”的差。只收回空白，字不会比段内更挤。
+   */
+  private static paragraphJoinPx(snapshot: ReaderV2LayoutSnapshot): number {
+    const cached = ReaderV2Paginator.paragraphJoinCache.get(snapshot.identity);
+    if (cached !== undefined) return cached;
+    let join = 0;
+    try {
+      const sample = new ReaderV2Block('', '国国国', 0, 3, 0, 3, false);
+      const style = ReaderV2Paginator.baseTextStyle(sample, snapshot);
+      const builder = new graphicsText.ParagraphBuilder({
+        textStyle: style,
+        align: graphicsText.TextAlign.START,
+        textDirection: graphicsText.TextDirection.LTR,
+        wordBreak: graphicsText.WordBreak.BREAK_WORD,
+        breakStrategy: graphicsText.BreakStrategy.GREEDY,
+        lineSpacing: snapshot.lineSpacingPx,
+        includeFontPadding: true
+      }, graphicsText.FontCollection.getGlobalInstance());
+      builder.pushStyle(style);
+      builder.addText(sample.text);
+      builder.popStyle();
+      const paragraph = builder.build();
+      // 一行只放得下一个字。
+      paragraph.layoutSync(snapshot.fontSizePx * 1.5 + Math.max(0, snapshot.letterSpacingPx));
+      if (paragraph.getLineCount() >= 3) {
+        const first = paragraph.getLineMetrics(0);
+        const middle = paragraph.getLineMetrics(1);
+        const last = paragraph.getLineMetrics(2);
+        if (first && middle && last) {
+          const pitch = last.baseline - middle.baseline;
+          const joined = (ReaderV2Paginator.lineBottom(last) - last.baseline) + (first.baseline - first.topHeight);
+          if (Number.isFinite(pitch) && Number.isFinite(joined) && pitch > 0) join = pitch - joined;
+        }
+      }
+    } catch (_) {
+      join = 0;
+    }
+    ReaderV2Paginator.paragraphJoinCache.set(snapshot.identity, join);
+    while (ReaderV2Paginator.paragraphJoinCache.size > 16) {
+      const oldest = ReaderV2Paginator.paragraphJoinCache.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      ReaderV2Paginator.paragraphJoinCache.delete(oldest);
+    }
+    return join;
   }
 
   /** Isolate the complete title group; its source ranges remain those of the original document. */
@@ -815,9 +869,9 @@ export class ReaderV2Paginator {
   }
 
   /**
-   * 页底对齐：一页排满后底部通常剩不到一行的空白，每页剩的还不一样。把这点空白均分到本页各块之间，
-   * 让末行落在版心底边。只调整块间距，不动行距和断行；每个间隙最多加半个字高，
-   * 块太少摊不完时保留剩余空白，避免段间距被拉得突兀。
+   * 页底对齐：一页排满后底部通常剩不到一行的空白，每页剩的还不一样。段内行距排好后改不了，只能加在块之间，
+   * 所以按“摊到本页每一处行间”的份额给每个块间隙加一点：段间距不会比行距明显大出来（段间距 0 时
+   * 段与段之间要和段内一样），摊不完的空白留在页底。不动行距和断行。
    */
   private static alignPageBottom(page: ReaderV2PageLayout, fragmentActionStarts: number[], leftoverPx: number,
     snapshot: ReaderV2LayoutSnapshot): void {
@@ -825,7 +879,12 @@ export class ReaderV2Paginator {
       index > 0 && !fragment.titleContinuation && !fragment.fixedGapBefore).length;
     // 剩余超过两行说明这一页是被整页插图或放不下的大块提前结束的，不属于要对齐的情况。
     if (gaps <= 0 || leftoverPx <= 0.5 || leftoverPx > (snapshot.fontSizePx + snapshot.lineSpacingPx) * 2) return;
-    const perGapPx = Math.min(leftoverPx / gaps, snapshot.fontSizePx * 0.5);
+    let lines = 0;
+    for (const fragment of page.fragments) {
+      lines += fragment.paragraph ? Math.max(1, fragment.paragraph.getLineCount()) : 1;
+    }
+    const perGapPx = Math.min(leftoverPx / Math.max(gaps, lines - 1), snapshot.fontSizePx * 0.5);
+    if (perGapPx <= 0.05) return;
     let shiftPx = 0;
     for (let index = 1; index < page.fragments.length; index++) {
       const fragment = page.fragments[index];
