@@ -581,8 +581,8 @@ export struct PdfReaderControls {
             } })
           if (this.pageTurnAnimationSplit) {
             ReaderSettingSelectRow({
-              title: this.pageTurnAnimationLandscapeNow ? '横屏翻页动画 · 当前' : '横屏翻页动画',
-              description: '阅读区宽大于高时使用',
+              title: this.pageTurnAnimationLandscapeNow ? '横屏/展开翻页动画 · 当前' : '横屏/展开翻页动画',
+              description: '横屏或折叠屏展开时使用',
               options: ReaderPageTurnAnimation.labels().map((label: string): SelectOption => ({ value: label })),
               selected: Math.max(0, ReaderPageTurnAnimation.types().indexOf(this.landscapePageTurnAnimation)),
               textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode),

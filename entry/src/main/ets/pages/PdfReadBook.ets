@@ -1663,8 +1663,7 @@ struct PdfReadBookPage {
         // unfolded foldable); very wide portrait windows keep the original 840vp allowance.
         const width = Number(after.width) || 0;
         const height = Number(after.height) || 0;
-        const wide = width >= 840 || (width > 0 && height > 0 &&
-          (width > height || (width >= 600 && width / height >= 0.8)));
+        const wide = width >= 840 || ReaderPageTurnAnimation.wideViewport(width, height);
         if (wide !== this.wideWindow) { this.wideWindow = wide; this.applyViewSettings(); }
       })
     }

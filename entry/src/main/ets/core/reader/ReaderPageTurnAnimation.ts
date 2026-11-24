@@ -44,10 +44,26 @@ export class ReaderPageTurnAnimation {
   }
 
   /**
-   * 横竖屏分开设置翻页动画时，阅读区宽大于高就用横屏那份（分屏、平板、折叠屏展开同样按宽高判断）。
+   * 双页并排的最小宽度（vp）与最小宽高比：书本式折叠屏展开时内屏略高于宽，只比宽高永远不会算宽；
+   * 平板竖放（约 0.6~0.7）和分屏的半边仍算窄。
+   */
+  static readonly WIDE_MIN_WIDTH_VP: number = 600;
+  static readonly WIDE_MIN_ASPECT: number = 0.8;
+
+  /**
+   * 阅读区是否够宽：宽大于高，或接近方形且至少 600vp 宽（折叠屏展开）。双页并排与横屏翻页动画共用此规则，
+   * 文件排版网页里的 EpubOriginalScript.SPREAD_MEDIA 是同一规则的媒体查询写法，改这里要一起改。
+   */
+  static wideViewport(width: number, height: number): boolean {
+    if (width <= 0 || height <= 0) return false;
+    return width > height || (width >= this.WIDE_MIN_WIDTH_VP && width / height >= this.WIDE_MIN_ASPECT);
+  }
+
+  /**
+   * 横竖屏分开设置翻页动画时，阅读区够宽（见 wideViewport，含折叠屏展开）就用横屏那份，与是否开双页无关。
    * 普通阅读页、文件排版和 PDF 共用这一判断；翻页方式不分横竖屏。
    */
   static usesLandscape(split: boolean, width: number, height: number): boolean {
-    return split && height > 0 && width > height;
+    return split && this.wideViewport(width, height);
   }
 }

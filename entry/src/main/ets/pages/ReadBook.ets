@@ -314,11 +314,6 @@ const READER_DOUBLE_PAGE_DIVIDER_WIDTH = 1;
 // 眼动翻页提示：无页脚时提示文字的字号、设置面板上沿小胶囊的高度。
 const READER_EYE_TURN_CUE_HINT_SIZE = 12;
 const READER_EYE_TURN_SETTINGS_PILL_HEIGHT = 26;
-// Unfolded book-style foldables are held slightly taller than wide, so "width > height" alone never
-// enables the spread there. Near-square viewports that are wide enough for two readable leaves also count;
-// tablet portrait (~0.6–0.7) and split-screen halves stay single.
-const READER_SPREAD_MIN_WIDTH_VP = 600;
-const READER_SPREAD_MIN_ASPECT = 0.8;
 // 推页接缝阴影的宽度（vp），以及被压住那页在完全盖住时浅纱的不透明度。
 const PUSH_PAGE_TURN_SHADOW_SIZE = 18;
 const PUSH_PAGE_TURN_SHADE_MAX_OPACITY = 0.45;
@@ -8221,11 +8216,7 @@ struct ReadBookPage {
   }
 
   readerViewportFitsSpread(): boolean {
-    const width = this.pageViewWidth;
-    const height = this.pageViewHeight;
-    if (width <= 0 || height <= 0) return false;
-    if (width > height) return true;
-    return width >= READER_SPREAD_MIN_WIDTH_VP && width / height >= READER_SPREAD_MIN_ASPECT;
+    return ReaderPageTurnAnimation.wideViewport(this.pageViewWidth, this.pageViewHeight);
   }
 
   /**
@@ -14355,7 +14346,7 @@ struct ReadBookPage {
         })
         if (this.readerPageTurnAnimationSplit) {
           ReaderSettingChipRow({
-            title: this.readerPageTurnAnimationUsesLandscape() ? '横屏翻页动画 · 当前' : '横屏翻页动画',
+            title: this.readerPageTurnAnimationUsesLandscape() ? '横屏/展开翻页动画 · 当前' : '横屏/展开翻页动画',
             labels: ReaderPageTurnAnimation.labels(this.readerPageTurnMode === 2),
             selected: this.pageTurnAnimationSelectedIndex(this.readerLandscapePageTurnAnimationType),
             dark: this.isReaderThemeDark(),

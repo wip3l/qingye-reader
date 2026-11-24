@@ -764,7 +764,7 @@ export struct EpubOriginalControls {
         })
         if (this.pageTurnAnimationSplit) {
           ReaderSettingChipRow({
-            title: this.pageTurnAnimationLandscapeNow ? '横屏翻页动画 · 当前' : '横屏翻页动画',
+            title: this.pageTurnAnimationLandscapeNow ? '横屏/展开翻页动画 · 当前' : '横屏/展开翻页动画',
             labels: ReaderPageTurnAnimation.labels(),
             selected: Math.max(0, ReaderPageTurnAnimation.types().indexOf(this.landscapePageTurnAnimation)),
             dark: this.darkMode,

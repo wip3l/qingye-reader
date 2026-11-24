@@ -98,7 +98,7 @@ class EpubOriginalScriptConfig {
 export class EpubOriginalScript {
   static readonly HOST_NAME: string = 'LegadoEpubHost';
   /**
-   * 何时并排两栏，与应用排版 ReadBook.readerViewportFitsSpread 同一规则：比高宽，或接近方形且至少 600 宽
+   * 何时并排两栏，与 ReaderPageTurnAnimation.wideViewport 同一规则：比高宽，或接近方形且至少 600 宽
    * （书本式折叠屏展开时略高于宽）。写成媒体查询，折叠/旋转时网页自己切换，不用重载章节。
    */
   static readonly SPREAD_MEDIA: string = '(min-aspect-ratio: 1001/1000), (min-width: 600px) and (min-aspect-ratio: 4/5)';

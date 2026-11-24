@@ -2067,10 +2067,8 @@ struct EpubOriginalReadBookPage {
 
   /** 网页此刻是否并排两栏：与 EpubOriginalScript.SPREAD_MEDIA 同一规则（翻页模式下网页铺满本页）。 */
   private spreadActive(): boolean {
-    const width = this.viewWidth;
-    const height = this.viewHeight;
-    if (!this.paged || !this.readerDoublePage || width <= 0 || height <= 0) return false;
-    return width > height || (width >= 600 && width / height >= 0.8);
+    if (!this.paged || !this.readerDoublePage) return false;
+    return ReaderPageTurnAnimation.wideViewport(this.viewWidth, this.viewHeight);
   }
 
   private webInsetTop(): number {

@@ -836,7 +836,7 @@ struct SettingsPage {
       }
       if (this.readerPageTurnMode === 2 || this.readerPageTurnMode === 0) {
         if (this.readerPageTurnAnimationSplit) {
-          this.selectItem('横屏翻页动画', '阅读区宽大于高时的切换效果；上一项用于竖屏',
+          this.selectItem('横屏/展开翻页动画', '横屏或折叠屏展开时的切换效果；上一项用于竖屏',
             this.pageTurnAnimationOptions(), this.pageTurnAnimationSelectedIndex(this.readerLandscapePageTurnAnimationType),
             (index: number) => {
               this.setReaderLandscapePageTurnAnimationType(index);
