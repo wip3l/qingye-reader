@@ -155,6 +155,8 @@ Object.assign(resized, { pageViewWidth: 80, pageViewHeight: 800, readerFooterEna
   normalizeReaderSpreadPageIndex: n => n, findPageIndexByOffset: () => 0,
   preloadNextChapterPaginationLater() {}, preloadPreviousChapterPaginationLater() {},
   buildReaderV2Snapshot() { return { identity: `width-${this.pageViewWidth}` }; },
+  // 漫画横竖屏分开设置：这里没开，生效方式不随宽度变。
+  readerComicEffectiveMode: () => 'webtoon', isReaderComicModeActive: () => false, scheduleReaderComicScrollRestore() {},
 });
 let reloads = 0;
 resized.readerComicPageDataSource.reset = () => { reloads++; };
