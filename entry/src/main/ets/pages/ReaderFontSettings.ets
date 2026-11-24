@@ -8,6 +8,7 @@ import {
   ReaderTitleStyleSettings
 } from '../model/reader/ReaderTitleStyle';
 import { ReaderChapterHead } from '../model/reader/ReaderChapterHead';
+import { DROP_CAP_STYLE_RAISE } from '../theme/share/ThemePackageFormat';
 import { ReaderFontWeightStepper } from '../components/reader/ReaderFontWeightStepper';
 import { ReaderWeightedText, ReaderWeightedTextSpan } from '../components/reader/ReaderWeightedText';
 import { ReaderTypographyPreview, ReaderTypographyPreviewConfig } from '../components/reader/ReaderTypographyPreview';
@@ -1243,7 +1244,7 @@ export struct ReaderFontSettingsEditor {
       if (this.dropCapLinesShown()) {
         Row({ space: AppSpacing.MD }) {
           Column({ space: AppSpacing.XXS }) {
-            Text(this.titleStyle.dropCap === ReaderDropCapMode.RAISE ? '首字高度' : '占几行')
+            Text(this.dropCapRaised() ? '首字高度' : '占几行')
               .fontSize(AppFontSize.BODY).fontColor(this.primaryTextColor())
             Text(this.dropCapLinesHint()).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
           }
@@ -1356,6 +1357,14 @@ export struct ReaderFontSettingsEditor {
     return !!tokens && tokens.dropCapLines >= 2;
   }
 
+  /** 实际生效的是放大样式（自选放大，或跟随主题且主题设的是放大）。 */
+  dropCapRaised(): boolean {
+    if (this.titleStyle.dropCap === ReaderDropCapMode.RAISE) return true;
+    if (this.titleStyle.dropCap !== ReaderDropCapMode.THEME) return false;
+    const tokens = ThemeRuntime.chapterHeadTokens(this.appDarkMode);
+    return !!tokens && tokens.dropCapStyle === DROP_CAP_STYLE_RAISE;
+  }
+
   dropCapLinesEditable(): boolean {
     return this.titleStyle.dropCap === ReaderDropCapMode.SINK || this.titleStyle.dropCap === ReaderDropCapMode.RAISE;
   }
@@ -1363,7 +1372,7 @@ export struct ReaderFontSettingsEditor {
   dropCapLinesValue(): number {
     if (this.dropCapLinesEditable()) return this.titleStyle.dropCapLines;
     const tokens = ThemeRuntime.chapterHeadTokens(this.appDarkMode);
-    return tokens && tokens.dropCapLines === 3 ? 3 : 2;
+    return ReaderDropCapMode.normalizeLines(tokens ? tokens.dropCapLines : 0);
   }
 
   dropCapLinesHint(): string {

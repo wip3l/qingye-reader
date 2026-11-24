@@ -1,4 +1,4 @@
-import { ThemePackageChapterHead } from '../../theme/share/ThemePackageFormat';
+import { DROP_CAP_STYLE_RAISE, ThemePackageChapterHead } from '../../theme/share/ThemePackageFormat';
 import { ReaderV2ChapterHeadStyle } from '../../core/reader/ReaderV2LayoutSnapshot';
 import { ReaderV2Color } from '../../core/reader/ReaderV2Style';
 import { ReaderRasterAssets } from '../../core/reader/ReaderRasterAssets';
@@ -28,7 +28,8 @@ export class ReaderChapterHead {
     if (mode === ReaderDropCapMode.OFF) return style;
     if (mode === ReaderDropCapMode.THEME) {
       if (!tokens || tokens.dropCapLines < 2) return style;
-      style.capLines = tokens.dropCapLines === 3 ? 3 : 2;
+      style.capLines = ReaderDropCapMode.normalizeLines(tokens.dropCapLines);
+      style.capRaise = tokens.dropCapStyle === DROP_CAP_STYLE_RAISE;
     } else {
       style.capLines = ReaderDropCapMode.normalizeLines(dropCapLines);
       style.capRaise = mode === ReaderDropCapMode.RAISE;
@@ -55,6 +56,7 @@ export class ReaderChapterHead {
   /** 设置页“首字装饰”的说明。 */
   static describeDropCap(tokens: ThemePackageChapterHead | null | undefined): string {
     if (!tokens || tokens.dropCapLines < 2) return '当前主题没有设首字';
-    return `当前主题：下沉 ${tokens.dropCapLines} 行${tokens.dropCapImage ? '，垫印章' : ''}`;
+    const style = tokens.dropCapStyle === DROP_CAP_STYLE_RAISE ? '放大' : '下沉';
+    return `当前主题：${style} ${tokens.dropCapLines} 行${tokens.dropCapImage ? '，垫印章' : ''}`;
   }
 }

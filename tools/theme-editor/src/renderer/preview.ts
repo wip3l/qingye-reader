@@ -459,6 +459,7 @@ function chapterTitle(e: Effective, fontPx: number, columnWidth: number): HTMLEl
 
 /**
  * 首字装饰：方框高 = (行数 − 1) × 行距 + 1.04 个字号（同应用 ReaderV2Paginator.resolveDropCap），浮在段落左上角；
+ * 放大样式方框一样大，但放进第一行、底边对齐文字，把第一行撑高（向上抬出），后面的行不绕排。
  * 垫印章图时字高按字占比，只放大时字撑满方框。没设首字时返回 null。
  */
 function dropCap(char: string, e: Effective, fontPx: number): HTMLElement | null {
@@ -467,7 +468,10 @@ function dropCap(char: string, e: Effective, fontPx: number): HTMLElement | null
   const box = (head.dropCapLines - 1) * fontPx * READER_LINE_HEIGHT + fontPx * 1.04;
   const url = assetUrl(head.dropCapImage);
   const size = url ? box * (head.dropCapRatio > 0 ? head.dropCapRatio : 0.62) : box / 1.04;
-  const style = `width:${box}px;height:${box}px;font-size:${size}px;margin-top:${fontPx * (READER_LINE_HEIGHT - 1.04) / 2}px;` +
+  const raised = head.dropCapStyle === 'raise';
+  const place = raised ? 'float:none;display:inline-flex;vertical-align:text-bottom;' :
+    `margin-top:${fontPx * (READER_LINE_HEIGHT - 1.04) / 2}px;`;
+  const style = `width:${box}px;height:${box}px;font-size:${size}px;${place}` +
     (head.dropCapColor ? `color:${cssColor(head.dropCapColor)};` : '') + (url ? `background-image:url("${url}")` : '');
   return h('span', { class: 'drop-cap', 'data-sec': 'chapterHead', style }, char);
 }

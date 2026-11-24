@@ -62,6 +62,7 @@ import {
   CHAPTER_HEAD_PLACEMENTS,
   chapterHeadIsEmpty,
   normalizeChapterHead,
+  DROP_CAP_STYLE_RAISE,
   normalizeDropCapRatio,
   normalizeOrnamentInset,
   normalizeOrnamentScale,
@@ -110,7 +111,9 @@ import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
 import { fileUri } from '../platform/FileUri';
 
-const DROP_CAP_LINE_NAMES: string[] = ['不处理', '占 2 行', '占 3 行'];
+const DROP_CAP_LINE_NAMES: string[] = ['不处理', '占 2 行', '占 3 行', '占 4 行'];
+/** 首字样式：下沉（前几行绕排）、放大（底边对齐第一行、向上抬出）。和 dropCapStyle 的空串、raise 一一对应。 */
+const DROP_CAP_STYLE_NAMES: string[] = ['下沉', '放大'];
 
 interface ThemeEditorSectionTitleOptions {
   title: string;
@@ -913,7 +916,9 @@ struct ThemeColorSettingsPage {
       const head = this.effectiveChapterHead();
       const parts: string[] = [];
       if (head.image) parts.push(CHAPTER_HEAD_PLACEMENT_NAMES[Math.max(0, CHAPTER_HEAD_PLACEMENTS.indexOf(head.placement || 'side'))]);
-      if (head.dropCapLines > 0) parts.push(head.dropCapImage ? '首字印章' : '首字放大');
+      if (head.dropCapLines > 0) {
+        parts.push(`首字${head.dropCapStyle === DROP_CAP_STYLE_RAISE ? '放大' : '下沉'}${head.dropCapImage ? '（印章）' : ''}`);
+      }
       if (parts.length > 0) return parts.join(' · ');
       return head.numberColor ? '序号行颜色' : '未设置';
     }
@@ -2665,7 +2670,7 @@ struct ThemeColorSettingsPage {
     if (this.ownChapterHeadNumberColor()) {
       this.resetRow('序号行改回和标题同色', () => this.setChapterHeadNumberColor(''))
     }
-    SettingRow({ title: '首字装饰', description: '每章首字放大、后文绕排；开头是引号、数字、字母时不处理' }) {
+    SettingRow({ title: '首字装饰', description: '每章首字放大；开头是引号、数字、字母时不处理' }) {
       Select(this.dropCapLineOptions())
         .id('theme_editor_drop_cap_lines')
         .width('44%')
@@ -2691,6 +2696,31 @@ struct ThemeColorSettingsPage {
         .onSelect((index: number) => this.setDropCapLines(index))
     }
     if (this.effectiveChapterHead().dropCapLines > 0) {
+      SettingRow({ title: '首字样式', description: '下沉：前几行绕开首字；放大：首字和第一行底边对齐、向上抬出，只占第一行' }) {
+        Select(DROP_CAP_STYLE_NAMES.map((name: string): SelectOption => ({ value: name })))
+          .id('theme_editor_drop_cap_style')
+          .width('44%')
+          .selected(this.dropCapStyleIndex())
+          .value(DROP_CAP_STYLE_NAMES[this.dropCapStyleIndex()])
+          .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+          .optionFont({ family: this.applicationFontFamily })
+          .selectedOptionFont({ family: this.applicationFontFamily })
+          .fontColor(this.subTextColor())
+          .backgroundColor(Color.Transparent)
+          .arrowPosition(ArrowPosition.END)
+          .padding({ left: 0, right: 0 })
+          .borderRadius(16)
+          .border({ width: 0 })
+          .optionBgColor(Color.Transparent)
+          .divider(null)
+          .optionFontColor(this.primaryTextColor())
+          .selectedOptionFontColor(ThemeRuntime.accentColor(this.appDarkMode))
+          .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+          .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+          .menuBackgroundBlurStyle(BlurStyle.NONE)
+          .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+          .onSelect((index: number) => this.setDropCapStyle(index))
+      }
       Row({ space: AppSpacing.XL }) {
         this.assetSlot({ label: '首字印章', image: this.dropCapSlotImage(),
           state: this.dropCapSlotState(),
@@ -6706,7 +6736,11 @@ struct ThemeColorSettingsPage {
 
   dropCapLineIndex(): number {
     const lines = this.effectiveChapterHead().dropCapLines;
-    return lines === 3 ? 2 : (lines === 2 ? 1 : 0);
+    return lines >= 2 && lines <= 4 ? lines - 1 : 0;
+  }
+
+  dropCapStyleIndex(): number {
+    return this.effectiveChapterHead().dropCapStyle === DROP_CAP_STYLE_RAISE ? 1 : 0;
   }
 
   dropCapRatioPercent(): number {
@@ -6732,28 +6766,36 @@ struct ThemeColorSettingsPage {
     return '深色模式没单独设首字时沿用浅色那套。浅色的印章在深色纸面上看不清时，单独上传一张';
   }
 
-  /** 首字的三项设置一起存；没改的项沿用当前生效的值。 */
-  async saveDropCap(lines: number, color: string, ratio: number): Promise<void> {
+  /** 首字的几项设置一起存；没改的项沿用当前生效的值。 */
+  async saveDropCap(lines: number, style: string, color: string, ratio: number): Promise<void> {
     if (!(await this.ensureAdvanced())) return;
     const dark = this.selectedMode === 'dark';
     const previous = this.ownThemeId();
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
       SchemeAssetService.setChapterHeadDropCap(getContext(this), this.schemeId, this.sourceThemeId('bubble'), dark,
-        lines, color, ratio), '', false, false, '');
+        lines, style, color, ratio), '', false, false, '');
     this.syncChapterHeadOverride(previous);
   }
 
   async setDropCapLines(index: number): Promise<void> {
-    if (index < 0 || index > 2 || index === this.dropCapLineIndex()) return;
+    if (index < 0 || index >= DROP_CAP_LINE_NAMES.length || index === this.dropCapLineIndex()) return;
     const head = this.effectiveChapterHead();
-    await this.saveDropCap(index === 0 ? 0 : index + 1, head.dropCapColor, head.dropCapRatio);
+    await this.saveDropCap(index === 0 ? 0 : index + 1, head.dropCapStyle, head.dropCapColor, head.dropCapRatio);
+  }
+
+  async setDropCapStyle(index: number): Promise<void> {
+    const head = this.effectiveChapterHead();
+    if (index < 0 || index >= DROP_CAP_STYLE_NAMES.length || index === this.dropCapStyleIndex() ||
+      head.dropCapLines === 0) return;
+    await this.saveDropCap(head.dropCapLines, index === 1 ? DROP_CAP_STYLE_RAISE : '', head.dropCapColor,
+      head.dropCapRatio);
   }
 
   async setDropCapColor(color: string): Promise<void> {
     const head = this.effectiveChapterHead();
     const normalized = color ? HexColor.normalizeAlpha(color, '') : '';
     if ((color && !normalized) || normalized === head.dropCapColor || head.dropCapLines === 0) return;
-    await this.saveDropCap(head.dropCapLines, normalized, head.dropCapRatio);
+    await this.saveDropCap(head.dropCapLines, head.dropCapStyle, normalized, head.dropCapRatio);
   }
 
   async setDropCapRatio(percent: number): Promise<void> {
@@ -6761,7 +6803,8 @@ struct ThemeColorSettingsPage {
     try {
       const head = this.effectiveChapterHead();
       if (head.dropCapLines === 0) return;
-      await this.saveDropCap(head.dropCapLines, head.dropCapColor, normalizeDropCapRatio(percent / 100));
+      await this.saveDropCap(head.dropCapLines, head.dropCapStyle, head.dropCapColor,
+        normalizeDropCapRatio(percent / 100));
     } finally {
       this.dropCapRatioDrag = -1;
     }

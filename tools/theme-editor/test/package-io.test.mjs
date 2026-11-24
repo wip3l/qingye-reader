@@ -613,6 +613,19 @@ test('chapter head exports only what is set and round-trips', async () => {
   assert.deepEqual(reopened.problems, []);
   assert.equal(reopened.project.parts.light.chapterHead.dropCapLines, '3');
   assert.equal(reopened.project.parts.light.chapterHead.dropCapImage, 'assets/seal.png');
+  // 首字样式：放大和 4 行原样往返；下沉（空串）不写；不处理时样式也不写。
+  project.parts.light.chapterHead = { dropCapLines: '4', dropCapStyle: 'raise' };
+  parts = JSON.parse(strFromU8((await io.exportFiles(project)).get('theme.json'))).parts;
+  assert.deepEqual(parts.light.chapterHead, { dropCapLines: 4, dropCapStyle: 'raise' });
+  const raisedReopened = await io.loadProject(io.readZip(await io.exportZip(project)));
+  assert.deepEqual([raisedReopened.project.parts.light.chapterHead.dropCapLines,
+    raisedReopened.project.parts.light.chapterHead.dropCapStyle], ['4', 'raise']);
+  project.parts.light.chapterHead = { dropCapLines: '2', dropCapStyle: '' };
+  parts = JSON.parse(strFromU8((await io.exportFiles(project)).get('theme.json'))).parts;
+  assert.deepEqual(parts.light.chapterHead, { dropCapLines: 2 });
+  project.parts.light.chapterHead = { dropCapLines: '', dropCapStyle: 'raise', dropCapColor: '#B5402F' };
+  parts = JSON.parse(strFromU8((await io.exportFiles(project)).get('theme.json'))).parts;
+  assert.equal(parts.light && parts.light.chapterHead, undefined);
 });
 
 test('an empty comment-bubble override from the app does not count as a scheme override', async () => {

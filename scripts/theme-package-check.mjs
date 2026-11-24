@@ -859,7 +859,7 @@ test('chapter head: decode, per-mode fallback, refs, encode, pack:self', () => {
   json.light.chapterHead = { image: 'assets/logo.svg', placement: 'top', scale: 1.5, numberColor: '#8d8478' };
   json.dark.chapterHead = { numberColor: '#99FFFFFF', placement: 'bottom' };
   const parts = byPath(decode(json));
-  const noCap = { dropCapLines: 0, dropCapImage: '', dropCapColor: '', dropCapRatio: 0.62 };
+  const noCap = { dropCapLines: 0, dropCapStyle: '', dropCapImage: '', dropCapColor: '', dropCapRatio: 0.62 };
   assert.deepEqual({ ...parts.light.chapterHead },
     { image: 'assets/logo.svg', placement: 'top', scale: 1.5, numberColor: '#8D8478', ...noCap });
   // 深色没写饰图：沿用浅色那张和它的位置、大小，颜色用自己的；自己写的位置没有图可跟，不生效。
@@ -887,7 +887,7 @@ test('chapter head: decode, per-mode fallback, refs, encode, pack:self', () => {
   assert.equal(format.chapterHeadFor(legacy, false), null);
   assert.throws(() => decode({ ...partsJson(), light: { chapterHead: { image: 'assets/missing.png' } } }), /chapterHead\.image/);
   assert.throws(() => decode({ ...partsJson(), light: { chapterHead: { numberColor: 'red' } } }), /chapterHead\.numberColor/);
-  // 首字装饰：行数 2 或 3，只写了印章图时按 2 行；字占比夹在 0.4–0.9；深色没设时沿用浅色整套，颜色可以另写。
+  // 首字装饰：行数 2–4，只写了印章图时按 2 行；字占比夹在 0.4–0.9；深色没设时沿用浅色整套，颜色可以另写。
   const capJson = partsJson();
   capJson.light.chapterHead = { dropCapLines: 3, dropCapImage: 'assets/logo.svg', dropCapColor: '#b5402f', dropCapRatio: 0.95 };
   capJson.dark.chapterHead = { dropCapColor: '#FFE0A0' };
@@ -908,6 +908,15 @@ test('chapter head: decode, per-mode fallback, refs, encode, pack:self', () => {
     { dropCapLines: 2 });
   assert.equal(decode({ ...partsJson(), light: { chapterHead: { dropCapLines: 7 } } }).light.chapterHead, null);
   assert.throws(() => decode({ ...partsJson(), light: { chapterHead: { dropCapLines: 2, dropCapColor: 'red' } } }), /chapterHead\.dropCapColor/);
+  // 首字样式：4 行、放大原样往返；不认得的样式按下沉（不写）；深色沿用浅色整套时样式也跟着。
+  const raiseJson = partsJson();
+  raiseJson.light.chapterHead = { dropCapLines: 4, dropCapStyle: 'raise' };
+  const raise = byPath(decode(raiseJson));
+  assert.deepEqual([raise.light.chapterHead.dropCapLines, raise.light.chapterHead.dropCapStyle], [4, 'raise']);
+  assert.equal(format.chapterHeadFor(raise, true).dropCapStyle, 'raise');
+  assert.deepEqual(format.encodeParts(raise).light.chapterHead, { dropCapLines: 4, dropCapStyle: 'raise' });
+  const oddStyle = byPath(decode({ ...partsJson(), light: { chapterHead: { dropCapLines: 2, dropCapStyle: 'swirl' } } }));
+  assert.deepEqual(format.encodeParts(oddStyle).light.chapterHead, { dropCapLines: 2 });
   // 方案覆盖里的 pack:self。
   const settings = { customLightEmphasis: { chapterHead: 'pack:self' }, customDarkEmphasis: { chapterHead: 'none' } };
   format.replaceSelfPackId(settings, 'pack:demo');

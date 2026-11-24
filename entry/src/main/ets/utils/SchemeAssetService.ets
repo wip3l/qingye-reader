@@ -42,6 +42,8 @@ import {
   chapterHeadFor,
   chapterHeadIsEmpty,
   normalizeChapterHead,
+  normalizeDropCapLines,
+  normalizeDropCapStyle,
   ThemePackageChapterHead
 } from '../theme/share/ThemePackageFormat';
 import { AppThemeSettings, AppThemeSettingsStore } from './AppThemeSettingsStore';
@@ -722,15 +724,17 @@ export class SchemeAssetService {
   }
 
   /**
-   * 首字装饰占几行（0 不处理）、颜色和字占比。这个模式原来沿用另一模式的首字时，先把那套（印章图、字占比、
-   * 颜色）记到这个模式，这样改动只影响这个模式；改成不处理时这个模式的印章图一并去掉。
+   * 首字装饰占几行（0 不处理）、样式（空串下沉，DROP_CAP_STYLE_RAISE 放大）、颜色和字占比。这个模式原来沿用
+   * 另一模式的首字时，先把那套（印章图、字占比、颜色）记到这个模式，这样改动只影响这个模式；改成不处理时这个模式
+   * 的印章图一并去掉。
    */
   static async setChapterHeadDropCap(context: Context, schemeId: string, baseTheme: string, dark: boolean,
-    lines: number, color: string, ratio: number): Promise<SchemeAssetResult> {
+    lines: number, style: string, color: string, ratio: number): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
       const head = SchemeAssetService.chapterHeadOf(record, dark);
       if (lines <= 0) {
         head.dropCapLines = 0;
+        head.dropCapStyle = '';
         head.dropCapImage = '';
         head.dropCapColor = '';
       } else {
@@ -738,7 +742,8 @@ export class SchemeAssetService {
           const other = SchemeAssetService.chapterHeadOf(record, !dark);
           if (other.dropCapLines > 0) head.dropCapImage = other.dropCapImage;
         }
-        head.dropCapLines = lines === 3 ? 3 : 2;
+        head.dropCapLines = normalizeDropCapLines(lines, true);
+        head.dropCapStyle = normalizeDropCapStyle(style);
         head.dropCapColor = color;
         head.dropCapRatio = ratio;
       }
@@ -755,6 +760,7 @@ export class SchemeAssetService {
         const other = SchemeAssetService.chapterHeadOf(record, !dark);
         head.dropCapLines = other.dropCapLines > 0 ? other.dropCapLines : 2;
         if (other.dropCapLines > 0) {
+          head.dropCapStyle = other.dropCapStyle;
           head.dropCapRatio = other.dropCapRatio;
           if (!head.dropCapColor) head.dropCapColor = other.dropCapColor;
         }
@@ -773,6 +779,7 @@ export class SchemeAssetService {
         // 沿用另一模式那套时，先把行数记到这个模式，不然去掉图之后又沿用回那张。
         const other = SchemeAssetService.chapterHeadOf(record, !dark);
         head.dropCapLines = other.dropCapLines;
+        head.dropCapStyle = other.dropCapStyle;
         head.dropCapColor = other.dropCapColor;
       }
       head.dropCapImage = '';

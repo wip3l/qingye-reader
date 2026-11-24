@@ -502,10 +502,15 @@ export class ThemePackageChapterHead {
   /** 分段标题第一段的颜色（可带透明度）；空串和标题同色。读者没开标题分段时不生效。 */
   numberColor: string = '';
   /**
-   * 首字装饰占几行：0 不处理，2 或 3。这个模式没设时沿用另一种模式的整套首字设置（行数、印章图、字占比，
+   * 首字装饰占几行：0 不处理，2–4。这个模式没设时沿用另一种模式的整套首字设置（样式、行数、印章图、字占比，
    * 颜色没另写时也跟着），见 chapterHeadFor。
    */
   dropCapLines: number = 0;
+  /**
+   * 首字样式：空串下沉（首字占 dropCapLines 行、后文绕排）；DROP_CAP_STYLE_RAISE 放大（首字一样高，但底边对齐
+   * 第一行、向上抬出，只有第一行绕排）。不认得的值按下沉；旧版本应用不认这个字段，也按下沉显示。
+   */
+  dropCapStyle: string = '';
   /** 首字底下的印章图（包里是素材引用，运行时是本机 URI）；空串只放大不垫图。 */
   dropCapImage: string = '';
   /** 首字颜色（可带透明度）；空串和正文同色。 */
@@ -515,6 +520,19 @@ export class ThemePackageChapterHead {
 }
 
 export const DROP_CAP_RATIO_DEFAULT: number = 0.62;
+export const DROP_CAP_STYLE_RAISE: string = 'raise';
+export const DROP_CAP_LINES_MAX: number = 4;
+
+/** 首字行数：2–4 原样；不认得的值在有印章图时按 2 行，否则不处理。桌面编辑器的工程里行数可能是字符串。 */
+export function normalizeDropCapLines(value: number | string | null | undefined, hasImage: boolean): number {
+  const lines = Number(value);
+  if (lines === 2 || lines === 3 || lines === DROP_CAP_LINES_MAX) return lines;
+  return hasImage ? 2 : 0;
+}
+
+export function normalizeDropCapStyle(value: string | null | undefined): string {
+  return value === DROP_CAP_STYLE_RAISE ? DROP_CAP_STYLE_RAISE : '';
+}
 export const DROP_CAP_RATIO_MIN: number = 0.4;
 export const DROP_CAP_RATIO_MAX: number = 0.9;
 
@@ -539,9 +557,8 @@ export function normalizeChapterHead(value: ThemePackageChapterHead | null | und
     value.numberColor.toUpperCase() : '';
   // 本机旧记录里没有首字这几项。只写了印章图没写行数时按 2 行。
   result.dropCapImage = typeof value.dropCapImage === 'string' ? value.dropCapImage : '';
-  // 桌面编辑器的工程里行数可能是字符串。
-  const capLines = Number(value.dropCapLines);
-  result.dropCapLines = capLines === 3 ? 3 : (capLines === 2 || result.dropCapImage ? 2 : 0);
+  result.dropCapLines = normalizeDropCapLines(value.dropCapLines, !!result.dropCapImage);
+  result.dropCapStyle = normalizeDropCapStyle(value.dropCapStyle);
   result.dropCapColor = typeof value.dropCapColor === 'string' && HEX_COLOR.test(value.dropCapColor) ?
     value.dropCapColor.toUpperCase() : '';
   result.dropCapRatio = normalizeDropCapRatio(value.dropCapRatio);
@@ -574,6 +591,7 @@ export function chapterHeadFor(parts: ThemePackageParts | null | undefined, dark
   const capSource = own.dropCapLines > 0 ? own : (other.dropCapLines > 0 ? other : null);
   if (capSource) {
     result.dropCapLines = capSource.dropCapLines;
+    result.dropCapStyle = capSource.dropCapStyle;
     result.dropCapImage = capSource.dropCapImage;
     result.dropCapRatio = capSource.dropCapRatio;
     result.dropCapColor = own.dropCapColor || capSource.dropCapColor;
@@ -1692,8 +1710,8 @@ function decodeVariantParts(record: Record<string, Object>, manifest: ThemePacka
     parsed.numberColor = colorField(head, 'numberColor', headLabel, true);
     parsed.dropCapImage = partAssetRef(head, 'dropCapImage', manifest,
       [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE], headLabel);
-    const capLines = numberField(head, 'dropCapLines');
-    parsed.dropCapLines = capLines === 3 ? 3 : (capLines === 2 || parsed.dropCapImage ? 2 : 0);
+    parsed.dropCapLines = normalizeDropCapLines(numberField(head, 'dropCapLines'), !!parsed.dropCapImage);
+    parsed.dropCapStyle = normalizeDropCapStyle(stringField(head, 'dropCapStyle').trim());
     parsed.dropCapColor = colorField(head, 'dropCapColor', headLabel, true);
     parsed.dropCapRatio = normalizeDropCapRatio(numberField(head, 'dropCapRatio'));
     result.chapterHead = chapterHeadIsEmpty(parsed) ? null : parsed;
@@ -2112,6 +2130,7 @@ function encodeVariantParts(variant: ThemePackageVariantParts): Record<string, O
     if (head.numberColor) headRecord['numberColor'] = head.numberColor;
     if (head.dropCapLines > 0) {
       headRecord['dropCapLines'] = head.dropCapLines;
+      if (head.dropCapStyle) headRecord['dropCapStyle'] = head.dropCapStyle;
       if (head.dropCapImage) {
         headRecord['dropCapImage'] = head.dropCapImage;
         if (head.dropCapRatio !== DROP_CAP_RATIO_DEFAULT) headRecord['dropCapRatio'] = head.dropCapRatio;

@@ -1,7 +1,7 @@
 import { LengthMetrics } from '@kit.ArkUI';
 import { text } from '@kit.ArkGraphics2D';
 import { image } from '@kit.ImageKit';
-import { ThemePackageChapterHead } from '../../theme/share/ThemePackageFormat';
+import { DROP_CAP_STYLE_RAISE, ThemePackageChapterHead } from '../../theme/share/ThemePackageFormat';
 import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
 import { ReaderRasterAssets } from '../../core/reader/ReaderRasterAssets';
 
@@ -11,6 +11,7 @@ import { ReaderRasterAssets } from '../../core/reader/ReaderRasterAssets';
  * - 饰图左侧时高 = 整组标题按每块一行估出的高度 × 倍数，宽最多占 30%；上方、下方时高 = 标题字号 × 0.9 × 倍数。
  * - 有序号行颜色时把标题画成分段的样子：序号一行用这个颜色、字号是标题名的 1/1.4（阅读页分段标题的默认比例）。
  * - 首字方框 = (行数 − 1) × 行距 + 首行文字高 − 0.1 字号，首段前几行让出方框宽 + 0.3 字号。
+ *   放大样式方框一样大，段落整体下移 (行数 − 1) 行，方框底边对齐第一行文字，只有第一行让出位置。
  */
 export class ThemeChapterHeadSampleMetrics {
   private static readonly LINE_BOX: number = 1.25;
@@ -230,6 +231,7 @@ export struct ThemeDropCapParagraph {
     Stack({ alignContent: Alignment.TopStart }) {
       Text(undefined, { controller: this.controller })
         .width('100%')
+        .margin({ top: this.applies() ? this.rise() : 0 })
         .onAppear(() => {
           this.appeared = true;
           this.apply();
@@ -272,7 +274,17 @@ export struct ThemeDropCapParagraph {
   }
 
   lines(): number {
-    return this.head.dropCapLines === 3 ? 3 : 2;
+    const lines = Math.round(this.head.dropCapLines);
+    return lines >= 2 && lines <= 4 ? lines : 2;
+  }
+
+  raised(): boolean {
+    return this.head.dropCapStyle === DROP_CAP_STYLE_RAISE;
+  }
+
+  /** 放大样式时段落整体下移的高度（方框抬出第一行的部分）。段落下移多少、方框就跟着低多少，boxTop 不用改。 */
+  rise(): number {
+    return this.raised() ? (this.lines() - 1) * this.lineHeight : 0;
   }
 
   measuredInkTop(): number {
@@ -352,7 +364,8 @@ export struct ThemeDropCapParagraph {
   leadingMargin(): LengthMetrics | LeadingMarginPlaceholder {
     const pixelMap = placeholderPixelMap();
     if (!pixelMap) return LengthMetrics.vp(this.reserve());
-    const span = (this.lines() - 1) * this.lineHeight + this.lineHeight * 0.5;
+    const wrapLines = this.raised() ? 1 : this.lines();
+    const span = (wrapLines - 1) * this.lineHeight + this.lineHeight * 0.5;
     return { pixelMap: pixelMap, size: [`${this.reserve()}vp`, `${span}vp`] };
   }
 

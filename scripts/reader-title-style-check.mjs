@@ -442,6 +442,39 @@ try {
   assert.equal(capPages.pages[1].fragments[0].dropCapBoxPx > 0, true);
   assert.equal(capPages.pages[1].decorations.length, 1);
   console.log('PASS: drop cap splits the first paragraph around the cap, keeps it together and skips unsuitable openings');
+
+  // 首字放大：方框和下沉一样高，但底边对齐第一行文字、向上抬出；只有第一行绕排，段前多留 (行数 − 1) 行。
+  const raiseSnapshot = (lines) => {
+    capInput.chapterHead = Object.assign(new HeadStyle(), { capLines: lines, capRaise: true });
+    const result = Snapshot.create(capInput);
+    capInput.chapterHead = new HeadStyle();
+    return result;
+  };
+  assert.notEqual(raiseSnapshot(2).identity, capSnapshot(2).identity, 'the style is part of the layout identity');
+  for (const lines of [2, 3, 4]) {
+    const raised = Paginator.layoutContinuous(capDocument(), raiseSnapshot(lines), []);
+    const [, raisedLead, raisedRest] = raised.fragments;
+    const rise = (lines - 1) * pitch, box = (lines - 1) * pitch + 20 * 1.2 - 20 * 0.05 * 2;
+    assert.equal(raisedLead.paragraph.getLineCount(), 1, 'only the first line wraps around a raised cap');
+    assert(Math.abs(raisedLead.paragraphY - capLayout.fragments[1].paragraphY - rise) < 0.01, 'room above for the raised part');
+    assert(Math.abs(raisedRest.paragraphY - (raisedLead.paragraphY + pitch)) < 0.01, 'the second line follows at the normal pitch');
+    assert.equal(raisedRest.paragraphX, plainLayout.fragments[1].paragraphX, 'from the second line on the full width is used');
+    const rect = raised.decorations[0].rect;
+    assert(Math.abs(rect.bottom - rect.top - box) < 0.01);
+    assert(Math.abs(rect.bottom - (raisedLead.paragraphY + 20 * 1.2 - 20 * 0.05)) < 0.01, 'the box ends with the text of the first line');
+    assert(rect.top >= capLayout.fragments[0].paragraphY + capLayout.fragments[0].paragraphHeight - 0.01, 'and stays below the title');
+    assert(raisedLead.dropCapSpanPx > 0 && raisedLead.dropCapSpanPx < pitch, 'the selection layer indents only the first line');
+  }
+  // 下沉 4 行：绕排 4 行。
+  assert.equal(Paginator.layoutContinuous(capDocument(), capSnapshot(4), []).fragments[1].paragraph.getLineCount(), 4);
+  // 首字放大落在页首（标题在上一页）时，抬出的部分也留在版心里。
+  capInput.viewportHeightPx = 22 * 1.2 + 30 + pitch + 8;
+  const raisedPages = Paginator.paginate(capDocument(), raiseSnapshot(3), []);
+  capInput.viewportHeightPx = 900;
+  const raisedPage = raisedPages.pages.find(page => page.decorations.length > 0);
+  assert(raisedPage && raisedPage.decorations[0].rect.top >= raisedPage.fragments[0].paragraphY - 2 * pitch - 0.01);
+  assert(raisedPage.decorations[0].rect.top >= 0, 'the raised cap is not drawn above the page');
+  console.log('PASS: raised drop cap sits on the first line, rises above it and wraps only that line');
   }
 
   for (const alignment of ['left','center','right']) {
