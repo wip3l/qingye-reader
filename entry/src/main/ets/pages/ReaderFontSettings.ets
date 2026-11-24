@@ -1,7 +1,12 @@
 import { router } from '@kit.ArkUI';
 import { text } from '@kit.ArkGraphics2D';
 import { ReaderTitleSplit } from '../core/reader/ReaderTitleSplit';
-import { ReaderChapterDecoration, ReaderTitleStyleCodec, ReaderTitleStyleSettings } from '../model/reader/ReaderTitleStyle';
+import {
+  ReaderChapterDecoration,
+  ReaderDropCapMode,
+  ReaderTitleStyleCodec,
+  ReaderTitleStyleSettings
+} from '../model/reader/ReaderTitleStyle';
 import { ReaderChapterHead } from '../model/reader/ReaderChapterHead';
 import { ReaderFontWeightStepper } from '../components/reader/ReaderFontWeightStepper';
 import { ReaderWeightedText, ReaderWeightedTextSpan } from '../components/reader/ReaderWeightedText';
@@ -1177,26 +1182,159 @@ export struct ReaderFontSettingsEditor {
     .alignItems(VerticalAlign.Center)
   }
 
-  /** 首字装饰开关。设置和标题样式存在一起（随主题排版走），入口放在正文这一组。 */
+  /**
+   * 首字装饰：四张样式卡（跟随主题 / 下沉 / 放大 / 关闭）加行数。设置和标题样式存在一起（随主题排版走），
+   * 入口放在正文这一组。跟随主题时行数显示主题的值、不能改；主题没设首字时不显示行数。
+   */
   @Builder
   bodyDropCapItem() {
-    Row({ space: AppSpacing.LG }) {
+    Column() {
       Column({ space: AppSpacing.XS }) {
         Text('首字装饰').fontSize(AppFontSize.BODY_LARGE).fontColor(this.primaryTextColor())
-        Text(`每章第一个字按主题放大，可垫印章。${
-          ReaderChapterHead.describeDropCap(ThemeRuntime.chapterHeadTokens(this.appDarkMode))}`)
+        Text(`${ReaderChapterHead.describeDropCap(ThemeRuntime.chapterHeadTokens(this.appDarkMode))
+          }；开头是引号、数字、字母时不处理`)
           .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
-      }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-      AdaptiveSwitch({ isOn: this.titleStyle.dropCap !== ReaderChapterDecoration.OFF,
-        onChange: (checked: boolean) => this.updateTitleSplit('dropCap',
-          checked ? ReaderChapterDecoration.THEME : ReaderChapterDecoration.OFF) })
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+      Row({ space: AppSpacing.SM }) {
+        this.dropCapTile(ReaderDropCapMode.THEME, '跟随主题')
+        this.dropCapTile(ReaderDropCapMode.SINK, '下沉')
+        this.dropCapTile(ReaderDropCapMode.RAISE, '放大')
+        this.dropCapTile(ReaderDropCapMode.OFF, '关闭')
+      }
+      .width('100%')
+      .margin({ top: AppSpacing.MD })
+      if (this.dropCapLinesShown()) {
+        Row({ space: AppSpacing.MD }) {
+          Column({ space: AppSpacing.XXS }) {
+            Text(this.titleStyle.dropCap === ReaderDropCapMode.RAISE ? '首字高度' : '占几行')
+              .fontSize(AppFontSize.BODY).fontColor(this.primaryTextColor())
+            Text(this.dropCapLinesHint()).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+          this.fontSizeStepButton($r('sys.symbol.minus'), '首字少占一行',
+            () => this.dropCapLinesEditable() && this.titleStyle.dropCapLines > ReaderDropCapMode.MIN_LINES, () => {
+              this.updateTitleSplit('dropCapLines', `${this.titleStyle.dropCapLines - 1}`);
+            })
+          Text(`${this.dropCapLinesValue()} 行`)
+            .fontSize(AppFontSize.BODY_LARGE)
+            .fontColor(this.dropCapLinesEditable() ? this.primaryTextColor() : this.subTextColor())
+            .width(52)
+            .textAlign(TextAlign.Center)
+          this.fontSizeStepButton($r('sys.symbol.plus'), '首字多占一行',
+            () => this.dropCapLinesEditable() && this.titleStyle.dropCapLines < ReaderDropCapMode.MAX_LINES, () => {
+              this.updateTitleSplit('dropCapLines', `${this.titleStyle.dropCapLines + 1}`);
+            })
+        }
+        .width('100%')
+        .margin({ top: AppSpacing.LG })
+        .alignItems(VerticalAlign.Center)
+      }
     }
     .width('calc(100% - 32vp)')
-    .constraintSize({ minHeight: 64 })
-    .padding({ left: 0, right: 0, top: AppSpacing.MD, bottom: AppSpacing.MD })
+    .padding({ left: 0, right: 0, top: AppSpacing.MD, bottom: AppSpacing.LG })
     .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
     .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
-    .alignItems(VerticalAlign.Center)
+  }
+
+  /** 一张首字样式卡：上面是这种样式的示意（几条正文线加一个首字方块），下面是名字。 */
+  @Builder
+  dropCapTile(mode: string, label: string) {
+    Column({ space: AppSpacing.XS }) {
+      Stack({ alignContent: Alignment.TopStart }) {
+        if (mode === ReaderDropCapMode.OFF) {
+          this.dropCapTileBar(12, 6)
+          this.dropCapTileBar(4, 16)
+          this.dropCapTileBar(4, 26)
+          this.dropCapTileBar(4, 36)
+        } else if (mode === ReaderDropCapMode.RAISE) {
+          this.dropCapTileCap(4, 0, 17)
+          this.dropCapTileBar(25, 14)
+          this.dropCapTileBar(4, 24)
+          this.dropCapTileBar(4, 33)
+        } else {
+          this.dropCapTileCap(4, 4, 15)
+          this.dropCapTileBar(23, 6)
+          this.dropCapTileBar(23, 16)
+          this.dropCapTileBar(4, 26)
+          this.dropCapTileBar(4, 36)
+          if (mode === ReaderDropCapMode.THEME) {
+            SymbolGlyph($r('sys.symbol.star_fill'))
+              .fontSize(9)
+              .fontColor([this.accentColor()])
+              .position({ right: 0, top: -4 })
+          }
+        }
+      }
+      .width('100%')
+      .height(40)
+      Text(label)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.titleStyle.dropCap === mode ? this.accentColor() : this.primaryTextColor())
+        .fontWeight(this.titleStyle.dropCap === mode ? FontWeight.Medium : FontWeight.Normal)
+        .maxLines(1)
+    }
+    .layoutWeight(1)
+    .padding({ left: 6, right: 6, top: 8, bottom: 6 })
+    .borderRadius(14)
+    .backgroundColor(this.titleStyle.dropCap === mode ? ThemeRuntime.accentSurfaceColor(this.appDarkMode) :
+      this.inputColor())
+    .border({ width: 1.5, color: this.titleStyle.dropCap === mode ? this.accentColor() : Color.Transparent })
+    .accessibilityText(`首字装饰：${label}`)
+    .accessibilitySelected(this.titleStyle.dropCap === mode)
+    .onClick(() => {
+      if (this.titleStyle.dropCap === mode) return;
+      this.updateTitleSplit('dropCap', mode);
+    })
+  }
+
+  @Builder
+  dropCapTileBar(x: number, y: number) {
+    Row()
+      .width(`calc(100% - ${x + 4}vp)`)
+      .height(3)
+      .borderRadius(1.5)
+      .backgroundColor(this.subTextColor())
+      .opacity(0.35)
+      .position({ x: x, y: y })
+  }
+
+  @Builder
+  dropCapTileCap(x: number, y: number, size: number) {
+    Row()
+      .width(size)
+      .height(size)
+      .borderRadius(4)
+      .backgroundColor(this.accentColor())
+      .opacity(0.55)
+      .position({ x: x, y: y })
+  }
+
+  /** 跟随主题且主题没设首字、或关闭时，不显示行数。 */
+  dropCapLinesShown(): boolean {
+    const mode = this.titleStyle.dropCap;
+    if (mode === ReaderDropCapMode.OFF) return false;
+    if (mode !== ReaderDropCapMode.THEME) return true;
+    const tokens = ThemeRuntime.chapterHeadTokens(this.appDarkMode);
+    return !!tokens && tokens.dropCapLines >= 2;
+  }
+
+  dropCapLinesEditable(): boolean {
+    return this.titleStyle.dropCap === ReaderDropCapMode.SINK || this.titleStyle.dropCap === ReaderDropCapMode.RAISE;
+  }
+
+  dropCapLinesValue(): number {
+    if (this.dropCapLinesEditable()) return this.titleStyle.dropCapLines;
+    const tokens = ThemeRuntime.chapterHeadTokens(this.appDarkMode);
+    return tokens && tokens.dropCapLines === 3 ? 3 : 2;
+  }
+
+  dropCapLinesHint(): string {
+    if (this.titleStyle.dropCap === ReaderDropCapMode.RAISE) return '按几行的高度放大，只占第一行';
+    if (this.titleStyle.dropCap === ReaderDropCapMode.SINK) return '首段前几行绕开首字';
+    return '跟随主题时由主题决定，选“下沉”或“放大”后可改';
   }
 
   @Builder
@@ -1913,7 +2051,8 @@ export struct ReaderFontSettingsEditor {
     else if (field === 'marginBottom') next.marginBottom = ReaderTitleSplit.normalizeMargin(Number(content));
     else if (field === 'singlePage') next.singlePage = content === 'true';
     else if (field === 'decoration') next.decoration = ReaderChapterDecoration.normalize(content);
-    else if (field === 'dropCap') next.dropCap = ReaderChapterDecoration.normalize(content);
+    else if (field === 'dropCap') next.dropCap = ReaderDropCapMode.normalize(content);
+    else if (field === 'dropCapLines') next.dropCapLines = ReaderDropCapMode.normalizeLines(Number(content));
     this.titleStyle = next;
     this.saveSettings();
   }
@@ -1966,7 +2105,7 @@ export struct ReaderFontSettingsEditor {
     input.titleMarginBottomPx = context.vp2px(this.titleStyle.marginBottom);
     input.titleSinglePage = withBody && this.titleStyle.singlePage;
     input.chapterHead = ReaderChapterHead.style(ThemeRuntime.chapterHeadTokens(this.appDarkMode), this.titleStyle.decoration,
-      this.titleStyle.dropCap);
+      this.titleStyle.dropCap, this.titleStyle.dropCapLines);
     input.lineSpacingPx = context.vp2px(layout.lineHeight);
     input.paragraphSpacingPx = context.vp2px(layout.paragraphSpacing);
     input.letterSpacingPx = context.fp2px(layout.letterSpacing);

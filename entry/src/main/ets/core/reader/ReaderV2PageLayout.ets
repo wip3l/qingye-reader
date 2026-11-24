@@ -79,7 +79,10 @@ export class ReaderV2PageFragment {
   fixedGapBefore: boolean = false;
   /** 标题片段左边让给章首饰图、或首段前几行让给首字的宽度；段落已排在 paragraphX（含这段宽度）之后。 */
   leadReservePx: number = 0;
-  /** 首段绕着首字排的那一截的第一行：首字方框的上边相对本片段顶边的偏移、方框边长；0 表示不是。 */
+  /**
+   * 首段绕着首字排的那一截的第一行：首字方框的上边相对本片段顶边的偏移（放大样式向上抬出时为负）、方框边长；
+   * 边长 0 表示不是。
+   */
   dropCapTopPx: number = 0;
   dropCapBoxPx: number = 0;
   /** 让出 leadReservePx 的行高范围（从片段顶边起），选字层按它缩进前几行。 */

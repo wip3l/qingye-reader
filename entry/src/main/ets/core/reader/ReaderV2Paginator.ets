@@ -55,7 +55,9 @@ class ReaderV2MeasuredBlock {
 
 /**
  * 首字装饰的排法：首字单独画在段落左上角的方框里（不属于任何片段），首段拆成两截——绕着方框排的前
- * lines 行（宽度让出 reservePx），和回到整行宽度的其余部分。两截都是同一块的切片，和跨页拆段是同一套机制。
+ * wrapLines 行（宽度让出 reservePx），和回到整行宽度的其余部分。两截都是同一块的切片，和跨页拆段是同一套机制。
+ * 下沉时方框占前 lines 行；放大时方框一样高，但底边对齐第一行文字、向上抬出，只有第一行绕排，
+ * 首段前面多留 risePx 给抬出的那部分。
  */
 class ReaderV2DropCapPlan {
   blockIndex: number = -1;
@@ -63,7 +65,12 @@ class ReaderV2DropCapPlan {
   /** 首字之后第一个字、两截的分界在块内的下标；splitAt 等于块长时没有第二截。 */
   bodyStart: number = 0;
   splitAt: number = 0;
+  /** 方框高几行。 */
   lines: number = 2;
+  /** 绕着方框排的行数：下沉等于 lines，放大为 1。 */
+  wrapLines: number = 2;
+  /** 放大时首段前多留的高度（方框抬出第一行的部分）；下沉为 0。 */
+  risePx: number = 0;
   /** 行与行的基线间距。 */
   pitchPx: number = 0;
   boxPx: number = 0;
@@ -524,7 +531,7 @@ export class ReaderV2Paginator {
         let spacing = startsNewBlock ? ReaderV2Paginator.blockSpacingBefore(session, hasContent, previousWasImage) : 0;
         if (dropRest && session.lineIndex === 0 && !Number.isNaN(dropLeadTop) && drop) {
           // Keep the paragraph's own line pitch across the two slices.
-          spacing = Math.max(0, dropLeadTop + drop.lines * drop.pitchPx - y);
+          spacing = Math.max(0, dropLeadTop + drop.wrapLines * drop.pitchPx - y);
         }
         const firstLine = current.line(session.lineIndex);
         const followsCard = previousWasCard && startsNewBlock && hasContent && !current.block.title;
@@ -549,8 +556,10 @@ export class ReaderV2Paginator {
         }
         // The drop cap and the lines wrapped around it stay together on one page.
         const dropLead = !!drop && session.dropPart === 0 && session.lineIndex === 0;
+        // 放大的首字抬出第一行的部分放在段前（页首也留，不让方框画出版心上沿）。
+        if (dropLead && drop) spacing += drop.risePx;
         const requiredHeight = dropLead && drop ? Math.max(firstLineHeight, drop.boxTopPx + drop.boxPx,
-          ReaderV2Paginator.lineBottom(current.line(Math.min(drop.lines, current.lineCount) - 1)) -
+          ReaderV2Paginator.lineBottom(current.line(Math.min(drop.wrapLines, current.lineCount) - 1)) -
           firstLine.topHeight) : firstLineHeight;
         if (hasContent && y + spacing + requiredHeight > columnBottom + 0.01) {
           // Paragraph spacing belongs to the next block. It is never consumed as invisible page-tail space.
@@ -592,7 +601,7 @@ export class ReaderV2Paginator {
         if (dropLead && drop) {
           fragment.dropCapTopPx = drop.boxTopPx;
           fragment.dropCapBoxPx = drop.boxPx;
-          fragment.dropCapSpanPx = (drop.lines - 1) * drop.pitchPx + firstLineHeight * 0.5;
+          fragment.dropCapSpanPx = (drop.wrapLines - 1) * drop.pitchPx + firstLineHeight * 0.5;
           dropLeadTop = y;
         } else if (dropRest && fragmentFirstLine === 0 && !Number.isNaN(dropLeadTop)) {
           fragment.blockContinuation = true;
@@ -990,7 +999,8 @@ export class ReaderV2Paginator {
     plan.blockIndex = session.blockIndex;
     plan.char = text[capStart];
     plan.bodyStart = bodyStart;
-    plan.lines = snapshot.chapterHead.capLines === 3 ? 3 : 2;
+    plan.lines = Math.max(2, Math.min(4, Math.round(snapshot.chapterHead.capLines)));
+    plan.wrapLines = snapshot.chapterHead.capRaise ? 1 : plan.lines;
     plan.pitchPx = full.lineCount > 1 ? full.line(1).topHeight - firstLine.topHeight :
       firstLine.height + snapshot.lineSpacingPx;
     const font = snapshot.fontSizePx;
@@ -1004,15 +1014,17 @@ export class ReaderV2Paginator {
     const inset = font * ReaderV2Paginator.DROP_CAP_INSET;
     if (inkHeight <= inset * 4) return null;
     plan.boxPx = (plan.lines - 1) * plan.pitchPx + inkHeight - inset * 2;
-    plan.boxTopPx = inkTop + inset;
+    // 放大：方框底边仍对齐第一行文字，多出的高度向上抬出。
+    plan.risePx = snapshot.chapterHead.capRaise ? (plan.lines - 1) * plan.pitchPx : 0;
+    plan.boxTopPx = inkTop + inset - plan.risePx;
     plan.reservePx = plan.boxPx + font * 0.3;
     // 版心太窄、方框占掉一半以上时不做。
     if (plan.pitchPx <= 0 || plan.reservePx > session.width * 0.5) return null;
     const narrow = ReaderV2Paginator.buildParagraph(session.document, block, snapshot, styles,
       session.width - plan.reservePx, bodyStart, text.length, false, session.paragraphCache);
     const narrowLines = narrow.getLineCount();
-    if (narrowLines > plan.lines) {
-      const boundary = narrow.getLineMetrics(plan.lines - 1);
+    if (narrowLines > plan.wrapLines) {
+      const boundary = narrow.getLineMetrics(plan.wrapLines - 1);
       plan.splitAt = boundary ? Math.min(text.length, bodyStart + boundary.endIndex) : text.length;
     } else {
       plan.splitAt = text.length;

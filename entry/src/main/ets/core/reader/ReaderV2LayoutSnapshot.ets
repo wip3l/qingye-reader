@@ -41,8 +41,10 @@ export class ReaderV2ChapterHeadStyle {
   scale: number = 1;
   /** 分段标题第一段的颜色（ARGB）；0 表示和标题同色。 */
   numberColor: number = 0;
-  /** 首字装饰占几行：0 不处理，2 或 3。 */
+  /** 首字装饰占几行：0 不处理，2–4。放大样式时是首字方框高几行。 */
   capLines: number = 0;
+  /** 放大样式：首字方框底边对齐第一行文字、向上抬出，只有第一行让出位置；false 为下沉（前 capLines 行绕排）。 */
+  capRaise: boolean = false;
   /** 首字底下的印章图文件；空串只放大。 */
   capImage: string = '';
   /** 首字颜色（ARGB）；0 表示和正文同色。 */
@@ -52,7 +54,7 @@ export class ReaderV2ChapterHeadStyle {
 
   identity(): string {
     return `${this.image}_${Math.round(this.aspect * 1000)}_${this.placement}_${this.scale}_${this.numberColor}_` +
-      `${this.capLines}_${this.capImage}_${this.capColor}_${this.capRatio}`;
+      `${this.capLines}_${this.capRaise ? 1 : 0}_${this.capImage}_${this.capColor}_${this.capRatio}`;
   }
 }
 
