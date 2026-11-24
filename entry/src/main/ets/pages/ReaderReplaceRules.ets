@@ -90,18 +90,10 @@ struct ReaderReplaceRulesPage {
   private ruleFirstVisibleIndex: number = 0;
   private ruleLastVisibleIndex: number = 0;
   private ruleSelectionSuppressClickUntil: number = 0;
-  /** 排序模式：只排用户自己的规则（内置规则是开关，不参与逐条替换），拖动松手即保存。 */
-  @State sortMode: boolean = false;
-  @State sortRules: ReaderReplaceRule[] = [];
-  @State sortUndoVisible: boolean = false;
-  @State sortUndoText: string = '';
-  private sortUndoStack: ReaderReplaceRule[][] = [];
-  private sortUndoTimer: number = -1;
-  private sortDragRuleId: number = 0;
-  private sortDragStartIndex: number = -1;
-  private sortDragSnapshot: ReaderReplaceRule[] = [];
-  private sortSaveChain: Promise<void> = Promise.resolve();
-  private sortListScroller: Scroller = new Scroller();
+  /** 正在拖动排序的规则与起点（用户规则里的下标），松手时据此判断要不要保存。 */
+  private ruleDragId: number = 0;
+  private ruleDragStartIndex: number = -1;
+  private ruleOrderSaveChain: Promise<void> = Promise.resolve();
   private moveToDialogSession: SystemDialogSession = new SystemDialogSession();
   @State @Watch('onSystemDialogFlagChanged') showMoveToDialog: boolean = false;
   @State moveToPosition: string = '';
@@ -122,17 +114,9 @@ struct ReaderReplaceRulesPage {
     this.persistRuleFormDraftNow();
   }
 
-  aboutToDisappear(): void {
-    this.clearSortUndoTimer();
-  }
-
   onBackPress(): boolean {
     if (this.showRuleMoreDialog) {
       this.showRuleMoreDialog = false;
-      return true;
-    }
-    if (this.sortMode) {
-      this.exitSortMode();
       return true;
     }
     if (this.selectionMode) {
@@ -334,8 +318,6 @@ struct ReaderReplaceRulesPage {
         .hitTestBehavior(CollapsingHeader.acceptsTouch((this.editing ? 0 : this.headerCollapse)) ? HitTestMode.Default : HitTestMode.None)
         if (this.editing) {
           this.editorView()
-        } else if (this.sortMode) {
-          this.sortView()
         } else {
           this.managerView()
         }
@@ -344,18 +326,7 @@ struct ReaderReplaceRulesPage {
       .height('100%')
       .backgroundColor(this.pageColor())
 
-      if (this.sortMode && this.sortUndoVisible) {
-        Row() {
-          this.sortUndoCapsule()
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.Center)
-        .margin({ bottom: this.navBarHeight + 22 })
-        .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ y: 16 }))
-          .animation({ duration: 220, curve: Curve.FastOutSlowIn }))
-      }
-
-      if (!this.editing && !this.selectionMode && !this.sortMode && !this.isImporting) {
+      if (!this.editing && !this.selectionMode && !this.isImporting) {
         Stack() {
           ImmersiveMaterialSurface({
             surfaceWidth: 52,
@@ -417,8 +388,6 @@ struct ReaderReplaceRulesPage {
         onBack: () => {
           if (this.editing) {
             this.closeEditor();
-          } else if (this.sortMode) {
-            this.exitSortMode();
           } else if (this.selectionMode) {
             this.exitRuleSelectionMode();
           } else {
@@ -427,26 +396,12 @@ struct ReaderReplaceRulesPage {
         }
       })
       Text(this.editing ? (this.draft.name ? '编辑替换规则' : '新增替换规则') :
-        (this.sortMode ? '调整顺序' : (this.previewMode ? '替换净化配置' : '替换净化')))
+        (this.previewMode ? '替换净化配置' : '替换净化'))
         .fontSize(AppFontSize.TITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
         .layoutWeight(1)
-      if (this.sortMode) {
-        ImmersiveHeaderAction({
-          label: '完成',
-          tint: this.accentColor(),
-          onTap: () => this.exitSortMode()
-        })
-      } else if (!this.editing) {
-        if (!this.selectionMode) {
-          ImmersiveHeaderAction({
-            icon: $r('sys.symbol.sort'),
-            accessibilityLabel: '调整规则顺序',
-            onTap: () => this.enterSortMode()
-          })
-            .margin({ right: AppSpacing.SM })
-        }
+      if (!this.editing) {
         ImmersiveHeaderAction({
           label: this.selectionMode ? '取消' : '选择',
           onTap: () => {
@@ -630,33 +585,20 @@ struct ReaderReplaceRulesPage {
         .justifyContent(FlexAlign.Center)
       } else {
         List({ space: AppSpacing.MD, scroller: this.ruleListScroller }) {
-          ForEach(this.filteredRules(), (rule: ReaderReplaceRule) => {
-            if (deviceInfo.sdkApiVersion >= 26) {
-              HdsListItem({
-                customItemBuilder: () => {
-                  this.ruleCard(rule)
-                },
-                swipeActionOptions: this.ruleSwipeActions(rule)
-              })
-              } else {
-                ListItem() {
-                  this.ruleCard(rule)
-                }
-                .swipeAction({
-                  end: {
-                    builder: () => {
-                      this.ruleFallbackSwipeActions(rule)
-                    },
-                    actionAreaDistance: 128,
-                    onAction: () => {
-                      if (!ReaderReplaceRuleStore.isBuiltin(rule)) this.confirmDelete(rule);
-                    }
-                  },
-                  edgeEffect: SwipeEdgeEffect.Spring
-                })
-            }
-          }, (rule: ReaderReplaceRule) =>
-            `${rule.id}_${rule.enabled ? '1' : '0'}_${this.selectionMode ? 'select' : 'normal'}`)
+          // 内置规则单独一组排在最前，不参与拖动。
+          ForEach(this.filteredBuiltinRules(), (rule: ReaderReplaceRule) => {
+            this.ruleListItem(rule)
+          }, (rule: ReaderReplaceRule) => this.ruleListItemKey(rule))
+
+          // 键里不能带位置：拖动只换顺序，键一变条目就重建、拖动会断。
+          ForEach(this.filteredUserRules(), (rule: ReaderReplaceRule) => {
+            this.ruleListItem(rule)
+          }, (rule: ReaderReplaceRule) => this.ruleListItemKey(rule))
+            .onMove(this.ruleDragEnabled() ?
+              (from: number, to: number) => this.moveRuleDuringDrag(from, to) : undefined, {
+              onDragStart: (index: number) => this.beginRuleDrag(index),
+              onDrop: (_index: number) => this.finishRuleDrag()
+            })
 
           // 底部避让 spacer 必须按 lanes 列数复制占满整行，否则多列时最后一行卡片没有底部避让。
           ForEach(this.ruleListSpacerKeys(), (_spacerKey: string) => {
@@ -705,218 +647,14 @@ struct ReaderReplaceRulesPage {
     .layoutWeight(1)
   }
 
-  // ---------- 排序模式 ----------
+  // ---------- 拖动排序 ----------
   // 规则从上到下逐条执行，上一条的输出交给下一条，所以列表顺序就是优先级。
+  // 和书源管理一样：卡片前方的把手长按拖动，卡片其余部分长按出菜单。内置规则只是开关、不参与逐条替换，
+  // 单独一组排在最前，不能拖。
 
-  @Builder
-  sortView() {
-    Column() {
-      Row({ space: AppSpacing.SM }) {
-        SymbolGlyph($r('sys.symbol.arrow_down'))
-          .fontSize(16)
-          .fontColor([this.accentColor()])
-        Text('从上到下依次执行，长按拖动调整顺序')
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.accentColor())
-          .layoutWeight(1)
-      }
-      .width('100%')
-      .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.SM, bottom: AppSpacing.SM })
-      .backgroundColor(this.accentSoftColor())
-      .borderRadius(ThemeRuntime.mediumRadius())
-      .margin({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.MD })
-
-      List({ space: AppSpacing.SM, scroller: this.sortListScroller }) {
-        if (this.builtinRules().length > 0) {
-          ListItem() {
-            this.sortSectionLabel('内置 · 只是开关，不分先后')
-          }
-          ForEach(this.builtinRules(), (rule: ReaderReplaceRule) => {
-            ListItem() {
-              this.sortBuiltinRow(rule)
-            }
-          }, (rule: ReaderReplaceRule) => `builtin_${rule.id}`)
-        }
-
-        ListItem() {
-          this.sortSectionLabel(this.sortRules.length > 0 ? '我的规则' : '还没有自己的规则')
-        }
-
-        ForEach(this.sortRules, (rule: ReaderReplaceRule) => {
-          ListItem() {
-            this.sortRuleRow(rule)
-          }
-        }, (rule: ReaderReplaceRule) => `sort_${rule.id}`)
-          // List 原地抬起条目、挤压让位并在边缘自动滚动；拖动中只改顺序，松手再保存。
-          .onMove((from: number, to: number) => this.moveSortRuleDuringDrag(from, to), {
-            onDragStart: (index: number) => this.beginSortDrag(index),
-            onDrop: (_index: number) => this.finishSortDrag()
-          })
-
-        ListItem() {
-          Column()
-            .height(this.ruleListBottomInset())
-            .hitTestBehavior(HitTestMode.None)
-        }
-      }
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
-      .layoutWeight(1)
-      .width('100%')
-      .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
-      .clip(true)
-    }
-    .width('100%')
-    .layoutWeight(1)
-  }
-
-  @Builder
-  sortSectionLabel(label: string) {
-    Text(label)
-      .fontSize(AppFontSize.CAPTION)
-      .fontColor(this.subTextColor())
-      .width('100%')
-      .padding({ left: AppSpacing.XS, top: AppSpacing.XS })
-  }
-
-  @Builder
-  sortChip(label: string) {
-    Text(label)
-      .fontSize(10)
-      .fontColor(this.secondaryTextColor())
-      .padding({ left: 5, right: 5, top: 1, bottom: 1 })
-      .backgroundColor(this.inputColor())
-      .borderRadius(5)
-      .flexShrink(0)
-  }
-
-  @Builder
-  sortBuiltinRow(rule: ReaderReplaceRule) {
-    Row({ space: AppSpacing.MD }) {
-      SymbolGlyph($r('sys.symbol.lock'))
-        .fontSize(16)
-        .fontColor([this.subTextColor()])
-        .width(24)
-      Column({ space: 2 }) {
-        Row({ space: 6 }) {
-          Text(rule.name || '内置规则')
-            .fontSize(AppFontSize.BODY)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.primaryTextColor())
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .flexShrink(1)
-          this.sortChip('内置')
-          if (!rule.enabled) {
-            this.sortChip('已禁用')
-          }
-        }
-        Text(ReaderReplaceRuleStore.builtinDescription(rule))
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.subTextColor())
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-    }
-    .width('100%')
-    .height(58)
-    .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .borderRadius(ThemeRuntime.mediumRadius())
-    .border({ width: 1, color: ThemeRuntime.glassBorderColor(this.appDarkMode), style: BorderStyle.Dashed })
-    .accessibilityGroup(true)
-    .accessibilityText(`内置规则 ${rule.name}，固定在最前，不参与排序`)
-  }
-
-  @Builder
-  sortRuleRow(rule: ReaderReplaceRule) {
-    Row({ space: AppSpacing.MD }) {
-      // 序号读 sortRules 而不是 ForEach 的 index：拖动只换位置、条目不重建，index 会停在旧值。
-      Text(`${this.sortNumber(rule.id)}`)
-        .fontSize(AppFontSize.CAPTION)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(this.accentColor())
-        .width(24)
-        .height(24)
-        .textAlign(TextAlign.Center)
-        .borderRadius(12)
-        .backgroundColor(this.accentSoftColor())
-      Column({ space: 2 }) {
-        Row({ space: 6 }) {
-          Text(rule.name || '未命名规则')
-            .fontSize(AppFontSize.BODY)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.primaryTextColor())
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .flexShrink(1)
-          this.sortChip(this.sortTargetLabel(rule))
-          if (!rule.enabled) {
-            this.sortChip('已禁用')
-          }
-        }
-        Text(rule.pattern || '未填写匹配规则')
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.subTextColor())
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-      .opacity(rule.enabled ? 1 : 0.55)
-      SymbolGlyph($r('sys.symbol.line_3_horizontal'))
-        .fontSize(20)
-        .fontColor([this.subTextColor()])
-    }
-    .width('100%')
-    .height(58)
-    .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .backgroundColor(this.cardColor())
-    .borderRadius(ThemeRuntime.mediumRadius())
-    .border({ width: ThemeRuntime.glassBorderWidth(), color: ThemeRuntime.glassBorderColor(this.appDarkMode) })
-    .accessibilityGroup(true)
-    .accessibilityText(`第 ${this.sortNumber(rule.id)} 条，${rule.name || '未命名规则'}，长按拖动调整顺序`)
-  }
-
-  @Builder
-  sortUndoCapsule() {
-    ImmersiveMaterialSurface({
-      surfaceWidth: this.sortUndoCapsuleWidth(),
-      surfaceHeight: 44,
-      darkMode: this.appDarkMode,
-      fallbackColor: this.cardColor(),
-      glowColor: `#40${this.accentColor().substring(1)}`
-    }) {
-      Row({ space: AppSpacing.MD }) {
-        Text(this.sortUndoText)
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.primaryTextColor())
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-        Text('撤销')
-          .fontSize(AppFontSize.CAPTION)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(this.accentColor())
-          .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: 5, bottom: 5 })
-          .backgroundColor(this.accentSoftColor())
-          .borderRadius(14)
-          .accessibilityText('撤销上一次调整')
-          .onClick(() => this.undoSortStep())
-      }
-      .width('100%')
-      .height('100%')
-      .padding({ left: AppSpacing.XL, right: 8 })
-    }
-  }
-
-  sortUndoCapsuleWidth(): number {
-    return Math.max(240, Math.min(340, this.contextViewportWidth - 48));
-  }
-
-  accentSoftColor(): string {
-    return `#1F${this.accentColor().substring(1)}`;
+  /** 搜索或多选时看到的不是完整顺序，拖了也对不上真实位置，这时不给拖、也不显示把手。 */
+  ruleDragEnabled(): boolean {
+    return !this.selectionMode && !this.isBatchOperating && !(this.query || '').trim();
   }
 
   builtinRules(): ReaderReplaceRule[] {
@@ -927,107 +665,109 @@ struct ReaderReplaceRulesPage {
     return this.rules.filter((rule: ReaderReplaceRule) => !ReaderReplaceRuleStore.isBuiltin(rule));
   }
 
-  sortNumber(ruleId: number): number {
-    return this.sortRules.findIndex((rule: ReaderReplaceRule) => rule.id === ruleId) + 1;
+  filteredBuiltinRules(): ReaderReplaceRule[] {
+    return this.filteredRules().filter((rule: ReaderReplaceRule) => ReaderReplaceRuleStore.isBuiltin(rule));
   }
 
-  sortTargetLabel(rule: ReaderReplaceRule): string {
-    if (rule.applyToTitle && rule.applyToContent) return '标题·正文';
-    if (rule.applyToTitle) return '标题';
-    return rule.applyToContent ? '正文' : '未选范围';
+  filteredUserRules(): ReaderReplaceRule[] {
+    return this.filteredRules().filter((rule: ReaderReplaceRule) => !ReaderReplaceRuleStore.isBuiltin(rule));
   }
 
-  enterSortMode(): void {
-    if (this.isBatchOperating || this.editing) return;
-    this.closeRuleActions();
-    this.showAddRuleDialog = false;
-    if (this.selectionMode) this.exitRuleSelectionMode();
-    this.sortRules = this.userRules();
-    this.sortUndoStack = [];
-    this.sortUndoVisible = false;
-    this.headerCollapse = 0;
-    this.sortMode = true;
-  }
-
-  exitSortMode(): void {
-    this.clearSortUndoTimer();
-    this.sortUndoVisible = false;
-    this.sortUndoStack = [];
-    this.sortDragRuleId = 0;
-    this.sortDragStartIndex = -1;
-    this.sortMode = false;
-  }
-
-  beginSortDrag(index: number): void {
-    if (index < 0 || index >= this.sortRules.length) {
-      this.sortDragRuleId = 0;
-      this.sortDragStartIndex = -1;
+  beginRuleDrag(index: number): void {
+    const users = this.userRules();
+    if (!this.ruleDragEnabled() || index < 0 || index >= users.length) {
+      this.ruleDragId = 0;
+      this.ruleDragStartIndex = -1;
       return;
     }
-    this.sortDragRuleId = this.sortRules[index].id;
-    this.sortDragStartIndex = index;
-    this.sortDragSnapshot = this.sortRules.slice();
+    this.ruleDragId = users[index].id;
+    this.ruleDragStartIndex = index;
   }
 
-  moveSortRuleDuringDrag(from: number, to: number): void {
-    if (from === to || from < 0 || to < 0 || from >= this.sortRules.length || to >= this.sortRules.length) return;
-    if (!this.sortDragRuleId) this.beginSortDrag(from);
-    const next = this.sortRules.slice();
-    const moved = next.splice(from, 1)[0];
-    next.splice(to, 0, moved);
-    this.sortRules = next;
+  /** 拖动中只改顺序（内置规则仍排最前），松手再保存。 */
+  moveRuleDuringDrag(from: number, to: number): void {
+    const users = this.userRules();
+    if (from === to || from < 0 || to < 0 || from >= users.length || to >= users.length) return;
+    if (!this.ruleDragId) this.beginRuleDrag(from);
+    if (!this.ruleDragId) return;
+    const moved = users.splice(from, 1)[0];
+    users.splice(to, 0, moved);
+    this.rules = this.builtinRules().concat(users);
   }
 
-  finishSortDrag(): void {
-    const ruleId = this.sortDragRuleId;
-    const startIndex = this.sortDragStartIndex;
-    this.sortDragRuleId = 0;
-    this.sortDragStartIndex = -1;
+  finishRuleDrag(): void {
+    const ruleId = this.ruleDragId;
+    const startIndex = this.ruleDragStartIndex;
+    this.ruleDragId = 0;
+    this.ruleDragStartIndex = -1;
     if (!ruleId || startIndex < 0) return;
-    const endIndex = this.sortRules.findIndex((rule: ReaderReplaceRule) => rule.id === ruleId);
+    const users = this.userRules();
+    const endIndex = users.findIndex((rule: ReaderReplaceRule) => rule.id === ruleId);
     if (endIndex < 0 || endIndex === startIndex) return;
-    this.sortUndoStack.push(this.sortDragSnapshot);
-    this.persistSortOrder();
-    const name = this.sortRules[endIndex].name || '未命名规则';
-    this.showSortUndo(`“${name}”移到第 ${endIndex + 1} 条`);
-  }
-
-  undoSortStep(): void {
-    const previous = this.sortUndoStack.pop();
-    this.clearSortUndoTimer();
-    this.sortUndoVisible = false;
-    if (!previous) return;
-    this.sortRules = previous;
-    this.persistSortOrder();
-    HdsFeedback.showToast('已撤销');
-  }
-
-  showSortUndo(text: string): void {
-    this.sortUndoText = text;
-    this.sortUndoVisible = true;
-    this.clearSortUndoTimer();
-    this.sortUndoTimer = setTimeout(() => {
-      this.sortUndoTimer = -1;
-      this.sortUndoVisible = false;
-    }, 4000);
-  }
-
-  clearSortUndoTimer(): void {
-    if (this.sortUndoTimer >= 0) {
-      clearTimeout(this.sortUndoTimer);
-      this.sortUndoTimer = -1;
-    }
+    this.persistRuleOrder(users);
   }
 
   /** 连续拖动时按先后排队保存，后一次总是写最新的顺序。 */
-  persistSortOrder(): void {
-    const ordered = this.sortRules.slice();
-    this.sortSaveChain = this.sortSaveChain
-      .then(() => this.persistUserRuleOrder(ordered))
+  persistRuleOrder(ordered: ReaderReplaceRule[]): void {
+    const snapshot = ordered.slice();
+    this.ruleOrderSaveChain = this.ruleOrderSaveChain
+      .then(() => this.persistUserRuleOrder(snapshot))
       .catch((e: Error) => {
         console.error('保存替换规则顺序失败:', e);
         HdsFeedback.showToast('保存顺序失败');
       });
+  }
+
+  @Builder
+  ruleListItem(rule: ReaderReplaceRule) {
+    if (deviceInfo.sdkApiVersion >= 26) {
+      HdsListItem({
+        customItemBuilder: () => {
+          this.ruleCard(rule)
+        },
+        swipeActionOptions: this.ruleSwipeActions(rule)
+      })
+    } else {
+      // 两个并列 if 会让条目下挂两个分支节点，onMove 拖动排序要求条目只有一个子节点，所以用 else。
+      ListItem() {
+        this.ruleCard(rule)
+      }
+      .swipeAction({
+        end: {
+          builder: () => {
+            this.ruleFallbackSwipeActions(rule)
+          },
+          actionAreaDistance: 128,
+          onAction: () => {
+            if (!ReaderReplaceRuleStore.isBuiltin(rule)) this.confirmDelete(rule);
+          }
+        },
+        edgeEffect: SwipeEdgeEffect.Spring
+      })
+    }
+  }
+
+  @Builder
+  ruleDragHandle(rule: ReaderReplaceRule) {
+    // 只有把手这块不挂长按菜单，长按它才由 List 抬起拖动；内置规则不能拖，同一位置放一把锁对齐。
+    Stack({ alignContent: Alignment.Center }) {
+      if (ReaderReplaceRuleStore.isBuiltin(rule)) {
+        SymbolGlyph($r('sys.symbol.lock'))
+          .fontSize(16)
+          .fontColor([this.subTextColor()])
+          .opacity(0.6)
+      } else {
+        SymbolGlyph($r('sys.symbol.line_3_horizontal'))
+          .fontSize(20)
+          .fontColor([this.subTextColor()])
+      }
+    }
+    .width(40)
+    .height(48)
+    .margin({ left: -AppSpacing.SM, right: AppSpacing.XS })
+    .hitTestBehavior(HitTestMode.Transparent)
+    .accessibilityText(ReaderReplaceRuleStore.isBuiltin(rule) ? '内置规则，固定在最前' :
+      `长按拖动排序：${rule.name || '未命名规则'}`)
   }
 
   /** 内置规则排最前，后面接用户规则的新顺序。 */
@@ -1211,49 +951,62 @@ struct ReaderReplaceRulesPage {
       if (this.selectionMode) {
         this.ruleSelectionSafeArea(rule)
       }
+      if (this.ruleDragEnabled()) {
+        this.ruleDragHandle(rule)
+      }
 
-      Column({ space: AppSpacing.XS }) {
-        Text(rule.name || '未命名规则')
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(this.primaryTextColor())
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      // 长按菜单只挂在内容区：把手不挂，长按把手才由 List 抬起拖动（同书源管理）。
+      Row() {
+        Column({ space: AppSpacing.XS }) {
+          Text(rule.name || '未命名规则')
+            .fontSize(AppFontSize.BODY_LARGE)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.primaryTextColor())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-        Text(ReaderReplaceRuleStore.builtinDescription(rule) || rule.pattern || '未填写匹配规则')
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.secondaryTextColor())
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        Text(this.ruleScopeSummary(rule))
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.subTextColor())
-
-        if (this.previewMode) {
-          Text(this.ruleEffectLabel(rule))
-            .fontSize(AppFontSize.CAPTION)
-            .fontColor(this.ruleEffectColor(rule))
-        }
-
-        if (this.ruleCompatibilityNotes(rule).length > 0) {
-          Text(`已按 Android 正则转换：${this.ruleCompatibilityNotes(rule).join('；')}`)
-            .fontSize(AppFontSize.CAPTION)
-            .fontColor(this.subTextColor())
+          Text(ReaderReplaceRuleStore.builtinDescription(rule) || rule.pattern || '未填写匹配规则')
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.secondaryTextColor())
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Text(this.ruleScopeSummary(rule))
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+
+          if (this.previewMode) {
+            Text(this.ruleEffectLabel(rule))
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.ruleEffectColor(rule))
+          }
+
+          if (this.ruleCompatibilityNotes(rule).length > 0) {
+            Text(`已按 Android 正则转换：${this.ruleCompatibilityNotes(rule).join('；')}`)
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.subTextColor())
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
         }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Column() {
+          Text(rule.enabled ? '已启用' : '已禁用')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(rule.enabled ? ThemeRuntime.successColor(this.appDarkMode) : this.subTextColor())
+        }
+        .alignItems(HorizontalAlign.End)
+        .margin({ left: AppSpacing.LG })
       }
       .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-
-      Column() {
-        Text(rule.enabled ? '已启用' : '已禁用')
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(rule.enabled ? ThemeRuntime.successColor(this.appDarkMode) : this.subTextColor())
-      }
-      .alignItems(HorizontalAlign.End)
-      .margin({ left: AppSpacing.LG })
+      .gesture(
+        LongPressGesture({ repeat: false })
+          .onAction((event: GestureEvent) => {
+            if (!this.selectionMode && !this.isBatchOperating) this.openRuleActions(rule, event);
+          })
+      )
     }
     .width('100%')
     .padding(AppSpacing.LG)
@@ -1265,12 +1018,6 @@ struct ReaderReplaceRulesPage {
     .blur(ListDissolve.blur(this.isRuleDissolving(rule)))
     .hitTestBehavior(this.isRuleDissolving(rule) ? HitTestMode.None : HitTestMode.Default)
     .id(this.ruleCardElementId(`${rule.id}`))
-    .gesture(
-      LongPressGesture({ repeat: false })
-        .onAction((event: GestureEvent) => {
-          if (!this.selectionMode && !this.isBatchOperating) this.openRuleActions(rule, event);
-        })
-    )
     .onClick(() => {
       if (this.selectionMode) {
         if (Date.now() < this.ruleSelectionSuppressClickUntil) return;
@@ -1793,10 +1540,6 @@ struct ReaderReplaceRulesPage {
           this.closeRuleActions();
           if (rule) this.enterRuleSelectionMode(rule.id);
         })
-        this.contextActionItem($r('sys.symbol.sort'), '调整顺序', this.primaryTextColor(), () => {
-          this.closeRuleActions();
-          this.enterSortMode();
-        })
         if (!this.actionRuleBuiltin()) {
           this.contextActionItem($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.appDarkMode), () => {
             const rule = this.actionRule();
@@ -1819,13 +1562,19 @@ struct ReaderReplaceRulesPage {
     PopupMenuAction(icon, label, color, action)
   }
 
+  /** 列表显示顺序：内置规则一组在前，后面是用户规则的执行顺序。 */
   filteredRules(): ReaderReplaceRule[] {
+    const ordered = this.builtinRules().concat(this.userRules());
     const keyword = (this.query || '').trim().toLowerCase();
     if (!keyword) {
-      return this.rules;
+      return ordered;
     }
-    return this.rules.filter((rule: ReaderReplaceRule) =>
+    return ordered.filter((rule: ReaderReplaceRule) =>
       `${rule.name}\n${rule.pattern}`.toLowerCase().includes(keyword));
+  }
+
+  ruleListItemKey(rule: ReaderReplaceRule): string {
+    return `${rule.id}_${rule.enabled ? '1' : '0'}_${this.selectionMode ? 'select' : 'normal'}`;
   }
 
   // 列表底部避让：右下角悬浮新增按钮（52 高，底边距 navBarHeight+22）必须完整让出，

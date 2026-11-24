@@ -49,6 +49,7 @@ import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
+import { PopupMenuAction } from '../components/common/PopupMenuAction';
 import { CloudAutoSync, CloudRemoteFont } from '../account/CloudAutoSync';
 import { CloudFontMenu } from '../account/CloudFontMenu';
 import { ThemeTypographyDraft } from '../utils/ThemeTypographyDraft';
@@ -153,6 +154,8 @@ export struct ReaderFontSettingsEditor {
   @State regexRules: ReaderRegexFontRule[] = [];
   /** 正在拖动排序的规则 id；嵌入时只给这一行补卡片底色。 */
   @State draggingRegexRuleId: string = '';
+  /** 长按弹出菜单的规则 id；空表示没有菜单。 */
+  @State regexRuleMenuId: string = '';
   /** 正在消散的正则规则 id，见 ListDissolve。 */
   @State dissolvingRuleIds: string[] = [];
   @State deleteParticleBursts: DeleteParticleBurst[] = [];
@@ -568,7 +571,7 @@ export struct ReaderFontSettingsEditor {
         .fontSize(14)
         .fontColor([this.subTextColor()])
         .margin({ top: 2 })
-      Text('同一段文字被几条规则命中时，用排在上面的那条。长按拖动调整顺序，左滑可停用。')
+      Text('同一段文字被几条规则命中时，用排在上面的那条。按住前方把手拖动调整顺序，左滑或长按可停用。')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
         .layoutWeight(1)
@@ -611,6 +614,38 @@ export struct ReaderFontSettingsEditor {
       .onClick(() => this.confirmDeleteRegexRule(rule))
     }
     .height(REGEX_RULE_ROW_HEIGHT)
+  }
+
+  /** 长按规则弹出的菜单：编辑、停用/启用、删除。 */
+  @Builder
+  regexRuleMenu() {
+    Column() {
+      PopupMenuAction($r('sys.symbol.square_and_pencil'), '编辑', this.primaryTextColor(), () => {
+        const ruleId = this.regexRuleMenuId;
+        this.regexRuleMenuId = '';
+        const index = this.regexRules.findIndex((rule: ReaderRegexFontRule) => rule.id === ruleId);
+        if (index >= 0) this.openRegexRuleEditor(index, this.regexRules[index]);
+      })
+      PopupMenuAction(this.regexRuleMenuEnabled() ? $r('sys.symbol.minus_circle') : $r('sys.symbol.checkmark_circle'),
+        this.regexRuleMenuEnabled() ? '停用' : '启用', this.primaryTextColor(), () => {
+          const ruleId = this.regexRuleMenuId;
+          this.regexRuleMenuId = '';
+          if (ruleId) this.toggleRegexRuleEnabled(ruleId);
+        })
+      PopupMenuAction($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.appDarkMode), () => {
+        const ruleId = this.regexRuleMenuId;
+        this.regexRuleMenuId = '';
+        const rule = this.regexRules.find((item: ReaderRegexFontRule) => item.id === ruleId);
+        if (rule) this.confirmDeleteRegexRule(rule);
+      })
+    }
+    .width(168)
+    .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+  }
+
+  regexRuleMenuEnabled(): boolean {
+    const rule = this.regexRules.find((item: ReaderRegexFontRule) => item.id === this.regexRuleMenuId);
+    return rule ? rule.enabled : true;
   }
 
   regexRuleDisabledCount(): number {
@@ -1460,7 +1495,17 @@ export struct ReaderFontSettingsEditor {
 
   @Builder
   regexRuleRow(rule: ReaderRegexFontRule) {
-    Row({ space: AppSpacing.MD }) {
+    Row({ space: AppSpacing.SM }) {
+      // 和书源管理一样：只有前方把手不挂长按菜单，长按它才由 List 抬起拖动；其余部分长按出菜单。
+      Stack({ alignContent: Alignment.Center }) {
+        SymbolGlyph($r('sys.symbol.line_3_horizontal'))
+          .fontSize(18)
+          .fontColor([this.subTextColor()])
+      }
+      .width(32)
+      .height('100%')
+      .margin({ left: -AppSpacing.SM })
+      .hitTestBehavior(HitTestMode.Transparent)
       // 序号按 id 现查：拖动不重建条目，ForEach 的下标会停在旧值。
       Text(`${this.regexRuleNumber(rule.id)}`)
         .fontSize(AppFontSize.CAPTION)
@@ -1468,47 +1513,60 @@ export struct ReaderFontSettingsEditor {
         .width(16)
         .textAlign(TextAlign.Center)
         .opacity(rule.enabled ? 1 : 0.5)
-      Column({ space: AppSpacing.XXS }) {
-        Row({ space: AppSpacing.SM }) {
-          Text(rule.name || `规则${this.regexRuleNumber(rule.id)}`)
-            .fontSize(AppFontSize.BODY_LARGE)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.primaryTextColor())
+      Row({ space: AppSpacing.MD }) {
+        Column({ space: AppSpacing.XXS }) {
+          Row({ space: AppSpacing.SM }) {
+            Text(rule.name || `规则${this.regexRuleNumber(rule.id)}`)
+              .fontSize(AppFontSize.BODY_LARGE)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.primaryTextColor())
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .flexShrink(1)
+            if (ReaderRegexScope.badge(rule.scope)) {
+              Text(ReaderRegexScope.badge(rule.scope))
+                .fontSize(AppFontSize.CAPTION)
+                .fontColor(this.subTextColor())
+                .padding({ left: 6, right: 6, top: 1, bottom: 1 })
+                .borderRadius(6)
+                .backgroundColor(this.inputColor())
+            }
+            if (!rule.enabled) {
+              Text('已停用')
+                .fontSize(AppFontSize.CAPTION)
+                .fontColor(this.subTextColor())
+                .padding({ left: 6, right: 6, top: 1, bottom: 1 })
+                .borderRadius(6)
+                .backgroundColor(this.inputColor())
+            }
+          }
+          .width('100%')
+          // 正则用等宽字体，读起来像表达式，不像说明文字。
+          Text(rule.pattern || '未设置正则表达式')
+            .fontSize(AppFontSize.CAPTION)
+            .fontFamily(rule.pattern ? 'monospace' : this.applicationFontFamily)
+            .fontColor(this.subTextColor())
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .flexShrink(1)
-          if (ReaderRegexScope.badge(rule.scope)) {
-            Text(ReaderRegexScope.badge(rule.scope))
-              .fontSize(AppFontSize.CAPTION)
-              .fontColor(this.subTextColor())
-              .padding({ left: 6, right: 6, top: 1, bottom: 1 })
-              .borderRadius(6)
-              .backgroundColor(this.inputColor())
-          }
-          if (!rule.enabled) {
-            Text('已停用')
-              .fontSize(AppFontSize.CAPTION)
-              .fontColor(this.subTextColor())
-              .padding({ left: 6, right: 6, top: 1, bottom: 1 })
-              .borderRadius(6)
-              .backgroundColor(this.inputColor())
-          }
         }
-        .width('100%')
-        // 正则用等宽字体，读起来像表达式，不像说明文字。
-        Text(rule.pattern || '未设置正则表达式')
-          .fontSize(AppFontSize.CAPTION)
-          .fontFamily(rule.pattern ? 'monospace' : this.applicationFontFamily)
-          .fontColor(this.subTextColor())
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        .opacity(rule.enabled ? 1 : 0.5)
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(18)
+          .fontColor([this.subTextColor()])
       }
       .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-      .opacity(rule.enabled ? 1 : 0.5)
-      SymbolGlyph($r('sys.symbol.chevron_right'))
-        .fontSize(18)
-        .fontColor([this.subTextColor()])
+      .height('100%')
+      .gesture(LongPressGesture({ repeat: false }).onAction(() => {
+        this.regexRuleMenuId = rule.id;
+      }))
+      .bindPopup(this.regexRuleMenuId === rule.id, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel,
+        (): void => {
+          this.regexRuleMenu()
+        }, Placement.Bottom, this.appDarkMode, this.accentColor(), () => {
+          if (this.regexRuleMenuId === rule.id) this.regexRuleMenuId = '';
+        }))
     }
     .width('calc(100% - 32vp)')
     .height(REGEX_RULE_ROW_HEIGHT)
@@ -1520,7 +1578,7 @@ export struct ReaderFontSettingsEditor {
     .alignItems(VerticalAlign.Center)
     .accessibilityGroup(true)
     .accessibilityText(`第 ${this.regexRuleNumber(rule.id)} 条，${rule.name || '正则规则'}${rule.enabled ? '' : '，已停用'}，` +
-      '点按编辑，长按拖动调整顺序，左滑停用或删除')
+      '点按编辑，长按出菜单，长按前方把手拖动调整顺序，左滑停用或删除')
     .opacity(ListDissolve.opacity(this.isRegexRuleDissolving(rule)))
     .scale(ListDissolve.scale(this.isRegexRuleDissolving(rule)))
     .blur(ListDissolve.blur(this.isRegexRuleDissolving(rule)))
