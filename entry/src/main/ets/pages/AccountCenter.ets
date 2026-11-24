@@ -35,6 +35,9 @@ import { PageScaffold } from '../components/common/PageScaffold';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
 import { selectImages } from '../platform/Files';
 import { PlatformInfo } from '../platform/PlatformInfo';
+import {
+  checkExternalRecharge, EXTERNAL_RECHARGE_AVAILABLE, ExternalRechargeResult, redeemRechargeCode, startExternalRecharge
+} from '../platform/Payments';
 
 class BenefitCompareRow {
   title: string;
@@ -76,6 +79,12 @@ struct AccountCenterPage {
   @State ordersExpanded: boolean = false;
   @State sourceUsage: CloudSyncSummary = new CloudSyncSummary();
   @State showRechargeSheet: boolean = false;
+  /** 安卓：兑换码输入框与是否正在兑换。 */
+  @State redeemCodeInput: string = '';
+  @State redeeming: boolean = false;
+  /** 安卓：已在浏览器打开收银台、还没确认结果的支付宝订单；回到本页时查单。 */
+  private pendingRechargeOrderId: string = '';
+  private checkingRecharge: boolean = false;
   @State compareExpanded: boolean = false;
   @State editingProfile: boolean = false;
   @State profileNameInput: string = '';
@@ -135,6 +144,10 @@ struct AccountCenterPage {
       this.shownLoggedIn = false;
       this.resetLoggedOutState();
       return;
+    }
+    // 安卓：从浏览器的支付宝收银台回来，查一下刚才的订单。
+    if (this.pendingRechargeOrderId) {
+      this.checkPendingRecharge();
     }
     // 从我的权益页领取礼包后返回，入口提示要跟着更新。
     if (this.accountLoggedIn) {
@@ -276,7 +289,8 @@ struct AccountCenterPage {
   }
 
   openRecharge(): void {
-    if (!this.huaweiServicesAvailable()) {
+    // 安卓上没有应用内支付：走平台层的应用外充值（支付宝 + 兑换码）；都没有时才提示去鸿蒙设备。
+    if (!this.huaweiServicesAvailable() && !EXTERNAL_RECHARGE_AVAILABLE) {
       HdsFeedback.showToast('安卓版暂未开放充值，可在鸿蒙设备上充值，点数随账号同步');
       return;
     }
@@ -777,6 +791,10 @@ struct AccountCenterPage {
       HdsFeedback.showToast('请先登录');
       return;
     }
+    if (!this.huaweiServicesAvailable()) {
+      await this.buyExternal(product);
+      return;
+    }
     this.purchasingProductId = product.productId;
     try {
       const result = await iap.createPurchase(this.context, {
@@ -795,6 +813,80 @@ struct AccountCenterPage {
     } finally {
       this.purchasingProductId = '';
     }
+  }
+
+  /** 安卓：服务端下单并在浏览器里打开支付宝收银台；付完回到本页时 onPageShow 查单。 */
+  async buyExternal(product: RechargeProduct): Promise<void> {
+    this.purchasingProductId = product.productId;
+    try {
+      this.pendingRechargeOrderId = await startExternalRecharge(product.productId, AccountSessionStore.token());
+      HdsFeedback.showToast('已打开支付宝收银台，付款后回到轻页即可到账');
+    } catch (e) {
+      HdsFeedback.showToast(this.errorMessage(e, '暂时无法发起支付宝付款'));
+    } finally {
+      this.purchasingProductId = '';
+    }
+  }
+
+  /** 查刚才的支付宝订单：通知可能比用户回来得晚，没结果时隔两秒再查，最多三次。 */
+  async checkPendingRecharge(): Promise<void> {
+    if (this.checkingRecharge || !this.pendingRechargeOrderId) return;
+    this.checkingRecharge = true;
+    const orderId = this.pendingRechargeOrderId;
+    try {
+      let result: ExternalRechargeResult | null = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) await new Promise<void>((resolve: () => void): number => setTimeout(resolve, 2000));
+        result = await checkExternalRecharge(orderId, AccountSessionStore.token());
+        if (result.status !== 'PENDING') break;
+      }
+      if (!result || result.status === 'PENDING') {
+        HdsFeedback.showToast('还没收到付款结果，付款后回到本页会再查一次');
+        return;
+      }
+      this.pendingRechargeOrderId = '';
+      if (result.status === 'PAID') {
+        await HuaweiAccountService.refresh(this.context);
+        HdsFeedback.showToast(this.creditedMessage(result));
+        this.showRechargeSheet = false;
+      } else {
+        HdsFeedback.showToast('订单已关闭，没有扣款');
+      }
+    } catch (e) {
+      console.warn('查询充值订单失败:', e);
+    } finally {
+      this.checkingRecharge = false;
+    }
+  }
+
+  /** 安卓：兑换码充值。 */
+  async redeemCode(): Promise<void> {
+    if (this.redeeming) return;
+    if (!this.accountLoggedIn) {
+      HdsFeedback.showToast('请先登录');
+      return;
+    }
+    const code = this.redeemCodeInput.trim();
+    if (!code) {
+      HdsFeedback.showToast('请输入兑换码');
+      return;
+    }
+    this.redeeming = true;
+    try {
+      const result = await redeemRechargeCode(code, AccountSessionStore.token());
+      await HuaweiAccountService.refresh(this.context);
+      this.redeemCodeInput = '';
+      HdsFeedback.showToast(this.creditedMessage(result));
+    } catch (e) {
+      HdsFeedback.showToast(this.errorMessage(e, '兑换失败'));
+    } finally {
+      this.redeeming = false;
+    }
+  }
+
+  creditedMessage(result: ExternalRechargeResult): string {
+    const debtMessage = result.debtOffsetPoints > 0 ? `，其中 ${result.debtOffsetPoints} 点用于抵扣退款欠款` : '';
+    return `充值成功，已到账 ${result.creditedPoints} 点${debtMessage}`;
   }
 
   async recoverUnfinishedPurchases(): Promise<void> {
@@ -2234,6 +2326,9 @@ struct AccountCenterPage {
   rechargeSheet() {
     Column({ space: AppSpacing.SM }) {
       this.rechargeSection()
+      if (EXTERNAL_RECHARGE_AVAILABLE) {
+        this.redeemCodeSection()
+      }
       Text(`当前充值点 ${this.paidPoints} · 可开通会员、兑换朗读字数包与主题`)
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
@@ -2279,7 +2374,9 @@ struct AccountCenterPage {
                   .height(18)
                   .color(this.accentColor())
               } else {
-                Text(product.localPrice || `预计 ¥${product.expectedPriceYuan}`)
+                // 安卓走支付宝，价格由服务端定，就是这个数；鸿蒙按应用内支付返回的本地价格显示。
+                Text(EXTERNAL_RECHARGE_AVAILABLE ? `¥${product.expectedPriceYuan}` :
+                  (product.localPrice || `预计 ¥${product.expectedPriceYuan}`))
                   .fontSize(AppFontSize.BODY)
                   .fontColor(this.accentColor())
               }
@@ -2302,6 +2399,50 @@ struct AccountCenterPage {
       .width('100%')
       .height(this.rechargeGridHeight())
       .enableScrollInteraction(false)
+    }
+    .width('100%')
+    .padding(AppSpacing.XL)
+    .borderRadius(ThemeRuntime.cardRadius())
+    .backgroundColor(this.cardColor())
+  }
+
+  /** 安卓：兑换码充值（支付宝之外的另一条路，码在别处购买）。 */
+  @Builder
+  redeemCodeSection() {
+    Column({ space: AppSpacing.SM }) {
+      Text('兑换码')
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.primaryTextColor())
+        .width('100%')
+      Row({ space: AppSpacing.SM }) {
+        TextInput({ placeholder: 'XXXX-XXXX-XXXX-XXXX', text: this.redeemCodeInput })
+          .layoutWeight(1)
+          .height(44)
+          .maxLength(24)
+          .borderRadius(ThemeRuntime.mediumRadius())
+          .backgroundColor(this.inputColor())
+          .fontColor(this.primaryTextColor())
+          .onChange((value: string) => {
+            this.redeemCodeInput = value;
+          })
+          .onSubmit(() => {
+            this.redeemCode();
+          })
+        Button(this.redeeming ? '兑换中' : '兑换')
+          .height(44)
+          .fontSize(AppFontSize.BODY)
+          .backgroundColor(this.accentColor())
+          .enabled(!this.redeeming)
+          .onClick(() => {
+            this.redeemCode();
+          })
+      }
+      .width('100%')
+      Text('付款用支付宝；点数仅用于本应用数字内容，不支持转让或提现')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .width('100%')
     }
     .width('100%')
     .padding(AppSpacing.XL)

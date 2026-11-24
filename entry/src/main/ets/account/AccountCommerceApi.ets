@@ -59,6 +59,10 @@ export class AccountCommerceApi {
   static async cloudRequest(path: string, method: string, body: string, token: string): Promise<string> {
     return AccountCommerceApi.request(`/v1/cloud-files${path}`, method, body, token);
   }
+  /** 安卓端充值接口（/v1/recharge/...），只由 platform/Payments 的安卓实现调用；鸿蒙端充值只走应用内支付。 */
+  static async rechargeRequest(path: string, method: string, body: string, token: string): Promise<string> {
+    return AccountCommerceApi.request(`/v1/recharge${path}`, method, body, token);
+  }
   static async fetchMembershipCatalog(token: string = ''): Promise<MembershipCatalog> {
     if (token) {
       try {

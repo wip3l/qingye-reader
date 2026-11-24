@@ -1,4 +1,26 @@
-# 安卓端点数充值调研
+# 安卓端点数充值
+
+## 实现状态（方案 A + C 已实现）
+
+- 服务端：`server/src/rechargeRoutes.ts`、`alipay.ts`、`pointCredit.ts`，迁移 `034_recharge.sql`，测试 `recharge.test.ts`。
+  入账与 `/v1/iap/credit` 共用 `creditPaidPoints`（先抵扣欠款，再加 balance 与 paid_balance，写幂等流水）；全额退款按 IAP 规则冲正，
+  部分退款只记日志、人工处理。
+- 客户端：`platform/Payments.ets`（鸿蒙实现为空，安卓实现下单、经 `SystemBridge.openUrl` 打开收银台、查单、兑换码），
+  `AccountCenter` 的充值面板在安卓上显示支付宝档位和兑换码。
+- 兑换码：`node server/scripts/redeem-codes.mjs --batch <批次> --points <点数> --count <数量> [--expires YYYY-MM-DD]`，
+  库里只存 SHA-256，明文只打印一次。
+
+### 上线步骤
+
+1. 跑迁移 `034_recharge.sql`。
+2. 在支付宝开放平台为应用开通“手机网站支付”，把应用私钥、支付宝公钥放到服务器文件里，设置环境变量：
+   `ALIPAY_APP_ID`、`ALIPAY_PRIVATE_KEY_PATH`、`ALIPAY_PUBLIC_KEY_PATH`、`ALIPAY_NOTIFY_URL`（如 `https://<域名>/v1/recharge/notify/alipay`），
+   可选 `ALIPAY_RETURN_URL`、`ALIPAY_QUIT_URL`、`ALIPAY_SELLER_ID`（收款账号 2088 开头，配置后核对通知）、`ALIPAY_GATEWAY`（沙箱时改成沙箱网关）。
+   四个必填项缺一个，支付宝下单就返回 503，兑换码不受影响。
+3. 先用支付宝沙箱走一遍：下单 → 沙箱账号付款 → 通知入账 → 回到应用查单到账 → 退款冲正。
+4. 部署服务端后再发安卓新包（旧包点充值只会提示去鸿蒙设备）。
+
+## 调研（原文）
 
 ## 现状
 

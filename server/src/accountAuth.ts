@@ -363,6 +363,8 @@ export const DELETION_KEEPS_TABLES = [
   'account_debts', 'cloud_download_monthly_usage', 'cloud_download_usage', 'cloud_quota_bonuses', 'iap_orders',
   'lottery_draws', 'membership_accounts', 'membership_coupons', 'membership_gift_claims', 'membership_orders',
   'membership_periods', 'membership_quotes', 'membership_theme_claims', 'point_ledger', 'point_wallets',
+  // 安卓支付宝充值订单，与 iap_orders 一样是交易记录。
+  'recharge_orders',
   'theme_entitlements', 'tts_package_redemptions', 'tts_quota_grants', 'tts_quota_ledger', 'tts_usage',
   // 云文件交给云空间维护任务连同对象存储一起删，见 purgeDueAccountDeletions。
   'cloud_files',

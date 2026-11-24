@@ -5,7 +5,7 @@ import { Buffer } from 'node:buffer';
 import { createHash, randomUUID } from 'node:crypto';
 import { gzip as gzipCallback, constants as zlibConstants } from 'node:zlib';
 import { PoolClient } from 'pg';
-import { config } from './config.js';
+import { config, readSecretFile } from './config.js';
 import { inTransaction, pool } from './db.js';
 import {
   HuaweiSisError,
@@ -96,6 +96,9 @@ import {
   registerAccountAuthRoutes
 } from './accountAuth.js';
 import { recoveryCodeHasher } from './accountCredentials.js';
+import { AlipayClient } from './alipay.js';
+import { creditPaidPoints, PointCreditError } from './pointCredit.js';
+import { registerRechargeRoutes } from './rechargeRoutes.js';
 
 interface AuthenticatedRequest extends FastifyRequest {
   userId?: string;
@@ -179,6 +182,10 @@ app.setErrorHandler((error, _request, reply) => {
     void reply.status(413).send({ code: 'REQUEST_TOO_LARGE', message: '上传内容过大，请缩小文件后重试' });
     return;
   }
+  if (error instanceof PointCreditError) {
+    void reply.status(error.statusCode).send({ code: error.code, message: error.message });
+    return;
+  }
   if (error instanceof ApiError || error instanceof MembershipError || error instanceof AccountAuthError) {
     const retryAfter = error instanceof ApiError || error instanceof AccountAuthError ? error.retryAfter : 0;
     if (retryAfter > 0) reply.header('Retry-After', String(retryAfter));
@@ -245,6 +252,30 @@ const cloudMaintenance = setInterval(() => {
 }, 60000);
 cloudMaintenance.unref();
 app.addHook('onClose', async () => { clearInterval(cloudMaintenance); });
+
+const alipayConfig = config.alipay;
+const alipay = alipayConfig.appId && alipayConfig.privateKeyPath && alipayConfig.publicKeyPath && alipayConfig.notifyUrl
+  ? new AlipayClient({
+    appId: alipayConfig.appId,
+    privateKey: await readSecretFile(alipayConfig.privateKeyPath),
+    alipayPublicKey: await readSecretFile(alipayConfig.publicKeyPath),
+    gateway: alipayConfig.gateway,
+    notifyUrl: alipayConfig.notifyUrl,
+    returnUrl: alipayConfig.returnUrl,
+    quitUrl: alipayConfig.quitUrl || alipayConfig.returnUrl,
+    sellerId: alipayConfig.sellerId
+  })
+  : null;
+registerRechargeRoutes(app, {
+  alipay,
+  authenticate,
+  userId: requiredUserId,
+  transaction: inTransaction,
+  limit: (userId, key, perMinute) => enforceAccountRateLimit(userId, key,
+    Math.min(perMinute, config.http.sensitiveRateLimitPerMinute)),
+  account: snapshot,
+  log: app.log
+});
 
 registerLotteryRoutes(app, {
   campaignId: config.lottery.campaignId,
@@ -894,24 +925,9 @@ app.post<{ Body: IapBody }>(
         };
       }
 
-      const wallet = await client.query<{ balance: string; paid_balance: string }>(
-        `SELECT balance, paid_balance
-         FROM point_wallets
-         WHERE user_id = $1
-         FOR UPDATE`,
-        [userId]
-      );
-      if (!wallet.rowCount) {
-        throw new ApiError(404, 'ACCOUNT_NOT_FOUND', '账号不存在');
-      }
-      const debt = await client.query<{ iap_debt_points: string }>(
-        `SELECT iap_debt_points FROM account_debts WHERE user_id = $1 FOR UPDATE`,
-        [userId]
-      );
-      const debtBefore = Number(debt.rows[0]?.iap_debt_points || 0);
-      const debtOffsetPoints = Math.min(debtBefore, points);
-      const availablePoints = points - debtOffsetPoints;
-      const creditedBalanceAfter = Number(wallet.rows[0]!.balance) + availablePoints;
+      // 入账（先抵扣退款欠款，再加 balance 与 paid_balance，写幂等流水）与支付宝、兑换码共用。
+      const { creditedPoints: availablePoints, debtOffsetPoints } = await creditPaidPoints(
+        client, userId, points, 'IAP_RECHARGE', orderId, `iap:${orderId}`);
       await client.query(
         `INSERT INTO iap_orders (
            purchase_order_id, purchase_token, user_id, product_id,
@@ -928,32 +944,6 @@ app.post<{ Body: IapBody }>(
           purchaseState(purchase),
           debtOffsetPoints
         ]
-      );
-      await client.query(
-        `UPDATE point_wallets
-         SET balance = $2,
-             paid_balance = $3,
-             updated_at = now()
-         WHERE user_id = $1`,
-        [
-          userId,
-          creditedBalanceAfter,
-          Number(wallet.rows[0]!.paid_balance) + availablePoints
-        ]
-      );
-      if (debtOffsetPoints > 0) {
-        await client.query(
-          `UPDATE account_debts
-           SET iap_debt_points = iap_debt_points - $2, updated_at = now()
-           WHERE user_id = $1`,
-          [userId, debtOffsetPoints]
-        );
-      }
-      await client.query(
-        `INSERT INTO point_ledger (
-           user_id, delta, balance_after, reason, reference_id, idempotency_key
-         ) VALUES ($1, $2, $3, 'IAP_RECHARGE', $4, $5)`,
-        [userId, availablePoints, creditedBalanceAfter, orderId, `iap:${orderId}`]
       );
       return {
         account: await snapshot(client, userId),
