@@ -542,6 +542,31 @@ const tests = {
     assert.equal(merged.regexFontPattern, 'dialogue');
     assert.equal(merged.regexFontEnabled, true);
   },
+  async 'remote payload without any rule keeps local rules'() {
+    const h = harness();
+    const rulesRaw = '{"schemaVersion":3,"rules":[{"id":"r1","name":"对话","pattern":"“[^”]+”"}]}';
+    const base = await h.settings.load({});
+    await h.settings.saveReaderFontRuleSettings({}, { ...base, regexFontEnabled: true, regexFontRulesRaw: rulesRaw });
+    const local = await h.settings.reload({});
+    for (const raw of ['', '{"schemaVersion":3,"rules":[]}', 'not json']) {
+      const remote = { ...h.sync.toPayload(local), regexFontEnabled: false, regexFontPattern: '',
+        regexFontRulesRaw: raw, lightCustomThemeBackgroundColor: '#112233' };
+      const merged = h.sync.merge(local, remote);
+      assert.equal(merged.regexFontRulesRaw, rulesRaw, `empty remote rules must not clear local: ${raw}`);
+      assert.equal(merged.regexFontEnabled, true);
+      assert.equal(merged.lightCustomThemeBackgroundColor, '#112233');
+    }
+    await h.receive(JSON.stringify({ ...h.sync.toPayload(local), regexFontRulesRaw: '' }));
+    assert.equal((await h.settings.reload({})).regexFontRulesRaw, rulesRaw);
+    // 远端有规则时照常覆盖；本机本来就没规则时远端的空规则照常写入。
+    const remoteRules = '{"schemaVersion":3,"rules":[{"id":"r2","name":"人名","pattern":"张三"}]}';
+    assert.equal(h.sync.merge(local, { ...h.sync.toPayload(local), regexFontRulesRaw: remoteRules })
+      .regexFontRulesRaw, remoteRules);
+    assert.equal(h.sync.merge(local, { ...h.sync.toPayload(local), regexFontRulesRaw: '', regexFontPattern: 'legacy' })
+      .regexFontPattern, 'legacy');
+    const empty = h.sync.merge(base, { ...h.sync.toPayload(base), regexFontEnabled: true, regexFontRulesRaw: '' });
+    assert.equal(empty.regexFontEnabled, true);
+  },
   async 'remote font rules preserve every unrelated local setting'() {
     const h = harness();
     await h.settings.saveLayoutSettings({}, 29, 18, 6, 22, 24, 26, 28);
