@@ -84,10 +84,18 @@ export struct ReaderComicOptionGroup {
 export struct ReaderComicModeSettingsPanel {
   @Prop animationOptions: SelectOption[] = [];
   @Prop animationSelected: number = 1;
-  onAnimationChange: (index: number) => void = () => {};
-  /** 本书当前生效的漫画阅读方式。 */
+  @Prop wideAnimationSelected: number = 1;
+  /** wide 为横屏/展开那份动画。 */
+  onAnimationChange: (index: number, wide: boolean) => void = () => {};
+  /** 本书当前生效的漫画阅读方式；横竖屏分开设置时是竖屏那份。 */
   @Prop mode: string = ReaderComicMode.WEBTOON;
+  /** 本书横屏/展开那份阅读方式，可能是“同竖屏”。只在横竖屏分开设置时用到。 */
+  @Prop wideMode: string = ReaderComicMode.FOLLOW;
+  @Prop orientationSplit: boolean = false;
+  /** 现在是否在用横屏那份（横竖屏分开设置且阅读区够宽）。 */
+  @Prop wideNow: boolean = false;
   @Prop defaultMode: string = ReaderComicMode.WEBTOON;
+  @Prop defaultWideMode: string = ReaderComicMode.FOLLOW;
   @Prop tapTurn: boolean = true;
   @Prop dualPage: boolean = true;
   @Prop volumeTurnPage: boolean = false;
@@ -100,9 +108,11 @@ export struct ReaderComicModeSettingsPanel {
   @Prop orientationOptions: SelectOption[] = [];
   @Prop orientationSelected: number = 0;
   @Prop colors: ReaderComicPanelColors = new ReaderComicPanelColors();
-  /** 选中三种漫画方式之一，或 READER_COMIC_TEXT_MODE。 */
-  onSelectMode: (mode: string) => void = () => {};
+  /** 选中三种漫画方式之一（横屏那组还可能是“同竖屏”，wide 为 true），或 READER_COMIC_TEXT_MODE。 */
+  onSelectMode: (mode: string, wide: boolean) => void = () => {};
+  /** 按当前方向把本书那份阅读方式设为默认。 */
   onSetDefaultMode: () => void = () => {};
+  onOrientationSplitChange: (checked: boolean) => void = () => {};
   onTapTurnChange: (checked: boolean) => void = () => {};
   onConfigureTapZones: () => void = () => {};
   onVolumeTurnChange: (checked: boolean) => void = () => {};
@@ -110,8 +120,54 @@ export struct ReaderComicModeSettingsPanel {
   onOrientationChange: (index: number) => void = () => {};
   onDualPageChange: (checked: boolean) => void = () => {};
 
+  /** 横屏那份实际用的方式（“同竖屏”换成竖屏那份）。 */
+  private wideResolved(): string {
+    return this.wideMode === ReaderComicMode.FOLLOW ? this.mode : this.wideMode;
+  }
+
+  /** 当前方向用的是否左右翻页。 */
   private paged(): boolean {
-    return ReaderComicMode.isPaged(this.mode);
+    return ReaderComicMode.isPaged(this.orientationSplit && this.wideNow ? this.wideResolved() : this.mode);
+  }
+
+  private wideModeOptions(): ReaderComicOption[] {
+    return [
+      new ReaderComicOption(ReaderComicMode.FOLLOW, '同竖屏'),
+      new ReaderComicOption(ReaderComicMode.WEBTOON, '条漫'),
+      new ReaderComicOption(ReaderComicMode.LTR, '从左往右'),
+      new ReaderComicOption(ReaderComicMode.RTL, '从右往左')
+    ];
+  }
+
+  /** “设为默认”按当前方向比较：横屏用横屏那份默认值。 */
+  private currentModeIsDefault(): boolean {
+    return this.orientationSplit && this.wideNow ? this.wideMode === this.defaultWideMode :
+      this.mode === this.defaultMode;
+  }
+
+  private defaultModeDescription(): string {
+    if (!this.orientationSplit) {
+      return `没单独设置过的漫画使用默认方式，当前默认：${ReaderComicMode.label(this.defaultMode)}`;
+    }
+    return this.wideNow ? `横屏/展开默认：${ReaderComicMode.label(this.defaultWideMode)}` :
+      `竖屏默认：${ReaderComicMode.label(this.defaultMode)}`;
+  }
+
+  @Builder
+  animationRow(title: string, selected: number, wide: boolean) {
+    ReaderSettingSelectRow({
+      title: title,
+      description: '翻页时的切换效果',
+      options: this.animationOptions,
+      selected: selected,
+      controlId: wide ? 'reader_comic_page_animation_select_wide' : 'reader_comic_page_animation_select',
+      textColor: this.colors.textColor,
+      subTextColor: this.colors.subTextColor,
+      accentColor: this.colors.accentColor,
+      dark: this.colors.dark,
+      menuColor: this.colors.menuColor,
+      onSelect: (index: number): void => this.onAnimationChange(index, wide)
+    })
   }
 
   private modeOptions(): ReaderComicOption[] {
@@ -130,7 +186,7 @@ export struct ReaderComicModeSettingsPanel {
         Text('设为默认方式')
           .fontSize(AppFontSize.BODY_LARGE)
           .fontColor(this.colors.textColor)
-        Text(`没单独设置过的漫画使用默认方式，当前默认：${ReaderComicMode.label(this.defaultMode)}`)
+        Text(this.defaultModeDescription())
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.colors.subTextColor)
           .margin({ top: AppSpacing.XS })
@@ -138,14 +194,14 @@ export struct ReaderComicModeSettingsPanel {
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
 
-      Text(this.defaultMode === this.mode ? '已是默认' : '设为默认')
+      Text(this.currentModeIsDefault() ? '已是默认' : '设为默认')
         .fontSize(AppFontSize.BODY)
-        .fontColor(this.defaultMode === this.mode ? this.colors.subTextColor : this.colors.textColor)
+        .fontColor(this.currentModeIsDefault() ? this.colors.subTextColor : this.colors.textColor)
         .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.SM, bottom: AppSpacing.SM })
         .borderRadius(16)
-        .backgroundColor(this.defaultMode === this.mode ? Color.Transparent :
+        .backgroundColor(this.currentModeIsDefault() ? Color.Transparent :
           ThemeRuntime.accentSurfaceColor(this.colors.dark))
-        .enabled(this.defaultMode !== this.mode)
+        .enabled(!this.currentModeIsDefault())
         .onClick(() => this.onSetDefaultMode())
     }
     .width('100%')
@@ -156,30 +212,47 @@ export struct ReaderComicModeSettingsPanel {
   build() {
     Column({ space: 14 }) {
       ReaderComicOptionGroup({
-        title: '本书阅读方式',
+        title: this.orientationSplit ? (this.wideNow ? '竖屏阅读方式' : '竖屏阅读方式 · 当前') : '本书阅读方式',
         options: this.modeOptions(),
         selected: this.mode,
         colors: this.colors,
-        onSelect: (value: string): void => this.onSelectMode(value)
+        onSelect: (value: string): void => this.onSelectMode(value, false)
       })
+
+      if (this.orientationSplit) {
+        ReaderComicOptionGroup({
+          title: this.wideNow ? '横屏/展开阅读方式 · 当前' : '横屏/展开阅读方式',
+          options: this.wideModeOptions(),
+          selected: this.wideMode,
+          colors: this.colors,
+          onSelect: (value: string): void => this.onSelectMode(value, true)
+        })
+      }
 
       this.defaultModeRow()
 
-      if (this.paged()) {
-        ReaderSettingSelectRow({
-          title: '翻页动画',
-          description: '翻页时的切换效果',
-          options: this.animationOptions,
-          selected: this.animationSelected,
-          controlId: 'reader_comic_page_animation_select',
-          textColor: this.colors.textColor,
-          subTextColor: this.colors.subTextColor,
-          accentColor: this.colors.accentColor,
-          dark: this.colors.dark,
-          menuColor: this.colors.menuColor,
-          onSelect: (index: number): void => this.onAnimationChange(index)
-        })
+      if (!this.orientationSplit) {
+        if (this.paged()) {
+          this.animationRow('翻页动画', this.animationSelected, false)
+        }
+      } else {
+        if (ReaderComicMode.isPaged(this.mode)) {
+          this.animationRow(this.wideNow ? '竖屏翻页动画' : '竖屏翻页动画 · 当前', this.animationSelected, false)
+        }
+        if (ReaderComicMode.isPaged(this.wideResolved())) {
+          this.animationRow(this.wideNow ? '横屏/展开翻页动画 · 当前' : '横屏/展开翻页动画',
+            this.wideAnimationSelected, true)
+        }
       }
+
+      ReaderSettingSwitchRow({
+        title: '横竖屏分开设置',
+        description: '横屏或折叠屏展开时单独选阅读方式和翻页动画',
+        checked: this.orientationSplit,
+        textColor: this.colors.textColor,
+        subTextColor: this.colors.subTextColor,
+        onChange: (checked: boolean): void => this.onOrientationSplitChange(checked)
+      })
 
       ReaderSettingSwitchRow({
         title: '使用双翻页',

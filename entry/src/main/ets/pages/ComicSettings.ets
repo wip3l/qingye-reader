@@ -52,6 +52,8 @@ struct ComicSettingsPage {
   private pageVisible: boolean = false;
 
   private static readonly MODES: string[] = [ReaderComicMode.WEBTOON, ReaderComicMode.LTR, ReaderComicMode.RTL];
+  private static readonly WIDE_MODES: string[] = [ReaderComicMode.FOLLOW, ReaderComicMode.WEBTOON, ReaderComicMode.LTR,
+    ReaderComicMode.RTL];
   private static readonly BACKGROUNDS: string[] =
     [ReaderComicBackground.BLACK, ReaderComicBackground.WHITE, ReaderComicBackground.THEME];
   private static readonly FITS: string[] = [ReaderComicFit.WIDTH, ReaderComicFit.SCREEN];
@@ -97,13 +99,34 @@ struct ComicSettingsPage {
   settingsContent() {
     this.sectionTitle('阅读方式')
     Column() {
-      this.selectItem('默认阅读方式', '没单独设置过的漫画使用这里的方式',
+      this.selectItem('默认阅读方式', this.settings.orientationSplit ? '竖屏时没单独设置过的漫画使用这里的方式' :
+        '没单独设置过的漫画使用这里的方式',
         ComicSettingsPage.MODES.map((mode: string): SelectOption => ({ value: ReaderComicMode.label(mode) })),
         Math.max(0, ComicSettingsPage.MODES.indexOf(this.settings.defaultMode)), (index: number) => {
           this.update((next: ReaderComicSettings): void => {
             next.defaultMode = ComicSettingsPage.MODES[index] || ReaderComicMode.WEBTOON;
           });
         }, 'comic_settings_default_mode_select')
+      if (this.settings.orientationSplit) {
+        this.selectItem('横屏/展开默认阅读方式', '横屏或折叠屏展开时没单独设置过的漫画使用这里的方式',
+          ComicSettingsPage.WIDE_MODES.map((mode: string): SelectOption => ({ value: ReaderComicMode.label(mode) })),
+          Math.max(0, ComicSettingsPage.WIDE_MODES.indexOf(this.settings.defaultWideMode)), (index: number) => {
+            this.update((next: ReaderComicSettings): void => {
+              next.defaultWideMode = ComicSettingsPage.WIDE_MODES[index] || ReaderComicMode.FOLLOW;
+            });
+          }, 'comic_settings_default_wide_mode_select')
+      }
+      SettingSwitchRow({
+        title: '横竖屏分开设置',
+        description: '横屏或折叠屏展开时单独选阅读方式和翻页动画',
+        isOn: this.settings.orientationSplit,
+        onChange: (value: boolean) => {
+          this.update((next: ReaderComicSettings): void => {
+            next.orientationSplit = value;
+            if (value) next.widePageTurnAnimation = next.pageTurnAnimation;
+          });
+        }
+      })
       SettingSwitchRow({
         title: '点击翻页',
         description: '点击屏幕两侧翻页（条漫为翻一屏），中间呼出菜单',

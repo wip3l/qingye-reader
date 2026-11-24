@@ -563,6 +563,8 @@ struct ReadBookPage {
   @State showReaderSourceCard: boolean = false;
   /** 本书单独选的漫画阅读方式（书籍变量 readerComicReadingMode）；空串跟随全局默认。 */
   @State readerComicBookMode: string = '';
+  /** 本书横屏/展开时的漫画阅读方式（书籍变量 readerComicWideReadingMode，可为“同竖屏”）；空串跟随全局默认。 */
+  @State readerComicBookWideMode: string = '';
   /** 本书漫画图片繁→简（书籍变量 readerComicTextConvert，没单独设置过时跟随漫画设置的默认值）。 */
   @State readerComicTextConvert: boolean = false;
   /** 本书正文繁→简（书籍变量 readerTextConvert），漫画模式下不生效。 */
@@ -3131,7 +3133,7 @@ struct ReadBookPage {
         viewHeight: this.pageViewHeight,
         dualPage: this.isReaderComicDualPageActive(),
         rightToLeft: this.isReaderComicRightToLeft(),
-        animationType: this.readerComicSettings.pageTurnAnimation,
+        animationType: this.readerComicPageTurnAnimation(),
         darkMode: this.isReaderThemeDark(),
         doubleTapZoom: this.readerComicSettings.doubleTapZoom,
         superResolution: this.isReaderComicSuperResolutionActive(),
@@ -3190,7 +3192,39 @@ struct ReadBookPage {
 
   readerComicEffectiveMode(): string {
     if (this.readerAutoScrollActive) return ReaderComicMode.WEBTOON;
+    if (this.readerComicWideActive()) {
+      const wide = this.readerComicWideSelectedMode();
+      if (wide !== ReaderComicMode.FOLLOW) return wide;
+    }
+    return this.readerComicPortraitMode();
+  }
+
+  /** 竖屏那份（不分横竖屏时就是唯一一份）阅读方式。 */
+  readerComicPortraitMode(): string {
     return this.readerComicBookMode || this.readerComicSettings.defaultMode;
+  }
+
+  /** 横屏/展开那份阅读方式，可能是“同竖屏”。 */
+  readerComicWideSelectedMode(): string {
+    return this.readerComicBookWideMode || this.readerComicSettings.defaultWideMode;
+  }
+
+  /** 横竖屏分开设置打开且阅读区够宽（横屏或折叠屏展开）时用横屏那份阅读方式与翻页动画。 */
+  readerComicWideActive(): boolean {
+    return this.readerComicSettings.orientationSplit &&
+      ReaderPageTurnAnimation.wideViewport(this.pageViewWidth, this.pageViewHeight);
+  }
+
+  readerComicPageTurnAnimation(): number {
+    return this.readerComicWideActive() ? this.readerComicSettings.widePageTurnAnimation :
+      this.readerComicSettings.pageTurnAnimation;
+  }
+
+  /** 转屏、展开或改设置后生效的阅读方式变了：和手动换方式一样复位缩放，按当前页恢复位置。 */
+  syncReaderComicModeAfterChange(previousMode: string): void {
+    if (!this.isReaderComicModeActive() || previousMode === this.readerComicEffectiveMode()) return;
+    this.readerComicZoomScale = 1;
+    this.scheduleReaderComicScrollRestore();
   }
 
   isReaderComicPagedMode(): boolean {
@@ -3223,20 +3257,27 @@ struct ReadBookPage {
     this.ensureReaderComicPagedNeighbors();
   }
 
-  /** 本书改用另一种漫画阅读方式；当前页码不变。 */
-  setReaderComicBookMode(mode: string): void {
+  /** 本书改用另一种漫画阅读方式（wide 为横屏/展开那份）；当前页码不变。 */
+  setReaderComicBookMode(mode: string, wide: boolean = false): void {
     if (!this.book) return;
     this.stopReaderAutoScroll();
-    const next = ReaderComicMode.normalize(mode);
-    if (next === this.readerComicEffectiveMode() && this.readerComicBookMode) return;
-    this.readerComicBookMode = next;
-    this.readerComicZoomScale = 1;
-    this.book.putVariable('readerComicReadingMode', next);
+    const previousMode = this.readerComicEffectiveMode();
+    if (wide) {
+      const next = ReaderComicMode.normalizeWide(mode);
+      if (next === this.readerComicBookWideMode) return;
+      this.readerComicBookWideMode = next;
+      this.book.putVariable('readerComicWideReadingMode', next);
+    } else {
+      const next = ReaderComicMode.normalize(mode);
+      if (next === this.readerComicBookMode) return;
+      this.readerComicBookMode = next;
+      this.book.putVariable('readerComicReadingMode', next);
+    }
     AppDatabase.getInstance().updateBook(this.book, false).catch((error: Error) => {
       console.warn('保存漫画阅读方式失败:', error);
     });
     // 条漫列表重新挂载后按当前页恢复滚动位置；翻页视图直接以 currentPageIndex 定位。
-    this.scheduleReaderComicScrollRestore();
+    this.syncReaderComicModeAfterChange(previousMode);
   }
 
   handleReaderComicImageLongPress(source: string, reload: () => void, snapshotId: string): void {
@@ -3779,7 +3820,10 @@ struct ReadBookPage {
 
   loadReaderComicSettings(): void {
     ReaderComicSettingsStore.load(getContext(this)).then((settings: ReaderComicSettings): void => {
+      const previousMode = this.readerComicEffectiveMode();
       this.readerComicSettings = settings;
+      // 刚在漫画设置页改了默认方式或横竖屏分开设置：生效方式变了要按当前页恢复位置。
+      this.syncReaderComicModeAfterChange(previousMode);
       this.syncReaderInfoBarClock();
       // 设置可能晚于书籍读出，或刚在漫画设置页改了着色、繁→简的默认值，没单独设置过的书要跟着变。
       if (this.book) this.applyReaderComicAiChoices();
@@ -3834,7 +3878,9 @@ struct ReadBookPage {
     const next = this.readerComicSettings.copy();
     mutate(next);
     const backgroundChanged = next.background !== this.readerComicSettings.background;
+    const previousMode = this.readerComicEffectiveMode();
     this.readerComicSettings = next;
+    this.syncReaderComicModeAfterChange(previousMode);
     ReaderComicSettingsStore.save(getContext(this), next).catch((error: Error) => {
       console.warn('保存漫画设置失败:', error);
     });
@@ -3898,14 +3944,22 @@ struct ReadBookPage {
     ReaderComicModeSettingsPanel({
       animationOptions: this.pageTurnAnimationOptions(true),
       animationSelected: ReaderPageTurnAnimation.types().indexOf(this.readerComicSettings.pageTurnAnimation),
-      onAnimationChange: (index: number): void => {
+      wideAnimationSelected: ReaderPageTurnAnimation.types().indexOf(this.readerComicSettings.widePageTurnAnimation),
+      onAnimationChange: (index: number, wide: boolean): void => {
         const types = ReaderPageTurnAnimation.types();
         this.updateReaderComicSettings((settings: ReaderComicSettings): void => {
-          settings.pageTurnAnimation = types[index] ?? ReaderPageTurnAnimation.SLIDE;
+          const type = types[index] ?? ReaderPageTurnAnimation.SLIDE;
+          if (wide) settings.widePageTurnAnimation = type; else settings.pageTurnAnimation = type;
         });
       },
-      mode: this.readerComicEffectiveMode(),
+      // 横竖屏分开时这里是竖屏那份（不受自动滚动临时切成条漫影响）；不分开时照旧是生效的方式。
+      mode: this.readerComicSettings.orientationSplit ? this.readerComicPortraitMode() :
+        this.readerComicEffectiveMode(),
+      wideMode: this.readerComicWideSelectedMode(),
+      orientationSplit: this.readerComicSettings.orientationSplit,
+      wideNow: this.readerComicWideActive(),
       defaultMode: this.readerComicSettings.defaultMode,
+      defaultWideMode: this.readerComicSettings.defaultWideMode,
       tapTurn: this.readerComicSettings.tapTurn,
       dualPage: this.readerComicSettings.dualPage,
       volumeTurnPage: ReaderInputScopes.includes(this.readerVolumeTurnScope, ReaderInputKind.COMIC),
@@ -3915,19 +3969,35 @@ struct ReadBookPage {
       orientationOptions: this.screenOrientationOptions(),
       orientationSelected: this.screenOrientationSelectedIndex(),
       colors: this.readerComicPanelColors(),
-      onSelectMode: (mode: string): void => {
+      onSelectMode: (mode: string, wide: boolean): void => {
         if (mode === READER_COMIC_TEXT_MODE) {
           if (this.isReaderComicModeActive()) this.toggleReaderComicReadingMode();
         } else {
-          this.setReaderComicBookMode(mode);
+          this.setReaderComicBookMode(mode, wide);
         }
       },
       onSetDefaultMode: (): void => {
-        const mode = this.readerComicEffectiveMode();
+        if (this.readerComicWideActive()) {
+          const wideMode = this.readerComicWideSelectedMode();
+          this.updateReaderComicSettings((settings: ReaderComicSettings): void => {
+            settings.defaultWideMode = wideMode;
+          });
+          HdsFeedback.showToast(`横屏/展开默认阅读方式已设为${ReaderComicMode.label(wideMode)}`);
+          return;
+        }
+        const mode = this.readerComicSettings.orientationSplit ? this.readerComicPortraitMode() :
+          this.readerComicEffectiveMode();
         this.updateReaderComicSettings((settings: ReaderComicSettings): void => {
           settings.defaultMode = mode;
         });
-        HdsFeedback.showToast(`默认阅读方式已设为${ReaderComicMode.label(mode)}`);
+        HdsFeedback.showToast(`${this.readerComicSettings.orientationSplit ? '竖屏' : ''}默认阅读方式已设为${ReaderComicMode.label(mode)}`);
+      },
+      onOrientationSplitChange: (checked: boolean): void => {
+        this.updateReaderComicSettings((settings: ReaderComicSettings): void => {
+          settings.orientationSplit = checked;
+          // 打开时横屏动画先复制竖屏那份，之后各管各的；横屏默认方式出厂是“同竖屏”，打开后行为不变。
+          if (checked) settings.widePageTurnAnimation = settings.pageTurnAnimation;
+        });
       },
       onTapTurnChange: (checked: boolean): void => {
         this.updateReaderComicSettings((settings: ReaderComicSettings): void => {
@@ -8285,6 +8355,8 @@ struct ReadBookPage {
     this.syncReaderImageDeferral();
     const bookMode = this.book?.getVariable('readerComicReadingMode') || '';
     this.readerComicBookMode = bookMode ? ReaderComicMode.normalize(bookMode) : '';
+    const bookWideMode = this.book?.getVariable('readerComicWideReadingMode') || '';
+    this.readerComicBookWideMode = bookWideMode ? ReaderComicMode.normalizeWide(bookWideMode) : '';
     this.readerComicTextConvert = this.readerComicBookTextConvert();
     this.readerComicColorEnabled = this.readerComicBookColorEnabled();
     if (!this.readerComicColorUnsubscribe) {
@@ -9463,12 +9535,16 @@ struct ReadBookPage {
       this.readerTypographyRestoreOffset = readingOffset;
     }
     const previousPageTurnAnimation = this.effectivePageTurnAnimationType();
+    const previousComicMode = this.readerComicEffectiveMode();
     this.pageViewWidth = width;
     this.pageViewHeight = height;
     if (this.effectivePageTurnAnimationType() !== previousPageTurnAnimation) {
       // 横竖屏分开设置翻页动画时转屏换了一种动画：先收掉旧动画留下的翻页层，再按新视口分页。
       this.resetSlidePageEffect();
     }
+    // 漫画横竖屏分开设置：转屏或展开换了阅读方式，等下面按新视口分页后再按当前页恢复位置。
+    const comicModeChanged = this.isReaderComicModeActive() && previousComicMode !== this.readerComicEffectiveMode();
+    if (comicModeChanged) this.readerComicZoomScale = 1;
     if (this.usesReaderContinuousV2()) {
       // Cached chunks own a native width snapshot. The first measured area (or a resized window) must
       // invalidate both those snapshots and retained List hosts, even when chunk text is unchanged.
@@ -9487,6 +9563,7 @@ struct ReadBookPage {
       this.currentPageIndex = this.normalizeReaderSpreadPageIndex(this.findPageIndexByOffset(readingOffset));
     }
     this.syncCurrentPageText();
+    if (comicModeChanged) this.scheduleReaderComicScrollRestore();
     this.preloadNextChapterPaginationLater();
     this.preloadPreviousChapterPaginationLater();
   }

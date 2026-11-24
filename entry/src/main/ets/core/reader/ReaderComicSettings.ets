@@ -7,9 +7,17 @@ export class ReaderComicMode {
   static readonly WEBTOON: string = 'webtoon';
   static readonly LTR: string = 'ltr';
   static readonly RTL: string = 'rtl';
+  /** 横屏/展开阅读方式专用：跟竖屏那份一样。 */
+  static readonly FOLLOW: string = 'follow';
 
   static normalize(value: string): string {
     return value === ReaderComicMode.LTR || value === ReaderComicMode.RTL ? value : ReaderComicMode.WEBTOON;
+  }
+
+  /** 横屏/展开那份阅读方式：三种方式之一或“同竖屏”，其他值都当“同竖屏”。 */
+  static normalizeWide(value: string): string {
+    return value === ReaderComicMode.WEBTOON || value === ReaderComicMode.LTR || value === ReaderComicMode.RTL ?
+      value : ReaderComicMode.FOLLOW;
   }
 
   static isPaged(value: string): boolean {
@@ -17,6 +25,7 @@ export class ReaderComicMode {
   }
 
   static label(value: string): string {
+    if (value === ReaderComicMode.FOLLOW) return '同竖屏';
     if (value === ReaderComicMode.LTR) return '从左往右';
     if (value === ReaderComicMode.RTL) return '从右往左';
     return '条漫';
@@ -71,13 +80,22 @@ export class ReaderComicOption {
   }
 }
 
-/** 漫画模式的全局设置。阅读方式另有按书覆盖（书籍变量 readerComicReadingMode）。 */
+/**
+ * 漫画模式的全局设置。阅读方式另有按书覆盖（书籍变量 readerComicReadingMode）。
+ * 打开 orientationSplit 后，阅读区够宽（横屏或折叠屏展开，见 ReaderPageTurnAnimation.wideViewport）时
+ * 改用横屏那份阅读方式与翻页动画：按书覆盖存书籍变量 readerComicWideReadingMode，没设过用 defaultWideMode。
+ */
 export class ReaderComicSettings {
   static readonly PAGE_GAPS: number[] = [0, 6, 16];
 
   defaultMode: string = ReaderComicMode.WEBTOON;
   /** 横向漫画翻页动画，独立保存，避免改变小说的动画偏好。 */
   pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  /** 横竖屏分开设置阅读方式与翻页动画。 */
+  orientationSplit: boolean = false;
+  /** 横屏/展开时没单独设置过的漫画用的方式；FOLLOW 表示跟竖屏一样。 */
+  defaultWideMode: string = ReaderComicMode.FOLLOW;
+  widePageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
   background: string = ReaderComicBackground.BLACK;
   pageGap: number = 0;
   fit: string = ReaderComicFit.WIDTH;
@@ -110,6 +128,9 @@ export class ReaderComicSettings {
     const next = new ReaderComicSettings();
     next.defaultMode = this.defaultMode;
     next.pageTurnAnimation = this.pageTurnAnimation;
+    next.orientationSplit = this.orientationSplit;
+    next.defaultWideMode = this.defaultWideMode;
+    next.widePageTurnAnimation = this.widePageTurnAnimation;
     next.background = this.background;
     next.pageGap = this.pageGap;
     next.fit = this.fit;
@@ -128,6 +149,9 @@ export class ReaderComicSettings {
     const record: Record<string, Object> = {
       'defaultMode': this.defaultMode,
       'pageTurnAnimation': this.pageTurnAnimation,
+      'orientationSplit': this.orientationSplit,
+      'defaultWideMode': this.defaultWideMode,
+      'widePageTurnAnimation': this.widePageTurnAnimation,
       'background': this.background,
       'pageGap': this.pageGap,
       'fit': this.fit,
@@ -151,6 +175,10 @@ export class ReaderComicSettings {
       settings.defaultMode = ReaderComicMode.normalize(String(record['defaultMode'] ?? ''));
       settings.pageTurnAnimation = ReaderPageTurnAnimation.normalize(Number(record['pageTurnAnimation'] ??
         ReaderPageTurnAnimation.SLIDE));
+      settings.orientationSplit = record['orientationSplit'] === true;
+      settings.defaultWideMode = ReaderComicMode.normalizeWide(String(record['defaultWideMode'] ?? ''));
+      settings.widePageTurnAnimation = ReaderPageTurnAnimation.normalize(Number(record['widePageTurnAnimation'] ??
+        settings.pageTurnAnimation));
       settings.background = ReaderComicBackground.normalize(String(record['background'] ?? ''));
       settings.pageGap = ReaderComicSettings.nearest(Number(record['pageGap']), ReaderComicSettings.PAGE_GAPS, 0);
       settings.fit = ReaderComicFit.normalize(String(record['fit'] ?? ''));
