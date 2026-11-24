@@ -1212,7 +1212,7 @@ struct ThemeTypographySettingsPage {
     legacy.fontSize = this.draft.regexFontSize;
     legacy.shadowColor = this.draft.regexShadowColor;
     return ReaderRegexFontCodec.decode(this.draft.regexFontRulesRaw, legacy)
-      .filter((rule: ReaderRegexFontRule): boolean => !!(rule.pattern || '').trim());
+      .filter((rule: ReaderRegexFontRule): boolean => rule.enabled && !!(rule.pattern || '').trim());
   }
 
   ruleAt(index: number): ReaderRegexFontRule {

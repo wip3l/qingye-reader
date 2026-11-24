@@ -513,7 +513,17 @@ export struct ReaderFontSettingsEditor {
               ListItem() {
                 this.regexRuleRow(rule)
               }
-            }, (rule: ReaderRegexFontRule) => `${rule.id}|${rule.name}|${rule.pattern}|${rule.scope}`)
+              // 左滑出“停用/启用”和“删除”。不设整条滑到底就执行，免得拖过头误删。
+              .swipeAction({
+                end: {
+                  builder: () => {
+                    this.regexRuleSwipeActions(rule)
+                  }
+                },
+                edgeEffect: SwipeEdgeEffect.Spring
+              })
+              // 键里带启用状态：切换后条目重建，左滑出来的按钮随之收回。
+            }, (rule: ReaderRegexFontRule) => `${rule.id}|${rule.name}|${rule.pattern}|${rule.scope}|${rule.enabled}`)
               .onMove((from: number, to: number) => this.moveRegexRuleDuringDrag(from, to), {
                 onDragStart: (index: number) => {
                   this.draggingRegexRuleId = index >= 0 && index < this.regexRules.length ? this.regexRules[index].id : '';
@@ -553,7 +563,7 @@ export struct ReaderFontSettingsEditor {
         .fontSize(14)
         .fontColor([this.subTextColor()])
         .margin({ top: 2 })
-      Text('同一段文字被几条规则命中时，用排在上面的那条。长按拖动调整顺序。')
+      Text('同一段文字被几条规则命中时，用排在上面的那条。长按拖动调整顺序，左滑可停用。')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
         .layoutWeight(1)
@@ -561,6 +571,45 @@ export struct ReaderFontSettingsEditor {
     .width('100%')
     .alignItems(VerticalAlign.Top)
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM })
+  }
+
+  @Builder
+  regexRuleSwipeActions(rule: ReaderRegexFontRule) {
+    Row() {
+      Column({ space: AppSpacing.XS }) {
+        SymbolGlyph(rule.enabled ? $r('sys.symbol.minus_circle') : $r('sys.symbol.checkmark_circle'))
+          .fontSize(20)
+          .fontColor(['#FFFFFF'])
+        Text(rule.enabled ? '停用' : '启用')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor('#FFFFFF')
+      }
+      .width(64)
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor(ThemeRuntime.buttonColor(this.appDarkMode))
+      .accessibilityText(rule.enabled ? '停用规则' : '启用规则')
+      .onClick(() => this.toggleRegexRuleEnabled(rule.id))
+      Column({ space: AppSpacing.XS }) {
+        SymbolGlyph($r('sys.symbol.trash'))
+          .fontSize(20)
+          .fontColor(['#FFFFFF'])
+        Text('删除')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor('#FFFFFF')
+      }
+      .width(64)
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode))
+      .accessibilityText('删除规则')
+      .onClick(() => this.confirmDeleteRegexRule(rule))
+    }
+    .height(REGEX_RULE_ROW_HEIGHT)
+  }
+
+  regexRuleDisabledCount(): number {
+    return this.regexRules.filter((rule: ReaderRegexFontRule): boolean => !rule.enabled).length;
   }
 
   /** 拖动中只改顺序；松手由 onDrop 保存一次。 */
@@ -739,7 +788,32 @@ export struct ReaderFontSettingsEditor {
     this.closeRegexRuleEditor();
     if (index < 0 || index >= this.regexRules.length) return;
     // 编辑面板滑走后这一条再消散，播完在补位动画里删掉。
-    const ruleId = `${this.regexRules[index].id}`;
+    await this.dissolveRegexRule(`${this.regexRules[index].id}`);
+  }
+
+  /** 列表左滑删除：先确认，再按编辑页删除同样消散。 */
+  confirmDeleteRegexRule(rule: ReaderRegexFontRule): void {
+    this.getUIContext().showAlertDialog({
+      title: '删除规则',
+      message: `确定删除“${rule.name || '正则规则'}”吗？只想暂时不用可以选“停用”。`,
+      primaryButton: { value: '取消', action: () => {} },
+      secondaryButton: {
+        value: '删除',
+        fontColor: ThemeRuntime.dangerColor(this.appDarkMode),
+        action: () => {
+          this.dissolveRegexRule(`${rule.id}`);
+        }
+      }
+    });
+  }
+
+  toggleRegexRuleEnabled(ruleId: string): void {
+    this.updateRegexRuleById(ruleId, (target: ReaderRegexFontRule) => {
+      target.enabled = !target.enabled;
+    });
+  }
+
+  async dissolveRegexRule(ruleId: string): Promise<void> {
     const keys = [ruleId];
     await ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
       this.dissolvingRuleIds = [...this.dissolvingRuleIds, key];
@@ -1204,7 +1278,8 @@ export struct ReaderFontSettingsEditor {
   @Builder
   regexRulesGroupTitle() {
     Row() {
-      Text(`我的规则 · ${this.regexRules.length}`)
+      Text(`我的规则 · ${this.regexRules.length}` +
+        (this.regexRuleDisabledCount() > 0 ? `（${this.regexRuleDisabledCount()} 条已停用）` : ''))
         .fontSize(AppFontSize.BODY)
         .fontColor(this.subTextColor())
         .layoutWeight(1)
@@ -1254,6 +1329,7 @@ export struct ReaderFontSettingsEditor {
         .fontColor(this.subTextColor())
         .width(16)
         .textAlign(TextAlign.Center)
+        .opacity(rule.enabled ? 1 : 0.5)
       Column({ space: AppSpacing.XXS }) {
         Row({ space: AppSpacing.SM }) {
           Text(rule.name || `规则${this.regexRuleNumber(rule.id)}`)
@@ -1265,6 +1341,14 @@ export struct ReaderFontSettingsEditor {
             .flexShrink(1)
           if (ReaderRegexScope.badge(rule.scope)) {
             Text(ReaderRegexScope.badge(rule.scope))
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.subTextColor())
+              .padding({ left: 6, right: 6, top: 1, bottom: 1 })
+              .borderRadius(6)
+              .backgroundColor(this.inputColor())
+          }
+          if (!rule.enabled) {
+            Text('已停用')
               .fontSize(AppFontSize.CAPTION)
               .fontColor(this.subTextColor())
               .padding({ left: 6, right: 6, top: 1, bottom: 1 })
@@ -1283,6 +1367,7 @@ export struct ReaderFontSettingsEditor {
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
+      .opacity(rule.enabled ? 1 : 0.5)
       SymbolGlyph($r('sys.symbol.chevron_right'))
         .fontSize(18)
         .fontColor([this.subTextColor()])
@@ -1296,7 +1381,8 @@ export struct ReaderFontSettingsEditor {
       color: this.settingsDividerColor() })
     .alignItems(VerticalAlign.Center)
     .accessibilityGroup(true)
-    .accessibilityText(`第 ${this.regexRuleNumber(rule.id)} 条，${rule.name || '正则规则'}，点按编辑，长按拖动调整顺序`)
+    .accessibilityText(`第 ${this.regexRuleNumber(rule.id)} 条，${rule.name || '正则规则'}${rule.enabled ? '' : '，已停用'}，` +
+      '点按编辑，长按拖动调整顺序，左滑停用或删除')
     .opacity(ListDissolve.opacity(this.isRegexRuleDissolving(rule)))
     .scale(ListDissolve.scale(this.isRegexRuleDissolving(rule)))
     .blur(ListDissolve.blur(this.isRegexRuleDissolving(rule)))
@@ -1898,7 +1984,7 @@ export struct ReaderFontSettingsEditor {
     const body = withBody ? '\n' + this.previewIndentedBody(
       '清晨的风穿过长街，带来一阵粽叶的清香。街角的小摊刚刚支起，竹篮里整整齐齐地码着新煮好的粽子。\n' +
       '“卖鸭蛋，卖粽子喽——”一声吆喝，把沉睡的小城轻轻唤醒。',
-      this.readerRegexFontEnabled ? this.regexRules : []) : '';
+      this.readerRegexFontEnabled ? ReaderRegexFontCodec.activeRules(this.regexRules) : []) : '';
     config.document = ReaderV2DocumentParser.parse(this.titlePreviewText + body, 0, this.titlePreviewText, [], this.titleStyle);
     const titlePlan = this.titleEmphasisPlan(this.typographyPreviewContext());
     if (titlePlan) {
@@ -1924,7 +2010,7 @@ export struct ReaderFontSettingsEditor {
     const content = config.document.displayText;
     const titleRanges = this.previewTitleRanges(config);
     for (const rule of this.regexRules) {
-      if (!rule.pattern.trim()) continue;
+      if (!rule.enabled || !rule.pattern.trim()) continue;
       let regex: RegExp;
       try { regex = new RegExp(rule.pattern, 'g'); } catch (_) { continue; }
       let match = regex.exec(content);

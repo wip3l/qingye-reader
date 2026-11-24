@@ -19329,7 +19329,8 @@ ${leading}` : leading;
     legacy.fontFamily = this.readerRegexFontFamily;
     legacy.fontSize = this.readerRegexFontSize;
     legacy.shadowColor = this.readerRegexShadowColor;
-    this.cachedRegexRules = ReaderRegexFontCodec.decode(this.readerRegexFontRulesRaw, legacy);
+    // 停用的规则直接去掉：切片里的 ruleIndex 按这份列表取规则，两边要一致。
+    this.cachedRegexRules = ReaderRegexFontCodec.activeRules(ReaderRegexFontCodec.decode(this.readerRegexFontRulesRaw, legacy));
     this.cachedRegexRulesKey = key;
     return this.cachedRegexRules;
   }

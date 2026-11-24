@@ -9,6 +9,8 @@ export class ReaderRegexFontRule {
   id: string = '';
   name: string = '';
   pattern: string = '';
+  /** 停用的规则保留位置和设置，但阅读页与各处预览都跳过它、不占位置；没有这个字段的旧规则按启用。 */
+  enabled: boolean = true;
   fontMode: string = 'global';
   fontFamily: string = '';
   fontSize: number = 20;
@@ -152,6 +154,7 @@ export class ReaderRegexFontCodec {
       rule.id = item.id || ReaderRegexFontCodec.newRuleId();
       rule.name = (item.name || '正则规则').trim();
       rule.pattern = (item.pattern || '').trim();
+      rule.enabled = item.enabled !== false;
       rule.fontMode = ReaderRegexFontCodec.normalizeFontMode(item.fontMode);
       rule.fontFamily = item.fontFamily || '';
       rule.fontSize = ReaderRegexFontCodec.normalizeFontSize(item.fontSize);
@@ -184,6 +187,11 @@ export class ReaderRegexFontCodec {
       result.push(rule);
     }
     return result;
+  }
+
+  /** 参与匹配的规则（去掉停用的），保持原顺序。 */
+  static activeRules(rules: ReaderRegexFontRule[]): ReaderRegexFontRule[] {
+    return rules.filter((rule: ReaderRegexFontRule): boolean => rule.enabled !== false);
   }
 
   static cloneRule(source: ReaderRegexFontRule): ReaderRegexFontRule {
@@ -250,7 +258,8 @@ export class ReaderRegexFontCodec {
   static indentOverrides(rules: ReaderRegexFontRule[]): ReaderParagraphIndentOverride[] {
     const result: ReaderParagraphIndentOverride[] = [];
     for (const rule of rules) {
-      if (rule.paragraphIndent < 0 || !rule.pattern.trim() || !ReaderRegexScope.includesBody(rule.scope)) continue;
+      if (rule.enabled === false || rule.paragraphIndent < 0 || !rule.pattern.trim() ||
+        !ReaderRegexScope.includesBody(rule.scope)) continue;
       const item = new ReaderParagraphIndentOverride();
       item.pattern = rule.pattern;
       item.indent = rule.paragraphIndent;

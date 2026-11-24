@@ -255,7 +255,7 @@ export struct ReaderSettingsPreview {
     const titleStyles = config.styles.slice();
     const matched: ReaderV2SpanStyleRange[] = [];
     for (const rule of rules) {
-      if (!rule.pattern.trim()) continue;
+      if (!rule.enabled || !rule.pattern.trim()) continue;
       let expression: RegExp;
       try { expression = new RegExp(rule.pattern, 'g'); } catch (_) { continue; }
       let match = expression.exec(content);
