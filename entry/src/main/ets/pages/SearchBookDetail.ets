@@ -1488,7 +1488,7 @@ struct SearchBookDetailPage {
   async loadBookInfo(): Promise<void> {
     try {
       const fullBook = await this.resolveBookInfo();
-      if (fullBook) this.syncStateFromBook(fullBook);
+      if (fullBook) this.syncStateFromBook(fullBook, false);
       if (!this.intro) this.scheduleBookInfoRetry();
     } catch (e) {
       console.warn('加载书籍详情失败:', e);
@@ -1525,7 +1525,7 @@ struct SearchBookDetailPage {
       if (fullBook) {
         fullBook.lastCheckTime = Date.now();
         this.resolvedBookInfo = fullBook;
-        this.syncStateFromBook(fullBook);
+        this.syncStateFromBook(fullBook, false);
       }
       return fullBook;
     } finally {
@@ -2438,7 +2438,11 @@ struct SearchBookDetailPage {
     return true;
   }
 
-  syncStateFromBook(book: Book): void {
+  /**
+   * 用书的字段刷新页面状态。shelfRecord 为 false 表示这本书是从书源现拉的详情（不带书架分组），
+   * 这时不能拿它的 group 覆盖分组，否则详情一加载完，在书架里的书就会全显示成未分组。
+   */
+  syncStateFromBook(book: Book, shelfRecord: boolean = true): void {
     this.bookUrl = book.bookUrl || this.bookUrl;
     this.tocUrl = book.tocUrl || this.tocUrl;
     this.origin = book.origin || this.origin;
@@ -2454,8 +2458,10 @@ struct SearchBookDetailPage {
     this.updateTime = book.updateTime || this.updateTime;
     this.bookType = book.type || this.bookType;
     this.bookVariable = book.variable || this.bookVariable;
-    this.shelfGroupId = book.group > 0 ? book.group : 0;
-    this.refreshShelfGroupName();
+    if (shelfRecord) {
+      this.shelfGroupId = book.group > 0 ? book.group : 0;
+      this.refreshShelfGroupName();
+    }
     this.bookInfoRenderVersion++;
     // 书籍信息补齐后作者可能才有，作品键随之变化。
     this.loadBookMark();
