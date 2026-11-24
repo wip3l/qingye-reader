@@ -209,21 +209,18 @@ test('membership SQL transactions and quota lifecycle (embedded PostgreSQL)', as
       }
     }
   });
-  await t.test('a prepaid annual term starts gifts only when the current monthly term ends', async () => {
+  await t.test('a prepaid annual term counts as annual immediately, while the monthly term still runs', async () => {
     const id = await user();
     await buy(id, 'MONTHLY');
     const monthlyEnd = (await readMembership(query, id))!.expiresAt!;
     await buy(id, 'ANNUAL', now + 1000);
     assert.equal((await readMembership(query, id))!.sku, 'ANNUAL');
-    const before = await membershipSnapshot(query, id, monthlyEnd - 1);
-    assert.equal(before.tierSku, 'MONTHLY');
-    assert.equal(before.benefits.standardGiftChars, 0);
-    await assert.rejects(tx(c => claimMembershipGift(c, id, 'PREMIUM', monthlyEnd - 1)),
-      rejectedCode('MEMBERSHIP_GIFT_NOT_INCLUDED'));
+    const before = await membershipSnapshot(query, id, now + 2000);
+    assert.equal(before.tierSku, 'ANNUAL');
+    assert.equal(before.benefits.premiumGiftChars, 2500);
+    assert.equal((await tx(c => claimMembershipGift(c, id, 'PREMIUM', now + 2000))).chars, 2500);
     const after = await membershipSnapshot(query, id, monthlyEnd);
     assert.equal(after.tierSku, 'ANNUAL');
-    assert.equal(after.benefits.premiumGiftChars, 2500);
-    assert.equal((await tx(c => claimMembershipGift(c, id, 'PREMIUM', monthlyEnd))).chars, 2500);
     await assert.rejects(tx(c => claimMembershipGift(c, id, 'STANDARD', after.state!.expiresAt!)),
       rejectedCode('MEMBERSHIP_INACTIVE'));
   });

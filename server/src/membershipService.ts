@@ -72,15 +72,17 @@ export async function membershipPriority(db: MembershipDb, userId: string, now =
 }
 
 /**
- * The product that pays for `now`. A periodic period keeps the SKU of its latest purchase, so an annual
- * member who adds a month would otherwise look monthly; the covering order decides benefits instead.
+ * The highest product among the period's paid terms that have not ended. A periodic period keeps the SKU
+ * of its latest purchase, so an annual member who adds a month would otherwise look monthly; and a monthly
+ * member who prepays a year counts as annual right away instead of waiting for the month to run out.
  */
 export async function membershipTierSku(db: MembershipDb, state: MembershipState, now = Date.now()): Promise<MembershipSku> {
   if (state.expiresAt === null) return state.sku;
-  const covering = await db.query<{ sku: MembershipSku }>(`SELECT sku FROM membership_orders
-    WHERE period_id = $1 AND term_starts_at <= $2 AND term_ends_at > $2
-    ORDER BY term_starts_at DESC LIMIT 1`, [state.periodId, new Date(now)]);
-  return covering.rows[0]?.sku ?? state.sku;
+  const highest = await db.query<{ sku: MembershipSku }>(`SELECT sku FROM membership_orders
+    WHERE period_id = $1 AND term_ends_at > $2
+    ORDER BY array_position(ARRAY['MONTHLY','ANNUAL','LIFETIME','SUPER_LIFETIME'], sku) DESC, term_starts_at
+    LIMIT 1`, [state.periodId, new Date(now)]);
+  return highest.rows[0]?.sku ?? state.sku;
 }
 
 async function lockAccount(db: MembershipDb, userId: string): Promise<void> {
