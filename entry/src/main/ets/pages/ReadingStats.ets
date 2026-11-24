@@ -21,6 +21,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
+import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
 import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
@@ -29,6 +30,10 @@ import { ReadStatsSettingsStore } from '../utils/ReadStatsSettingsStore';
 
 const STATS_MODES: string[] = ['day', 'week', 'month', 'year', 'all'];
 const STATS_MODE_LABELS: string[] = ['日', '周', '月', '年', '全部'];
+/** 多选底部胶囊：宽、高，以及列表末尾为它多留的高度（胶囊 + 上方范围说明 + 间距）。 */
+const SELECTION_DOCK_WIDTH: number = 252;
+const SELECTION_DOCK_HEIGHT: number = 54;
+const SELECTION_DOCK_SPACE: number = 104;
 
 interface ReadingStatsMetricDisplay {
   label: string;
@@ -102,6 +107,11 @@ struct ReadingStatsPage {
   @State sameTitleRows: ReadStatsRank[] = [];
   /** 合并关系变了加一，让“已合并的记录”面板重读。 */
   @State mergeRevision: number = 0;
+  /** 排行多选：勾选的行按 bookKey 记；多选时页头只留排行标题，底部浮出“合并 / 删除”胶囊，左滑删除关掉。 */
+  @State selecting: boolean = false;
+  @State selectedKeys: string[] = [];
+  /** “合并所选”面板（recordSheetMode 为 mergeMany）里参与合并的各行 workKey。 */
+  @State mergeSelection: string[] = [];
   private merges: ReadWorkMergeGroup[] = [];
   private ignoredTitles: string[] = [];
   private fold: ((text: string) => string) | null = null;
@@ -126,6 +136,8 @@ struct ReadingStatsPage {
   private onStatsAccountChanged(): void {
     if (!this.alive || !this.viewReady || this.ownerId === this.statsAccountId) return;
     this.requestVersion++;
+    this.selecting = false;
+    this.selectedKeys = [];
     this.ownerId = this.statsAccountId;
     this.selectedDevice = '';
     this.devices = [];
@@ -137,9 +149,44 @@ struct ReadingStatsPage {
     if (this.showRecordSheet) { this.showRecordSheet = false; return true; }
     if (this.showMoreMenu) { this.showMoreMenu = false; return true; }
     if (this.showSortMenu) { this.showSortMenu = false; return true; }
-    if (!this.showItemActionMenu) return false;
-    this.showItemActionMenu = false;
+    if (this.showItemActionMenu) { this.showItemActionMenu = false; return true; }
+    if (!this.selecting) return false;
+    this.exitSelection();
     return true;
+  }
+  /** 从长按菜单进入时把那一行先勾上；从“选择”进入时传空。 */
+  private enterSelection(bookKey: string): void {
+    this.selectedKeys = bookKey ? [bookKey] : [];
+    this.selecting = true;
+    this.source.update(this.rankedItems());
+  }
+  private exitSelection(): void {
+    if (!this.selecting) return;
+    this.selecting = false;
+    this.selectedKeys = [];
+    this.source.update(this.rankedItems());
+  }
+  private toggleSelected(bookKey: string): void {
+    this.selectedKeys = this.selectedKeys.includes(bookKey) ?
+      this.selectedKeys.filter((key: string): boolean => key !== bookKey) : [...this.selectedKeys, bookKey];
+  }
+  private allSelected(): boolean {
+    return this.summary.items.length > 0 && this.selectedKeys.length >= this.summary.items.length;
+  }
+  private toggleAllSelected(): void {
+    this.selectedKeys = this.allSelected() ? [] : this.summary.items.map((item: ReadStatsRank): string => item.bookKey);
+  }
+  /** 勾选的行，按当前排行顺序。 */
+  private selectedRows(): ReadStatsRank[] {
+    return this.rankedItems().filter((item: ReadStatsRank): boolean => this.selectedKeys.includes(item.bookKey));
+  }
+  private pageTitle(): string {
+    if (!this.selecting) return '阅读统计';
+    return this.selectedKeys.length > 0 ? `已选 ${this.selectedKeys.length} 条` : '选择记录';
+  }
+  private handleBack(): void {
+    if (this.selecting) { this.exitSelection(); return; }
+    this.getUIContext().getRouter().back();
   }
 
   private async initialize(): Promise<void> {
@@ -253,6 +300,12 @@ struct ReadingStatsPage {
       this.summary = ReadStatsSummary.calculate(rows, mode, anchor, Date.now(), fold, merges);
       this.sameTitleRows = ReadStatsSummary.sameTitleItems(this.summary.items, fold, ignoredTitles);
       this.mergeRevision++;
+      if (this.selecting) {
+        // 重读后行可能合并、消失，勾选只留还在的行；没有记录可选就退出多选。
+        const keys = this.summary.items.map((item: ReadStatsRank): string => item.bookKey);
+        this.selectedKeys = this.selectedKeys.filter((key: string): boolean => keys.includes(key));
+        if (keys.length === 0) { this.selecting = false; this.selectedKeys = []; }
+      }
       this.source.update(this.rankedItems());
     } catch (error) {
       if (!this.alive || version !== this.requestVersion) return;
@@ -416,16 +469,24 @@ struct ReadingStatsPage {
   @Builder
   headerContent() {
     Column() {
-      this.filters()
-      if (!this.statsRecording) { this.pausedBanner() }
-      this.periodSelector()
-      this.summaryCard()
-      if (!this.loading && !this.errorMessage && this.summary.totalMs > 0 && this.mode !== 'day') { this.trendCard() }
-      Text(this.statsCaption())
-        .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).margin({ top: AppSpacing.LG, bottom: AppSpacing.LG })
+      // 多选时收起筛选、总览和图表，只留排行：时段和设备在多选期间不能换，删除范围始终是进入时那一个。
+      if (!this.selecting) {
+        this.filters()
+        if (!this.statsRecording) { this.pausedBanner() }
+        this.periodSelector()
+        this.summaryCard()
+        if (!this.loading && !this.errorMessage && this.summary.totalMs > 0 && this.mode !== 'day') { this.trendCard() }
+        Text(this.statsCaption())
+          .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).margin({ top: AppSpacing.LG, bottom: AppSpacing.LG })
+      }
       Row() {
         Text('书籍排行').fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor())
         Blank()
+        if (!this.selecting && !this.loading && !this.errorMessage && this.summary.items.length > 0) {
+          Text('选择').fontSize(AppFontSize.BODY).fontWeight(FontWeight.Medium).fontColor(this.accentColor())
+            .height(32).padding({ left: AppSpacing.MD, right: AppSpacing.SM }).accessibilityText('多选阅读记录')
+            .onClick((): void => this.enterSelection(''))
+        }
         Row({ space: AppSpacing.XS }) {
           Text(`按${READ_STATS_SORT_LABELS[READ_STATS_SORTS.indexOf(this.shownSort())]}`)
             .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
@@ -453,7 +514,7 @@ struct ReadingStatsPage {
           Text('该时段暂无阅读记录').fontSize(AppFontSize.BODY).fontColor(this.subTextColor())
         }.height(140).width('100%').justifyContent(FlexAlign.Center).backgroundColor(this.cardColor())
           .borderRadius(ThemeRuntime.cardRadius())
-      } else if (this.sameTitleRows.length > 1) {
+      } else if (this.sameTitleRows.length > 1 && !this.selecting) {
         this.sameTitleHint()
       }
     }.width('100%').padding({ top: AppSpacing.LG })
@@ -543,6 +604,9 @@ struct ReadingStatsPage {
   /** 定下合并目标，显示用的那部默认取书架上时长最多的，都不在架就取时长最多的。 */
   chooseMergeTarget(targetKey: string): void {
     this.mergeTargetKey = targetKey;
+    this.mergeMainKey = targetKey ? this.defaultMergeMain() : '';
+  }
+  private defaultMergeMain(): string {
     const options = this.mergeMainOptions();
     const onShelf = options.filter((item: ReadStatsRank): boolean => item.onShelf);
     const pool = onShelf.length > 0 ? onShelf : options;
@@ -551,7 +615,35 @@ struct ReadingStatsPage {
     for (const item of pool) {
       if (item.durationMs > bestMs) { best = item.workKey; bestMs = item.durationMs; }
     }
-    this.mergeMainKey = targetKey ? best : '';
+    return best;
+  }
+  /** 多选里“合并”：所选各行一起并成一条，显示用的那部同样默认书架上时长最多的。 */
+  openMergeSelectionSheet(): void {
+    const rows = this.selectedRows();
+    if (rows.length < 2) return;
+    this.mergeSelection = rows.map((item: ReadStatsRank): string => item.workKey);
+    this.recordSheetMode = 'mergeMany';
+    this.mergeMainKey = this.defaultMergeMain();
+    this.showRecordSheet = true;
+  }
+  mergeSelectionRows(): ReadStatsRank[] {
+    const rows: ReadStatsRank[] = [];
+    this.mergeSelection.forEach((key: string): void => {
+      const item = this.itemByWork(key);
+      if (item) rows.push(item);
+    });
+    return rows;
+  }
+  confirmMergeSelection(): void {
+    const rows = this.mergeSelectionRows();
+    if (rows.length < 2 || !this.mergeMainKey) return;
+    const members: ReadWorkMergeMember[] = [];
+    rows.forEach((item: ReadStatsRank): void => { members.push(...this.membersOf(item)); });
+    const next = ReadWorkMerges.combine(this.merges, members, this.mergeMainKey);
+    this.showRecordSheet = false;
+    this.selecting = false;
+    this.selectedKeys = [];
+    this.saveMerges(next, `已把 ${rows.length} 条合并为一条，长按可以拆开`);
   }
   mergeSourceRows(): ReadStatsRank[] {
     const item = this.itemByWork(this.mergeSourceKey);
@@ -562,6 +654,11 @@ struct ReadingStatsPage {
     return item ? [item] : [];
   }
   mergeMainOptions(): ReadStatsRank[] {
+    if (this.recordSheetMode === 'mergeMany') {
+      const options: ReadStatsRank[] = [];
+      this.mergeSelectionRows().forEach((item: ReadStatsRank): void => { options.push(...this.editionsOf(item)); });
+      return options;
+    }
     if (!this.mergeTargetKey) return [];
     return [...this.editionsOf(this.itemByWork(this.mergeSourceKey)), ...this.editionsOf(this.itemByWork(this.mergeTargetKey))];
   }
@@ -706,11 +803,20 @@ struct ReadingStatsPage {
   @Builder
   recordSheet() {
     Column() {
-      Text(this.recordSheetMode === 'merge' ? '合并阅读记录' : '已合并的记录')
+      Text(this.recordSheetMode === 'merged' ? '已合并的记录' : '合并阅读记录')
         .fontSize(AppFontSize.TITLE).fontWeight(FontWeight.Bold).fontColor(this.primaryTextColor()).width('100%')
         .padding({ left: AppSpacing.XXL, right: AppSpacing.XXL, top: AppSpacing.XL, bottom: AppSpacing.XS })
       List({ space: AppSpacing.SM }) {
-        if (this.recordSheetMode !== 'merge') {
+        if (this.recordSheetMode === 'mergeMany') {
+          ListItem() { this.sheetCaption(`把这 ${this.mergeSelection.length} 条记录并成一条，合并后显示为`) }
+          ForEach(this.mergeMainOptions(), (item: ReadStatsRank) => {
+            ListItem() { this.mergeOptionRow(item, 'main') }
+          }, (item: ReadStatsRank): string => `many:${item.workKey}`)
+          ListItem() {
+            Text(this.mergeResultText()).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%')
+              .padding(AppSpacing.LG).backgroundColor(this.softColor()).borderRadius(ThemeRuntime.cardRadius())
+          }
+        } else if (this.recordSheetMode === 'merged') {
           ListItem() { this.sheetCaption('这一行由下面几条记录合成，显示第一条的书名和封面') }
           ForEach(this.mergedMembers(), (member: ReadWorkMergeMember) => {
             ListItem() { this.mergedMemberRow(member) }
@@ -751,7 +857,10 @@ struct ReadingStatsPage {
       }.width('100%').layoutWeight(1).scrollBar(BarState.Off)
         .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
       Row({ space: AppSpacing.LG }) {
-        if (this.recordSheetMode === 'merge') {
+        if (this.recordSheetMode === 'mergeMany') {
+          this.sheetButton('取消', false, true, (): void => { this.showRecordSheet = false; })
+          this.sheetButton('合并', true, !!this.mergeMainKey, (): void => this.confirmMergeSelection())
+        } else if (this.recordSheetMode === 'merge') {
           this.sheetButton('取消', false, true, (): void => { this.showRecordSheet = false; })
           this.sheetButton('合并', true, !!this.mergeTargetKey && !!this.mergeMainKey, (): void => this.confirmMerge())
         } else {
@@ -773,6 +882,9 @@ struct ReadingStatsPage {
   @Builder
   bookRow(item: ReadStatsRank) {
     Row({ space: AppSpacing.MD }) {
+      if (this.selecting) {
+        this.selectMark(item)
+      }
       // 只有按时长排才是名次；其他排序不显示数字，免得被看成名次。
       if (this.shownSort() === 'duration') {
         Text(`${item.rank}`.padStart(2, '0')).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width(22)
@@ -802,20 +914,41 @@ struct ReadingStatsPage {
           Row().width(`${item.percent}%`).height(3).backgroundColor(this.accentColor())
         }.width('100%').borderRadius(2).clip(true)
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-    }.width('100%').padding(AppSpacing.XL).backgroundColor(this.cardColor())
+    }.width('100%').padding(AppSpacing.XL)
+      .backgroundColor(this.isRowSelected(item) ? ThemeRuntime.accentSurfaceColor(this.appDarkMode) : this.cardColor())
+      .border({ width: this.selecting ? 1.5 : 0, color: this.isRowSelected(item) ? this.accentColor() : Color.Transparent })
       .borderRadius(ThemeRuntime.cardRadius()).alignItems(VerticalAlign.Center)
       .opacity(ListDissolve.opacity(this.isStatsRowDissolving(item)))
       .scale(ListDissolve.scale(this.isStatsRowDissolving(item)))
       .blur(ListDissolve.blur(this.isStatsRowDissolving(item)))
       .hitTestBehavior(this.isStatsRowDissolving(item) ? HitTestMode.None : HitTestMode.Default)
       .id(this.statsRowElementId(item.bookKey))
-      .onClick((): void => this.openShelfBook(item))
+      .onClick((): void => {
+        if (this.selecting) this.toggleSelected(item.bookKey); else this.openShelfBook(item);
+      })
       .gesture(LongPressGesture({ repeat: false }).onAction((event: GestureEvent): void => {
+        if (this.selecting) return;
         const finger = event.fingerList.length > 0 ? event.fingerList[0] : undefined;
         if (finger) { this.contextMenuX = finger.globalX; this.contextMenuY = finger.globalY; }
         this.actionBookKey = item.bookKey;
         this.showItemActionMenu = true;
       }))
+  }
+  isRowSelected(item: ReadStatsRank): boolean {
+    return this.selecting && this.selectedKeys.includes(item.bookKey);
+  }
+  /** 勾选状态在这里读 this.selectedKeys，不按值传。 */
+  @Builder
+  selectMark(item: ReadStatsRank) {
+    Stack() {
+      if (this.isRowSelected(item)) {
+        SymbolGlyph($r('sys.symbol.checkmark')).fontSize(14).fontWeight(FontWeight.Bold)
+          .fontColor([ThemeRuntime.onAccentColor(this.accentColor())])
+      }
+    }.width(22).height(22).borderRadius(11)
+      .backgroundColor(this.isRowSelected(item) ? this.accentColor() : Color.Transparent)
+      .border({ width: this.isRowSelected(item) ? 0 : 1.5, color: this.subTextColor(), radius: 11 })
+      .accessibilityText(this.isRowSelected(item) ? '已选' : '未选')
   }
   /** 本机书架上的书按进度回到阅读页；未上架的行已标“本机未上架”，点按不做事。 */
   openShelfBook(item: ReadStatsRank): void {
@@ -838,6 +971,11 @@ struct ReadingStatsPage {
   @Builder
   itemActionMenu() {
     Column() {
+      PopupMenuAction($r('sys.symbol.checkmark_circle'), '多选', this.primaryTextColor(), (): void => {
+        const key = this.actionBookKey;
+        this.showItemActionMenu = false;
+        this.enterSelection(key);
+      })
       PopupMenuAction($r('sys.symbol.rectangle_on_rectangle'), '合并到其他记录…', this.primaryTextColor(), (): void => {
         const item = this.actionItem();
         this.showItemActionMenu = false;
@@ -867,17 +1005,33 @@ struct ReadingStatsPage {
     const item = this.actionItem();
     return !!item && item.mergedWorks > 0;
   }
-  async confirmDeleteItem(item: ReadStatsRank): Promise<void> {
+  confirmDeleteItem(item: ReadStatsRank): Promise<void> {
+    return this.deleteRows([item], '删除阅读记录',
+      `删除“${item.name}”在 ${this.periodTitle()}、${this.deviceTitle()} 范围内已获取的阅读记录？` +
+        '开启同步后会同步删除，尚未上传的其他设备记录不受影响。不会删除书籍。', '记录已删除');
+  }
+  confirmDeleteSelected(): Promise<void> {
+    const items = this.selectedRows();
+    if (items.length === 0) return Promise.resolve();
+    let total = 0;
+    items.forEach((item: ReadStatsRank): void => { total += item.durationMs; });
+    const names = items.slice(0, 2).map((item: ReadStatsRank): string => `“${item.name}”`).join('、');
+    const books = items.length > 2 ? `${names}等 ${items.length} 本` : names;
+    return this.deleteRows(items, `删除 ${items.length} 条阅读记录？`,
+      `${books}，共 ${ReadStatsSummary.duration(total)}。只删 ${this.periodTitle()}、${this.deviceTitle()} 范围内已获取的记录，` +
+        '开启同步后会同步删除，尚未上传的其他设备记录不受影响。不会删除书籍。', `已删除 ${items.length} 条记录`);
+  }
+  /** 单条和多选删除共用：确认后各行一起消散，删完补位、退出多选，再原位重读排名和图表。 */
+  private async deleteRows(items: ReadStatsRank[], title: string, message: string, toast: string): Promise<void> {
     const range = ReadStatsSummary.range(this.mode, this.anchorTs);
     const deviceId = this.selectedDevice;
     const ownerId = this.ownerId;
+    const keys = items.map((item: ReadStatsRank): string => item.bookKey);
     try {
-      const confirmation = await promptAction.showDialog({ title: '删除阅读记录',
-        message: `删除“${item.name}”在 ${this.periodTitle()}、${this.deviceTitle()} 范围内已获取的阅读记录？开启同步后会同步删除，尚未上传的其他设备记录不受影响。不会删除书籍。`,
+      const confirmation = await promptAction.showDialog({ title, message,
         buttons: [{ text: '取消', color: this.subTextColor() }, { text: '删除', color: ThemeRuntime.dangerColor(this.appDarkMode) }] });
       if (confirmation.index !== 1) return;
-      // 等确认框退场后这一行消散，与删记录同时进行；播完补位，再原位重读排名和图表。
-      const keys = [item.bookKey];
+      // 等确认框退场后这些行消散，与删记录同时进行；播完补位，再原位重读排名和图表。
       const fade = ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
         this.dissolvingBookKeys = [...this.dissolvingBookKeys, key];
       }, ListDissolve.particles('reading_stats_root', [this.accentColor(), this.primaryTextColor(), this.subTextColor()],
@@ -885,23 +1039,33 @@ struct ReadingStatsPage {
         (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), ListDissolve.AFTER_DIALOG_MS);
       try {
         await readStatsTracker.flushAndWait();
-        for (const recordBookKey of item.recordBookKeys) {
-          await appDb.deleteReadStatsSelection(recordBookKey, range.startKey, range.endKey, deviceId, ownerId);
+        for (const item of items) {
+          for (const recordBookKey of item.recordBookKeys) {
+            await appDb.deleteReadStatsSelection(recordBookKey, range.startKey, range.endKey, deviceId, ownerId);
+          }
         }
       } finally {
         await fade;
       }
       if (!this.alive) return;
-      ListDissolve.commit(this.getUIContext(), () => this.source.remove(item.bookKey), () => {
+      ListDissolve.commit(this.getUIContext(), () => {
+        keys.forEach((key: string): void => this.source.remove(key));
+      }, () => {
         this.dissolvingBookKeys = ListDissolve.without(this.dissolvingBookKeys, keys);
       });
       await new Promise<void>((resolve: () => void) => { setTimeout(resolve, ListDissolve.CLEAR_DELAY_MS); });
-      if (this.alive) await this.loadStats(true);
-      HdsFeedback.showToast('记录已删除');
+      if (!this.alive) return;
+      // 补位动画播完再退出多选，退出会整表重建，提前做会打断消散。
+      this.selecting = false;
+      this.selectedKeys = [];
+      await this.loadStats(true);
+      HdsFeedback.showToast(toast);
     } catch (error) {
       console.warn('删除阅读记录失败:', error);
-      this.dissolvingBookKeys = ListDissolve.without(this.dissolvingBookKeys, [item.bookKey]);
+      this.dissolvingBookKeys = ListDissolve.without(this.dissolvingBookKeys, keys);
       HdsFeedback.showToast('删除失败，请重试');
+      // 多条删到一半失败时，已删掉的那些要从排行里去掉。
+      if (this.alive && items.length > 1) this.loadStats(true);
     }
   }
   private shiftPeriod(step: number): void {
@@ -1005,6 +1169,18 @@ struct ReadingStatsPage {
   }
   @Builder
   pageActions() {
+    if (this.selecting) {
+      ImmersiveHeaderAction({
+        label: this.allSelected() ? '取消全选' : '全选',
+        tint: this.accentColor(),
+        onTap: (): void => this.toggleAllSelected()
+      }).margin({ right: AppSpacing.XL })
+    } else {
+      this.normalPageActions()
+    }
+  }
+  @Builder
+  normalPageActions() {
     Row({ space: AppSpacing.MD }) {
       ImmersiveHeaderAction({
         icon: $r('sys.symbol.share'),
@@ -1021,6 +1197,61 @@ struct ReadingStatsPage {
           (): void => { this.moreMenu(); }, Placement.BottomRight, this.appDarkMode, this.accentColor(),
           (): void => { this.showMoreMenu = false; }))
     }.margin({ right: AppSpacing.XL })
+  }
+  /** 删除范围写全，免得以为删的是这本书的全部记录。 */
+  private selectionScopeText(): string {
+    return `删除范围：${this.periodTitle()} · ${this.deviceTitle()}`;
+  }
+  /**
+   * 多选底部：一颗沉浸光感胶囊放“合并”“删除 N 条”，上方常驻删除范围。合并要两条以上。
+   * 外层铺满整页、不拦触摸，只有胶囊本身接收点按。
+   */
+  @Builder
+  selectionDock() {
+    Column({ space: AppSpacing.SM }) {
+      Text(this.selectionScopeText()).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).constraintSize({ maxWidth: '90%' })
+        .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: 3, bottom: 3 })
+        .backgroundColor(this.cardColor()).borderRadius(12)
+      ImmersiveMaterialSurface({
+        surfaceWidth: SELECTION_DOCK_WIDTH,
+        surfaceHeight: SELECTION_DOCK_HEIGHT,
+        darkMode: this.appDarkMode,
+        fallbackColor: this.cardColor(),
+        glowColor: `#40${this.accentColor().substring(1)}`
+      }) {
+        Row({ space: AppSpacing.XS }) {
+          this.dockButton(false)
+          this.dockButton(true)
+        }.width('100%').height('100%').padding(5)
+      }
+    }.width('100%').height('100%').justifyContent(FlexAlign.End).alignItems(HorizontalAlign.Center)
+      .padding({ bottom: this.navBarHeight + AppSpacing.XL })
+      .hitTestBehavior(HitTestMode.Transparent)
+  }
+  /** 已选条数在这里读，不靠传值：按值传入的 @Builder 不刷新。 */
+  @Builder
+  dockButton(remove: boolean) {
+    Row({ space: 6 }) {
+      SymbolGlyph(remove ? $r('sys.symbol.trash') : $r('sys.symbol.rectangle_on_rectangle')).fontSize(18)
+        .fontColor([remove ? ThemeRuntime.dangerColor(this.appDarkMode) : this.primaryTextColor()])
+      Text(this.dockButtonLabel(remove)).fontSize(AppFontSize.BODY).fontWeight(FontWeight.Medium).maxLines(1)
+        .fontColor(remove ? ThemeRuntime.dangerColor(this.appDarkMode) : this.primaryTextColor())
+    }.layoutWeight(1).height('100%').justifyContent(FlexAlign.Center)
+      .borderRadius((SELECTION_DOCK_HEIGHT - 10) / 2)
+      .backgroundColor(remove ? `#1F${ThemeRuntime.dangerColor(this.appDarkMode).substring(1)}` : Color.Transparent)
+      .opacity(this.dockButtonEnabled(remove) ? 1 : 0.38).enabled(this.dockButtonEnabled(remove))
+      .accessibilityGroup(true).accessibilityText(this.dockButtonLabel(remove))
+      .onClick((): void => {
+        if (remove) this.confirmDeleteSelected(); else this.openMergeSelectionSheet();
+      })
+  }
+  private dockButtonLabel(remove: boolean): string {
+    if (!remove) return '合并';
+    return this.selectedKeys.length > 0 ? `删除 ${this.selectedKeys.length} 条` : '删除';
+  }
+  private dockButtonEnabled(remove: boolean): boolean {
+    return remove ? this.selectedKeys.length > 0 : this.selectedKeys.length >= 2;
   }
   cardColor(): string { return ThemeRuntime.cardColor(this.appDarkMode); }
   softColor(): string { return ThemeRuntime.inputColor(this.appDarkMode); }
@@ -1040,17 +1271,25 @@ struct ReadingStatsPage {
           ListItem() { this.headerContent() }
             .padding({ left: AppSpacing.XL, right: AppSpacing.XL,
               top: PageScaffold.BAR_HEIGHT + this.statusBarHeight }).clip(false)
-        } else if (deviceInfo.sdkApiVersion >= 26) {
+        } else if (deviceInfo.sdkApiVersion >= 26 && !this.selecting) {
           HdsListItem({ customItemBuilder: (): void => { this.bookRow(item) }, swipeActionOptions: this.itemSwipeActions(item) })
             .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
         } else {
-          ListItem() { this.bookRow(item) }
-            .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
-            .swipeAction({ end: { builder: (): void => { this.deleteSwipeButton(item) } }, edgeEffect: SwipeEdgeEffect.Spring })
+          // 多选时不挂左滑删除，免得和点按勾选抢手势。
+          if (this.selecting) {
+            ListItem() { this.bookRow(item) }
+              .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
+          } else {
+            ListItem() { this.bookRow(item) }
+              .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
+              .swipeAction({ end: { builder: (): void => { this.deleteSwipeButton(item) } }, edgeEffect: SwipeEdgeEffect.Spring })
+          }
         }
-      }, (item: ReadStatsRank): string => item.bookKey ? `${item.bookKey}:${item.durationMs}:${item.percent}:${item.rank}:${item.name}:${item.onShelf}:${item.mergedWorks}:${this.shownSort()}` : 'header')
+      }, (item: ReadStatsRank): string => item.bookKey ? `${item.bookKey}:${item.durationMs}:${item.percent}:${item.rank}:${item.name}:${item.onShelf}:${item.mergedWorks}:${this.shownSort()}:${this.selecting}` : `header:${this.selecting}`)
       ListItem() {
-        Row().width('100%').height(this.navBarHeight + AppSpacing.XXL).hitTestBehavior(HitTestMode.None)
+        // 多选时底部浮着“合并 / 删除”胶囊，多留出它的高度，最后一行才能滚到胶囊上方。
+        Row().width('100%').height(this.navBarHeight + AppSpacing.XXL + (this.selecting ? SELECTION_DOCK_SPACE : 0))
+          .hitTestBehavior(HitTestMode.None)
       }
     }.width('100%').height('100%').cachedCount(4).scrollBar(BarState.Off)
       // 留白随内容滚动，避免裁切顶栏下方的内容、下拉框阴影和底部列表。
@@ -1070,8 +1309,12 @@ struct ReadingStatsPage {
   }
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      PageScaffold({ title: '阅读统计', scrollable: false, edgeToEdge: true, externalCollapse: this.headerCollapse,
+      PageScaffold({ title: this.pageTitle(), scrollable: false, edgeToEdge: true, externalCollapse: this.headerCollapse,
+        onBack: (): void => this.handleBack(),
         actions: (): void => { this.pageActions() }, content: (): void => { this.pageContent() } })
+      if (this.selecting) {
+        this.selectionDock()
+      }
       Column().width(1).height(1).position({ x: this.contextMenuX, y: this.contextMenuY }).hitTestBehavior(HitTestMode.None)
         .bindPopup(this.showItemActionMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel,
           (): void => { this.itemActionMenu() }, Placement.BottomLeft, this.appDarkMode, this.accentColor(),
