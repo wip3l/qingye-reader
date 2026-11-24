@@ -48,6 +48,9 @@ struct DataBackupPage {
   @State @Watch('syncBusyDialog') busy: boolean = false;
   @State busyText: string = '';
   @State busyProgress: number = 0;
+  /** 进度条下方左侧的计数（如“12 / 24 本”）和右侧的类别序号（如“第 3 类，共 7 类”）。 */
+  @State busyDetail: string = '';
+  @State busyStage: string = '';
   private exportPasswordDialogSession: SystemDialogSession = new SystemDialogSession();
   private busyDialogSession: SystemDialogSession = new SystemDialogSession();
   private importPasswordDialogSession: SystemDialogSession = new SystemDialogSession();
@@ -108,27 +111,60 @@ struct DataBackupPage {
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
-  /** 备份/恢复进度：系统对话框。 */
+  /** 备份/恢复进度：系统对话框。上面步骤和百分比，中间一根细进度条，下面计数和类别序号。 */
   @Builder
   busyDialogContent() {
-    Column({ space: AppSpacing.LG }) {
-      LoadingProgress()
-        .width(42)
-        .height(42)
-        .color(this.accentColor())
-      Text(this.busyText || '正在处理...')
-        .fontSize(AppFontSize.BODY)
-        .fontColor(this.primaryTextColor())
-        .textAlign(TextAlign.Center)
-        .width('100%')
-      if (this.busyProgress > 0) {
+    Column() {
+      Row({ space: AppSpacing.MD }) {
+        Text(this.busyText || '正在处理...')
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryTextColor())
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
         Text(`${this.busyProgress}%`)
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.subTextColor())
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.accentColor())
+          .fontFeature('"tnum" on')
       }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+
+      Progress({ value: this.busyProgress, total: 100, type: ProgressType.Linear })
+        .width('100%')
+        .height(6)
+        .color(this.accentColor())
+        .backgroundColor(this.dividerColor())
+        .style({ strokeWidth: 6, strokeRadius: 3, enableScanEffect: this.busyProgress < 100 })
+        .margin({ top: AppSpacing.LG })
+
+      if (this.busyDetail || this.busyStage) {
+        Row() {
+          Text(this.busyDetail)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+            .fontFeature('"tnum" on')
+            .layoutWeight(1)
+          Text(this.busyStage)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+        }
+        .width('100%')
+        .margin({ top: AppSpacing.MD })
+      }
+
+      Text('处理期间请勿离开此页')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .opacity(0.8)
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .margin({ top: AppSpacing.LG })
     }
     .width('100%')
-    .padding(AppSpacing.XXL)
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.XXL, bottom: AppSpacing.LG })
   }
 
   syncBusyDialog(): void {
@@ -523,13 +559,11 @@ struct DataBackupPage {
       if (!result || result.length === 0) return;
       this.busyText = '正在整理备份数据...';
       const backup = await AppDataBackupService.createBackup(getContext(this), this.selection(true), password,
-        (message: string, percent: number): void => {
-          this.busyText = message;
-          this.busyProgress = percent;
+        (message: string, percent: number, detail?: string, stage?: string): void => {
+          this.setBusyProgress(message, percent, detail, stage);
         });
       archivePath = backup.archivePath;
-      this.busyText = '正在写入备份文件...';
-      this.busyProgress = 97;
+      this.setBusyProgress('正在写入备份文件...', 97);
       await this.writeBackupToUri(backup.archivePath, result[0]);
       this.busyProgress = 100;
       this.exportSummary = backup.summary();
@@ -544,6 +578,8 @@ struct DataBackupPage {
       this.busy = false;
       this.busyText = '';
       this.busyProgress = 0;
+      this.busyDetail = '';
+      this.busyStage = '';
     }
   }
 
@@ -578,9 +614,8 @@ struct DataBackupPage {
     try {
       const session = await AppDataBackupService.prepareImport(
         getContext(this), this.pendingImportUri, password,
-        (message: string, percent: number): void => {
-          this.busyText = message;
-          this.busyProgress = percent;
+        (message: string, percent: number, detail?: string, stage?: string): void => {
+          this.setBusyProgress(message, percent, detail, stage);
         });
       if (this.androidImport && session.sourceFormat !== AppDataBackupService.SOURCE_FORMAT_ANDROID) {
         await AppDataBackupService.discardImport(session);
@@ -641,6 +676,8 @@ struct DataBackupPage {
       this.busy = false;
       this.busyText = '';
       this.busyProgress = 0;
+      this.busyDetail = '';
+      this.busyStage = '';
     }
   }
 
@@ -660,9 +697,8 @@ struct DataBackupPage {
     this.busyProgress = 0;
     try {
       const result = await AppDataBackupService.importBackup(getContext(this), this.importSession,
-        this.selection(false), (message: string, percent: number): void => {
-          this.busyText = message;
-          this.busyProgress = percent;
+        this.selection(false), (message: string, percent: number, detail?: string, stage?: string): void => {
+          this.setBusyProgress(message, percent, detail, stage);
         });
       HdsFeedback.showToast(`导入完成：${result.summary()}`);
       this.importDescription = `导入完成：${result.summary()}。设置项重启应用后完全生效。`;
@@ -677,6 +713,8 @@ struct DataBackupPage {
       this.busy = false;
       this.busyText = '';
       this.busyProgress = 0;
+      this.busyDetail = '';
+      this.busyStage = '';
     }
   }
 
@@ -700,6 +738,13 @@ struct DataBackupPage {
       // 关掉对话框也会走到这里，当作“稍后”。
       console.warn('自动换源提示未完成:', e);
     }
+  }
+
+  setBusyProgress(message: string, percent: number, detail?: string, stage?: string): void {
+    this.busyText = message;
+    this.busyProgress = percent;
+    this.busyDetail = detail || '';
+    this.busyStage = stage || '';
   }
 
   timestamp(): string {

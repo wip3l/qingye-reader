@@ -138,6 +138,74 @@ export class AppDataBackupImportResult {
   }
 }
 
+/**
+ * 备份进度回调：message 是当前步骤，detail 是“12 / 24 本”这样的计数，stage 是“第 3 类，共 7 类”；
+ * 没有逐条计数的步骤只给前两个。
+ */
+export type BackupProgressCallback = (message: string, percent: number, detail?: string, stage?: string) => void;
+
+class ImportProgressCategory {
+  label: string = '';
+  unit: string = '';
+  weight: number = 0;
+}
+
+/**
+ * 导入轻页备份时的进度：先登记所选各类要写的条数，按条推进百分比（2%~98%）。
+ * 本地书和资源目录要复制文件，比写一条库记录慢得多，按权重多占一些。
+ * 百分比、类别或计数变了才回调；几千条书源时计数跟着百分比走，不会每条都刷界面。
+ */
+class ImportProgressTracker {
+  static readonly LOCAL_BOOK_WEIGHT: number = 20;
+  static readonly ASSET_DIR_WEIGHT: number = 10;
+  private categories: ImportProgressCategory[] = [];
+  private total: number = 0;
+  private done: number = 0;
+  private lastPercent: number = -1;
+  private lastLabel: string = '';
+  private onProgress?: BackupProgressCallback;
+
+  constructor(onProgress?: BackupProgressCallback) {
+    this.onProgress = onProgress;
+  }
+
+  /** 登记一类；count 为 0 的不算进“共几类”。weight 是这一类的总权重。 */
+  add(label: string, unit: string, count: number, weight: number): void {
+    if (count <= 0) return;
+    const category = new ImportProgressCategory();
+    category.label = label;
+    category.unit = unit;
+    category.weight = weight;
+    this.categories.push(category);
+    this.total += Math.max(0, weight);
+  }
+
+  /** 开始处理某类的第 current 条（从 1 起）前调用，报的是此前已完成的比例。 */
+  tick(label: string, current: number, count: number, weight: number = 1): void {
+    const percent = Math.min(98, 2 + Math.floor(this.done / Math.max(1, this.total) * 96));
+    this.done += weight;
+    if (!this.onProgress) return;
+    if (percent === this.lastPercent && label === this.lastLabel && weight <= 1 && current < count) return;
+    this.lastPercent = percent;
+    this.lastLabel = label;
+    let index = 0;
+    let unit = '';
+    for (let i = 0; i < this.categories.length; i++) {
+      if (this.categories[i].label === label) {
+        index = i + 1;
+        unit = this.categories[i].unit;
+      }
+    }
+    const detail = count > 1 ? `${current} / ${count} ${unit}` : '';
+    const stage = this.categories.length > 1 && index > 0 ? `第 ${index} 类，共 ${this.categories.length} 类` : '';
+    this.onProgress(`正在导入${label}`, percent, detail, stage);
+  }
+
+  finish(): void {
+    if (this.onProgress) this.onProgress('导入完成', 100);
+  }
+}
+
 class AndroidBookGroupMapping {
   legacyIds: number[] = [];
   localIds: Map<number, number> = new Map<number, number>();
@@ -204,7 +272,7 @@ export class AppDataBackupService {
   private static readonly ANDROID_MAX_DATA_BYTES: number = 32 * 1024 * 1024;
 
   static async createBackup(context: Context, selection: AppDataBackupSelection,
-    password: string, onProgress?: (message: string, percent: number) => void):
+    password: string, onProgress?: BackupProgressCallback):
     Promise<AppDataBackupExportResult> {
     const encryptionPassword = password || '';
     if (encryptionPassword && encryptionPassword.length < 8) {
@@ -294,7 +362,8 @@ export class AppDataBackupService {
         manifest.localFiles[book.bookUrl] = archiveName;
         manifest.localBooks.push(AppDataBackupService.sanitizeBook(book));
         const progress = 22 + Math.floor((index + 1) * 13 / localSourceBooks.length);
-        AppDataBackupService.reportProgress(onProgress, '正在整理本地图书...', progress);
+        AppDataBackupService.reportProgress(onProgress, '正在整理本地图书...', progress,
+          localSourceBooks.length > 1 ? `${index + 1} / ${localSourceBooks.length} 本` : '');
       }
     }
 
@@ -405,7 +474,7 @@ export class AppDataBackupService {
   }
 
   static async prepareImport(context: Context, sourceUri: string, password: string = '',
-    onProgress?: (message: string, percent: number) => void): Promise<AppDataBackupImportSession> {
+    onProgress?: BackupProgressCallback): Promise<AppDataBackupImportSession> {
     const root = `${context.tempDir}/app_backup_import_${Date.now()}`;
     const archivePath = `${root}/source.zip`;
     const outRoot = `${root}/out`;
@@ -495,7 +564,7 @@ export class AppDataBackupService {
   }
 
   static async importBackup(context: Context, session: AppDataBackupImportSession,
-    selection: AppDataBackupSelection, onProgress?: (message: string, percent: number) => void):
+    selection: AppDataBackupSelection, onProgress?: BackupProgressCallback):
     Promise<AppDataBackupImportResult> {
     if (session.sourceFormat === AppDataBackupService.SOURCE_FORMAT_ANDROID) {
       return AppDataBackupService.importAndroidBackup(context, session, selection, onProgress);
@@ -504,17 +573,50 @@ export class AppDataBackupService {
     await db.initWithContext(context);
     const manifest = session.manifest;
     const result = new AppDataBackupImportResult();
+    const has = (category: string): boolean => AppDataBackupService.hasCategory(manifest, category);
+    const groups = (selection.bookshelf || selection.localBooks) ? (manifest.bookGroups || []) : [];
+    const sources = selection.sources && has(AppDataBackupService.CATEGORY_SOURCES) ? (manifest.sources || []) : [];
+    const books = selection.bookshelf && has(AppDataBackupService.CATEGORY_BOOKSHELF) ? (manifest.books || []) : [];
+    const localBooks = selection.localBooks && has(AppDataBackupService.CATEGORY_LOCAL_BOOKS) ?
+      (manifest.localBooks || []) : [];
+    const progresses = selection.progress && has(AppDataBackupService.CATEGORY_PROGRESS) ? (manifest.progress || []) : [];
+    const withBookmarks = selection.bookmarks && has(AppDataBackupService.CATEGORY_BOOKMARKS);
+    const bookmarks = withBookmarks ? (manifest.bookmarks || []) : [];
+    const annotations = withBookmarks ? (manifest.annotations || []) : [];
+    const bookMarks = withBookmarks ? (manifest.bookMarks || []) : [];
+    const noteCount = bookmarks.length + annotations.length + bookMarks.length;
+    const withSettings = selection.settings && has(AppDataBackupService.CATEGORY_SETTINGS);
+    const assetsRoot = `${session.rootPath}/assets`;
+    const assetDirs = withSettings ?
+      AppDataBackupService.ASSET_DIRS.filter((dirName: string) => AppDataBackupService.exists(`${assetsRoot}/${dirName}`)) :
+      [];
+    const storeMap: Record<string, string> = manifest.preferenceStores || {};
+    const settingsStores = withSettings ? Object.keys(storeMap)
+      .filter((storeName: string) => AppDataBackupService.SETTINGS_STORES.includes(storeName)) : [];
+    const settingsCount = withSettings ? 1 + assetDirs.length + settingsStores.length : 0;
+    const keywords = selection.searchHistory && has(AppDataBackupService.CATEGORY_SEARCH_HISTORY) ?
+      (manifest.searchKeywords || []) : [];
+    const tracker = new ImportProgressTracker(onProgress);
+    tracker.add('书架分组', '个', groups.length, groups.length);
+    tracker.add('书源', '个', sources.length, sources.length);
+    tracker.add('书架书籍', '本', books.length, books.length);
+    tracker.add('本地图书', '本', localBooks.length, localBooks.length * ImportProgressTracker.LOCAL_BOOK_WEIGHT);
+    tracker.add('阅读进度', '条', progresses.length, progresses.length);
+    tracker.add('书签与笔记', '条', noteCount, noteCount);
+    tracker.add('设置与资源', '项', settingsCount,
+      settingsCount + assetDirs.length * (ImportProgressTracker.ASSET_DIR_WEIGHT - 1));
+    tracker.add('搜索历史', '条', keywords.length, keywords.length);
 
-    if ((selection.bookshelf || selection.localBooks) && (manifest.bookGroups || []).length > 0) {
-      for (const group of manifest.bookGroups) {
-        await db.restoreBookGroup(group);
-        result.bookGroups++;
-      }
+    for (let i = 0; i < groups.length; i++) {
+      tracker.tick('书架分组', i + 1, groups.length);
+      await db.restoreBookGroup(groups[i]);
+      result.bookGroups++;
     }
 
-    if (selection.sources && AppDataBackupService.hasCategory(manifest, AppDataBackupService.CATEGORY_SOURCES)) {
-      for (const raw of manifest.sources || []) {
-        await db.restoreBookSource(raw);
+    if (selection.sources && has(AppDataBackupService.CATEGORY_SOURCES)) {
+      for (let i = 0; i < sources.length; i++) {
+        tracker.tick('书源', i + 1, sources.length);
+        await db.restoreBookSource(sources[i]);
         result.sources++;
       }
       await db.restoreBookSourceAddedTimes(manifest.sourceAddedTimes || {});
@@ -524,9 +626,10 @@ export class AppDataBackupService {
       }
     }
 
-    if (selection.bookshelf && AppDataBackupService.hasCategory(manifest, AppDataBackupService.CATEGORY_BOOKSHELF)) {
-      for (const raw of manifest.books || []) {
-        const book = AppDataBackupService.hydrateBook(raw, manifest.sourceFilesDir, context.filesDir);
+    if (selection.bookshelf && has(AppDataBackupService.CATEGORY_BOOKSHELF)) {
+      for (let i = 0; i < books.length; i++) {
+        tracker.tick('书架书籍', i + 1, books.length);
+        const book = AppDataBackupService.hydrateBook(books[i], manifest.sourceFilesDir, context.filesDir);
         await AppDataBackupService.restoreBookWithoutUnexpectedProgress(db, book, selection.progress);
         result.books++;
       }
@@ -535,10 +638,12 @@ export class AppDataBackupService {
       await BookshelfStateStore.saveSortMode(context, restoredSortMode);
     }
 
-    if (selection.localBooks && AppDataBackupService.hasCategory(manifest, AppDataBackupService.CATEGORY_LOCAL_BOOKS)) {
+    if (selection.localBooks && has(AppDataBackupService.CATEGORY_LOCAL_BOOKS)) {
       const targetRoot = `${context.filesDir}/local_books`;
       await AppDataBackupService.ensureDir(targetRoot);
-      for (const raw of manifest.localBooks || []) {
+      for (let i = 0; i < localBooks.length; i++) {
+        const raw = localBooks[i];
+        tracker.tick('本地图书', i + 1, localBooks.length, ImportProgressTracker.LOCAL_BOOK_WEIGHT);
         const archiveName = (manifest.localFiles || {})[raw.bookUrl] || '';
         const archivePath = archiveName ? `${session.rootPath}/local_books/${archiveName}` : '';
         if (!archivePath || !AppDataBackupService.exists(archivePath)) {
@@ -561,8 +666,10 @@ export class AppDataBackupService {
       }
     }
 
-    if (selection.progress && AppDataBackupService.hasCategory(manifest, AppDataBackupService.CATEGORY_PROGRESS)) {
-      for (const progress of manifest.progress || []) {
+    if (selection.progress && has(AppDataBackupService.CATEGORY_PROGRESS)) {
+      for (let i = 0; i < progresses.length; i++) {
+        const progress = progresses[i];
+        tracker.tick('阅读进度', i + 1, progresses.length);
         const book = await db.getBook(progress.bookUrl);
         if (!book) continue;
         book.durChapterTitle = progress.durChapterTitle;
@@ -575,13 +682,16 @@ export class AppDataBackupService {
       }
     }
 
-    if (selection.bookmarks && AppDataBackupService.hasCategory(manifest, AppDataBackupService.CATEGORY_BOOKMARKS)) {
-      for (const bookmark of manifest.bookmarks || []) {
+    if (withBookmarks) {
+      let noteIndex = 0;
+      for (const bookmark of bookmarks) {
+        tracker.tick('书签与笔记', ++noteIndex, noteCount);
         if (!await db.getBook(bookmark.bookUrl)) continue;
         await db.restoreBookmark(bookmark);
         result.bookmarks++;
       }
-      for (const annotation of manifest.annotations || []) {
+      for (const annotation of annotations) {
+        tracker.tick('书签与笔记', ++noteIndex, noteCount);
         if (!annotation || !annotation.bookUrl || !annotation.quote) continue;
         // 摘录不跟书走，书不在也恢复；普通划线没有书就没处显示。
         if (!annotation.excerpt && !await db.getBook(annotation.bookUrl)) continue;
@@ -589,7 +699,8 @@ export class AppDataBackupService {
         result.annotations++;
       }
       // 标记按作品存，不要求书在书架上；本机那条更新过的保留本机的。
-      for (const raw of manifest.bookMarks || []) {
+      for (const raw of bookMarks) {
+        tracker.tick('书签与笔记', ++noteIndex, noteCount);
         const mark = BookMarkRules.fromPlain(raw);
         if (!mark) continue;
         const local = await db.getBookMark(mark.workKey);
@@ -599,8 +710,9 @@ export class AppDataBackupService {
       }
     }
 
-    if (selection.settings && AppDataBackupService.hasCategory(manifest, AppDataBackupService.CATEGORY_SETTINGS)) {
-      const assetsRoot = `${session.rootPath}/assets`;
+    if (withSettings) {
+      let settingsIndex = 0;
+      tracker.tick('设置与资源', ++settingsIndex, settingsCount);
       const voicesPath = `${assetsRoot}/mimo_voices.json`;
       if (AppDataBackupService.exists(voicesPath)) {
         if ((await fs.stat(voicesPath)).size > 2 * 1024 * 1024) throw new Error('备份中的 MiMo 音色库过大');
@@ -610,30 +722,28 @@ export class AppDataBackupService {
         MimoStore.reloadVoices();
         result.settings++;
       }
-      for (const dirName of AppDataBackupService.ASSET_DIRS) {
-        const source = `${assetsRoot}/${dirName}`;
-        if (AppDataBackupService.exists(source)) {
-          await AppDataBackupService.copyDirectory(source, `${context.filesDir}/${dirName}`);
-        }
+      for (const dirName of assetDirs) {
+        tracker.tick('设置与资源', ++settingsIndex, settingsCount, ImportProgressTracker.ASSET_DIR_WEIGHT);
+        await AppDataBackupService.copyDirectory(`${assetsRoot}/${dirName}`, `${context.filesDir}/${dirName}`);
       }
       const stores = AppDataBackupService.restoreFontReferences(manifest.preferenceStores || {},
         manifest.sourceFilesDir, context.filesDir);
       for (const storeName of Object.keys(stores)) {
         if (!AppDataBackupService.SETTINGS_STORES.includes(storeName)) continue;
+        tracker.tick('设置与资源', Math.min(++settingsIndex, settingsCount), settingsCount);
         // Paths have already been rebased together with the font IDs above.
         await AppDataBackupService.restorePreferenceStore(context, storeName, stores[storeName], '');
         result.settings++;
       }
     }
 
-    if (selection.searchHistory &&
-      AppDataBackupService.hasCategory(manifest, AppDataBackupService.CATEGORY_SEARCH_HISTORY)) {
-      for (const keyword of manifest.searchKeywords || []) {
-        await db.restoreSearchKeyword(keyword);
-        result.searchKeywords++;
-      }
+    for (let i = 0; i < keywords.length; i++) {
+      tracker.tick('搜索历史', i + 1, keywords.length);
+      await db.restoreSearchKeyword(keywords[i]);
+      result.searchKeywords++;
     }
 
+    tracker.finish();
     AppStorage.setOrCreate('shelfUpdateTime', Date.now());
     return result;
   }
@@ -668,7 +778,7 @@ export class AppDataBackupService {
   }
 
   private static async importAndroidBackup(context: Context, session: AppDataBackupImportSession,
-    selection: AppDataBackupSelection, onProgress?: (message: string, percent: number) => void):
+    selection: AppDataBackupSelection, onProgress?: BackupProgressCallback):
     Promise<AppDataBackupImportResult> {
     const db = AppDatabase.getInstance();
     await db.initWithContext(context);
@@ -1627,9 +1737,9 @@ export class AppDataBackupService {
     book.replaceVariable(JSON.stringify(clean));
   }
 
-  private static reportProgress(onProgress: ((message: string, percent: number) => void) | undefined,
-    message: string, percent: number): void {
-    if (onProgress) onProgress(message, Math.max(0, Math.min(100, percent)));
+  private static reportProgress(onProgress: (BackupProgressCallback) | undefined,
+    message: string, percent: number, detail?: string): void {
+    if (onProgress) onProgress(message, Math.max(0, Math.min(100, percent)), detail);
   }
 
   private static async ensureEnoughTempSpace(context: Context, selection: AppDataBackupSelection,
