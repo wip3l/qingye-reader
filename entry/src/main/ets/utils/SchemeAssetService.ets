@@ -3,7 +3,7 @@ import fs from '@ohos.file.fs';
 import { fileUri } from '../platform/FileUri';
 import picker from '@ohos.file.picker';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
-import { ThemePackRegistry, ThemePackRecord } from '../theme/ThemePackRegistry';
+import { ReaderInheritedCopies, ThemePackRegistry, ThemePackRecord } from '../theme/ThemePackRegistry';
 import { ThemeIds } from '../theme/ThemeModels';
 import {
   bookIsEmpty,
@@ -34,6 +34,7 @@ import {
   ThemePackageNavigation,
   ThemePackageShelfBackdrop,
   ThemePackageTtsPanel,
+  ThemePackagePartReader,
   ThemePackageVariantParts,
   tidyImageCrops
 } from '../theme/share/ThemePackageFormat';
@@ -63,6 +64,34 @@ export class SchemeAssetResult {
   packageId: string = '';
   themeId: string = '';
 }
+
+/**
+ * 某个阅读背景素材键（内置背景或主题包 pack:<id>:light/dark）这一模式的整图与角饰，编辑器用 ThemeAssetRegistry 取好后
+ * 交给素材服务拷进方案自己的包。内置素材是资源，主题包素材是本机 file:// 地址；空串表示没有这一项。
+ */
+export class ReaderSourceItems {
+  assetId: string = '';
+  leading: ResourceStr = '';
+  trailing: ResourceStr = '';
+  image: ResourceStr = '';
+  imageFit: string = 'cover';
+  leadingScale: number = 1;
+  trailingScale: number = 1;
+  leadingInset: number = 1;
+  trailingInset: number = 1;
+
+  itemOf(slot: string): ResourceStr {
+    if (slot === 'image') return this.image;
+    return slot === 'trailing' ? this.trailing : this.leading;
+  }
+
+  has(slot: string): boolean {
+    const item = this.itemOf(slot);
+    return typeof item !== 'string' || item.length > 0;
+  }
+}
+
+const READER_SLOTS: string[] = ['leading', 'trailing', 'image'];
 
 /**
  * 自定义方案在编辑器里直接上传的素材：封面、书架边框、文件夹插画、导航图标、朗读面板插画、气泡端饰与边框、首页背景。
@@ -213,11 +242,14 @@ export class SchemeAssetService {
    * 已有整图时角饰叠在整图上面，模式仍记 image。
    */
   static async setReaderOrnament(context: Context, schemeId: string, uri: string, trailing: boolean,
-    darkMode: boolean, baseTheme: string): Promise<SchemeAssetResult> {
+    darkMode: boolean, baseTheme: string, seed: ReaderSourceItems | null = null): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
       const variant = SchemeAssetService.variantOf(record, darkMode);
       const path = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.ARTWORK,
         trailing ? '右下角饰' : '左上角饰');
+      const slot = trailing ? 'trailing' : 'leading';
+      if (seed) await SchemeAssetService.seedReader(context, record, variant, darkMode, seed, slot);
+      SchemeAssetService.forgetInherited(record, darkMode, slot);
       const mode = variant.reader.backgroundMode;
       if (mode !== 'ornaments' && mode !== 'image') {
         variant.reader.leading = '';
@@ -247,6 +279,7 @@ export class SchemeAssetService {
         throw new Error('请先上传左上角饰');
       }
       variant.reader.trailing = variant.reader.leading;
+      SchemeAssetService.forgetInherited(record, darkMode, 'trailing');
     });
   }
 
@@ -280,10 +313,13 @@ export class SchemeAssetService {
 
   /** 阅读背景整图：铺满（cover）。已有的角饰保留，叠在整图上面。 */
   static async setReaderImage(context: Context, schemeId: string, uri: string, darkMode: boolean,
-    baseTheme: string): Promise<SchemeAssetResult> {
+    baseTheme: string, seed: ReaderSourceItems | null = null): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
       const variant = SchemeAssetService.variantOf(record, darkMode);
-      variant.reader.image = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.IMAGE, '阅读背景');
+      const image = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.IMAGE, '阅读背景');
+      if (seed) await SchemeAssetService.seedReader(context, record, variant, darkMode, seed, 'image');
+      SchemeAssetService.forgetInherited(record, darkMode, 'image');
+      variant.reader.image = image;
       const mode = variant.reader.backgroundMode;
       if (mode !== 'ornaments' && mode !== 'image') {
         variant.reader.leading = '';
@@ -298,7 +334,182 @@ export class SchemeAssetService {
   static async clearReader(context: Context, schemeId: string, darkMode: boolean): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
       SchemeAssetService.storeVariant(record, darkMode, null);
+      SchemeAssetService.setInherited(record, darkMode, null);
     });
+  }
+
+  /**
+   * 阅读背景的某一格选“不用”。seed 不为空表示这个模式还在跟随别的背景素材：先把那套里其余的整图、角饰拷进方案
+   * 自己的包（记成拷来的），再去掉这一格；否则直接去掉方案包里的这一格。一格都不剩时变体里的阅读背景清空，
+   * 编辑器把背景素材键置空，阅读页只画底色。
+   */
+  static async setReaderSlotOff(context: Context, schemeId: string, darkMode: boolean, slot: string,
+    seed: ReaderSourceItems | null, baseTheme: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
+      const variant = SchemeAssetService.variantOf(record, darkMode);
+      if (seed) await SchemeAssetService.seedReader(context, record, variant, darkMode, seed, slot);
+      else SchemeAssetService.removeReaderSlot(variant.reader, slot);
+      SchemeAssetService.forgetInherited(record, darkMode, slot);
+      SchemeAssetService.storeReaderVariant(record, darkMode, variant);
+    });
+  }
+
+  /**
+   * “不用”的那一格恢复跟随：把 follow（“取自”主题这一模式的背景素材）里的这一项拷进方案自己的包。
+   * seed 不为空时这个模式当前不在用方案包（比如全都选了“不用”），先按 seed 重置方案包里的阅读背景。
+   */
+  static async restoreReaderSlot(context: Context, schemeId: string, darkMode: boolean, slot: string,
+    follow: ReaderSourceItems, seed: ReaderSourceItems | null, baseTheme: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
+      if (!follow.has(slot)) throw new Error('所选主题没有这一项');
+      const variant = SchemeAssetService.variantOf(record, darkMode);
+      if (seed) await SchemeAssetService.seedReader(context, record, variant, darkMode, seed, '');
+      const copies = SchemeAssetService.inheritedOf(record, darkMode, follow.assetId);
+      await SchemeAssetService.copyReaderSlot(context, record.packageId, variant.reader, follow, slot, copies);
+      SchemeAssetService.setInherited(record, darkMode, copies);
+      SchemeAssetService.storeReaderVariant(record, darkMode, variant);
+    });
+  }
+
+  /** 重置变体里的阅读背景，再把 seed 里除 skipSlot 以外的整图、角饰拷进来（记成拷来的）。 */
+  private static async seedReader(context: Context, record: ThemePackRecord, variant: ThemePackageVariantParts,
+    darkMode: boolean, seed: ReaderSourceItems, skipSlot: string): Promise<void> {
+    const reader = variant.reader;
+    reader.backgroundMode = '';
+    reader.leading = '';
+    reader.trailing = '';
+    reader.image = '';
+    reader.imageFit = 'cover';
+    reader.leadingScale = 1;
+    reader.trailingScale = 1;
+    reader.leadingInset = 1;
+    reader.trailingInset = 1;
+    const copies = SchemeAssetService.newInherited(seed.assetId);
+    // 右下角是左上角那张旋转出来的：跳过左上角时一起跳过，单拷右下会变成没旋转的左上角图。
+    const mirrored = SchemeAssetService.sameItem(seed.leading, seed.trailing);
+    for (const slot of READER_SLOTS) {
+      if (slot === 'trailing' && skipSlot === 'leading' && mirrored) continue;
+      if (slot !== skipSlot && seed.has(slot)) {
+        await SchemeAssetService.copyReaderSlot(context, record.packageId, reader, seed, slot, copies);
+      }
+    }
+    SchemeAssetService.fixReaderMode(reader);
+    SchemeAssetService.setInherited(record, darkMode, copies);
+  }
+
+  private static async copyReaderSlot(context: Context, packageId: string, reader: ThemePackagePartReader,
+    source: ReaderSourceItems, slot: string, copies: ReaderInheritedCopies): Promise<void> {
+    let path = '';
+    if (slot === 'image') {
+      path = await SchemeAssetService.importResource(context, packageId, source.image, SchemeAssetService.IMAGE,
+        '阅读背景');
+      reader.image = path;
+      reader.imageFit = source.imageFit || 'cover';
+    } else if (slot === 'trailing') {
+      path = await SchemeAssetService.importResource(context, packageId, source.trailing,
+        SchemeAssetService.ARTWORK, '右下角饰');
+      reader.trailing = path;
+      reader.trailingScale = normalizeOrnamentScale(source.trailingScale);
+      reader.trailingInset = normalizeOrnamentInset(source.trailingInset);
+    } else {
+      path = await SchemeAssetService.importResource(context, packageId, source.leading,
+        SchemeAssetService.ARTWORK, '左上角饰');
+      reader.leading = path;
+      reader.leadingScale = normalizeOrnamentScale(source.leadingScale);
+      reader.leadingInset = normalizeOrnamentInset(source.leadingInset);
+    }
+    copies.setPath(slot, path);
+    SchemeAssetService.fixReaderMode(reader);
+  }
+
+  /** 内置资源先写成临时文件，主题包素材（file:// 地址）换成路径，再按上传同样的规则收进包里。 */
+  private static async importResource(context: Context, packageId: string, item: ResourceStr, kinds: string[],
+    label: string): Promise<string> {
+    if (typeof item === 'string') {
+      if (!item) return '';
+      const path = item.startsWith('file://') ? new fileUri.FileUri(item).path : item;
+      return ThemePackStore.importAsset(context, packageId, path, kinds, label);
+    }
+    const bytes: Uint8Array = await context.resourceManager.getMediaContent((item as Resource).id);
+    const temp = `${context.tempDir}/reader_source_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+    const file = fs.openSync(temp, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    try {
+      fs.writeSync(file.fd, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
+    } finally {
+      fs.closeSync(file);
+    }
+    try {
+      return await ThemePackStore.importAsset(context, packageId, temp, kinds, label);
+    } finally {
+      try {
+        fs.unlinkSync(temp);
+      } catch (_) {
+      }
+    }
+  }
+
+  private static sameItem(a: ResourceStr, b: ResourceStr): boolean {
+    if (typeof a === 'string' || typeof b === 'string') return typeof a === typeof b && !!a && a === b;
+    return (a as Resource).id === (b as Resource).id;
+  }
+
+  /** 去掉一格；左上角饰去掉时，用它旋转出来的右下角饰一起去掉。 */
+  private static removeReaderSlot(reader: ThemePackagePartReader, slot: string): void {
+    if (slot === 'image') {
+      reader.image = '';
+      reader.imageFit = 'cover';
+    } else if (slot === 'trailing') {
+      reader.trailing = '';
+    } else {
+      if (reader.trailing && reader.trailing === reader.leading) reader.trailing = '';
+      reader.leading = '';
+    }
+    SchemeAssetService.fixReaderMode(reader);
+  }
+
+  private static fixReaderMode(reader: ThemePackagePartReader): void {
+    if (reader.image) reader.backgroundMode = 'image';
+    else if (reader.leading || reader.trailing) reader.backgroundMode = 'ornaments';
+    else reader.backgroundMode = '';
+  }
+
+  /** 阅读背景一格不剩时变体只留下段评、章首装饰（都没有就整个清掉），拷来记录一并清掉。 */
+  private static storeReaderVariant(record: ThemePackRecord, darkMode: boolean,
+    variant: ThemePackageVariantParts): void {
+    if (darkMode) record.parts.dark = variant;
+    else record.parts.light = variant;
+    if (variant.reader.backgroundMode) return;
+    SchemeAssetService.storeVariant(record, darkMode, null);
+    SchemeAssetService.setInherited(record, darkMode, null);
+  }
+
+  /** 已有记录且拷自同一套素材时沿用，否则新起一份。 */
+  private static inheritedOf(record: ThemePackRecord, darkMode: boolean, sourceAssetId: string): ReaderInheritedCopies {
+    const existing = ReaderInheritedCopies.normalize(darkMode ? record.readerInheritedDark : record.readerInheritedLight);
+    return existing && existing.sourceAssetId === sourceAssetId ? existing :
+      SchemeAssetService.newInherited(sourceAssetId);
+  }
+
+  private static newInherited(sourceAssetId: string): ReaderInheritedCopies {
+    const copies = new ReaderInheritedCopies();
+    copies.sourceAssetId = sourceAssetId;
+    return copies;
+  }
+
+  private static setInherited(record: ThemePackRecord, darkMode: boolean, copies: ReaderInheritedCopies | null): void {
+    const value = copies && (copies.leading || copies.trailing || copies.image) ? copies : null;
+    if (darkMode) record.readerInheritedDark = value;
+    else record.readerInheritedLight = value;
+  }
+
+  /** 这一格换成了自己传的图或去掉了：不再算拷来的。 */
+  private static forgetInherited(record: ThemePackRecord, darkMode: boolean, slot: string): void {
+    const existing = ReaderInheritedCopies.normalize(darkMode ? record.readerInheritedDark : record.readerInheritedLight);
+    if (!existing) return;
+    // 左上角饰去掉或换掉时，用它旋转出来的右下角也跟着变了。
+    if (slot === 'leading' && existing.trailing && existing.trailing === existing.leading) existing.trailing = '';
+    existing.setPath(slot, '');
+    SchemeAssetService.setInherited(record, darkMode, existing);
   }
 
   private static variantOf(record: ThemePackRecord, darkMode: boolean): ThemePackageVariantParts {
@@ -1074,44 +1285,6 @@ export class SchemeAssetService {
     return `${name}${key.endsWith('Selected') ? '选中' : ''}图标`;
   }
 
-  /**
-   * 移除一角的角饰：另一角还有自己的图就只清这一角；左上角被移除时，跟着它旋转的右下角一起清掉。
-   * 整图模式下移除角饰只清角饰、整图保留；移除整图时还有角饰就退回角饰模式。
-   * 什么都不剩时，这个模式的背景素材全部清掉。
-   */
-  static async clearReaderSlot(context: Context, schemeId: string, darkMode: boolean,
-    slot: string): Promise<SchemeAssetResult> {
-    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
-      const variant = darkMode ? record.parts.dark : record.parts.light;
-      if (!variant) return;
-      const reader = variant.reader;
-      if (reader.backgroundMode === 'image') {
-        if (slot === 'image') {
-          if (reader.leading || reader.trailing) {
-            reader.image = '';
-            reader.imageFit = 'cover';
-            reader.backgroundMode = 'ornaments';
-            return;
-          }
-        } else {
-          if (slot === 'trailing' || reader.trailing === reader.leading) reader.trailing = '';
-          if (slot === 'leading') reader.leading = '';
-          return;
-        }
-      } else if (reader.backgroundMode === 'ornaments') {
-        if (slot === 'trailing' && reader.leading) {
-          reader.trailing = '';
-          return;
-        }
-        if (slot === 'leading' && reader.trailing && reader.trailing !== reader.leading) {
-          reader.leading = '';
-          return;
-        }
-      }
-      SchemeAssetService.storeVariant(record, darkMode, null);
-    });
-  }
-
   static async setReaderImageFit(context: Context, schemeId: string, darkMode: boolean,
     fit: string): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
@@ -1186,6 +1359,9 @@ export class SchemeAssetService {
         copy.commentBubble = target ? (target.commentBubble || null) : null;
         if (fromDark) parts.light = copy;
         else parts.dark = copy;
+        // 拷来记录也带过去：那边“取自”的素材键不同，格子会显示成自传，但导出时仍能认出哪些文件拷自内置主题。
+        const copies = ReaderInheritedCopies.normalize(fromDark ? record.readerInheritedDark : record.readerInheritedLight);
+        SchemeAssetService.setInherited(record, !fromDark, copies);
       } else if (kind === 'ttsPanel') {
         const source = fromDark ? parts.ttsPanelDark : parts.ttsPanelLight;
         if (!source) throw new Error('这个模式还没有面板插画');

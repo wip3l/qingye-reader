@@ -4,7 +4,7 @@ import { fileUri } from '../platform/FileUri';
 import hash from '@ohos.file.hash';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import { DefaultBaseRevision } from '../theme/ThemeModels';
-import { InstalledThemePack, ThemePackRecord, ThemePackRegistry } from '../theme/ThemePackRegistry';
+import { InstalledThemePack, ReaderInheritedCopies, ThemePackRecord, ThemePackRegistry } from '../theme/ThemePackRegistry';
 import { CloudThemeChange } from '../account/CloudThemeChange';
 import {
   assetPath,
@@ -162,6 +162,8 @@ export class ThemePackStore {
     record.navFallbackIconPackId = parsed.navFallbackIconPackId || '';
     record.homeBackdropFallbackLight = parsed.homeBackdropFallbackLight || '';
     record.homeBackdropFallbackDark = parsed.homeBackdropFallbackDark || '';
+    record.readerInheritedLight = ReaderInheritedCopies.normalize(parsed.readerInheritedLight);
+    record.readerInheritedDark = ReaderInheritedCopies.normalize(parsed.readerInheritedDark);
     record.parts = ThemePackStore.normalizeParts(parsed.parts);
     return record;
   }

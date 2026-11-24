@@ -20,7 +20,7 @@ import { ReaderSettings, ReaderSettingsStore } from '../../utils/ReaderSettingsS
 import { ReaderThemeHelper } from '../../utils/ReaderThemeHelper';
 import { BuiltinThemeRegistry } from '../BuiltinThemeRegistry';
 import { DefaultBaseRevision, SuperExclusiveThemes, ThemeIds, ThemePack } from '../ThemeModels';
-import { InstalledThemePack, ThemePackRecord, ThemePackRegistry } from '../ThemePackRegistry';
+import { InstalledThemePack, ReaderInheritedCopies, ThemePackRecord, ThemePackRegistry } from '../ThemePackRegistry';
 import { ThemePackStore } from '../../utils/ThemePackStore';
 import {
   applyLayout,
@@ -808,6 +808,33 @@ export class ThemePackageService {
     ThemePackStore.install(context, record);
   }
 
+  /**
+   * 编辑器“不用”某一格时，会把“取自”主题其余的阅读背景素材拷进方案包。拷自非免费内置主题的文件不随包分享
+   * （导入方按素材键引用时本来也要自己能用那套主题，见 restrictBackgroundAssets）；剔掉后一格不剩就只画底色。
+   */
+  private static dropLockedReaderCopies(parts: ThemePackageParts, copies: ReaderInheritedCopies | null,
+    darkMode: boolean): void {
+    const variant = darkMode ? parts.dark : parts.light;
+    if (!variant || !copies || ThemePackageService.freeBackgroundAsset(copies.sourceAssetId)) return;
+    const reader = variant.reader;
+    if (copies.image && reader.image === copies.image) {
+      reader.image = '';
+      reader.imageFit = 'cover';
+    }
+    if (copies.leading && reader.leading === copies.leading) reader.leading = '';
+    if (copies.trailing && reader.trailing === copies.trailing) reader.trailing = '';
+    if (reader.image) reader.backgroundMode = 'image';
+    else if (reader.leading || reader.trailing) reader.backgroundMode = 'ornaments';
+    else if (reader.backgroundMode) reader.backgroundMode = 'none';
+  }
+
+  /** 主题包素材键，或者某个免费内置主题的背景素材键。 */
+  private static freeBackgroundAsset(assetId: string): boolean {
+    if (!assetId || ThemePackRegistry.isPackId(assetId)) return true;
+    return BuiltinThemeRegistry.all().some((theme: ThemePack): boolean => BuiltinThemeRegistry.isFree(theme.id) &&
+      (theme.light.reader.backgroundAssetId === assetId || theme.dark.reader.backgroundAssetId === assetId));
+  }
+
   /** 导出时把已安装主题包的素材复制进包，按格式 2 登记到清单；parts 里的引用就是包内路径。 */
   private static async packParts(bundled: InstalledThemePack, assetsDir: string,
     manifest: ThemePackageManifest): Promise<ThemePackageParts> {
@@ -823,6 +850,8 @@ export class ThemePackageService {
     const darkBubble = bubbleDarkDifference(record);
     record.bubble = lightBubble;
     record.bubbleDark = darkBubble;
+    ThemePackageService.dropLockedReaderCopies(record, bundled.record.readerInheritedLight, false);
+    ThemePackageService.dropLockedReaderCopies(record, bundled.record.readerInheritedDark, true);
     for (const relativePath of partsAssetRefs(record)) {
       const source = `${bundled.dir}/${relativePath}`;
       if (!ThemePackageService.exists(source)) {

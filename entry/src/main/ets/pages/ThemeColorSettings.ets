@@ -23,7 +23,7 @@ import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import { InstalledThemePack, InstalledThemePackReader, ThemeImageSlots, ThemePackRegistry } from '../theme/ThemePackRegistry';
 import { AccountSessionStore } from '../account/AccountSessionStore';
 import { StartupCoverImageStore } from '../utils/StartupCoverImageStore';
-import { SchemeAssetResult, SchemeAssetService, SchemeFontOption } from '../utils/SchemeAssetService';
+import { ReaderSourceItems, SchemeAssetResult, SchemeAssetService, SchemeFontOption } from '../utils/SchemeAssetService';
 import { SchemePreviewImageStore } from '../utils/SchemePreviewImageStore';
 import {
   COMMENT_BUBBLE_ORNAMENT_NAMES,
@@ -3890,19 +3890,73 @@ struct ThemeColorSettingsPage {
     return pack ? pack.reader(this.selectedMode === 'dark') : null;
   }
 
-  readerSlotState(slot: string): string {
-    const mode = this.ownReaderMode();
+  /** “取自”主题这一模式的阅读背景素材键：格子按它判断哪一项是选了“不用”。 */
+  readerFollowAssetId(): string {
+    const theme = BuiltinThemeRegistry.findById(this.sourceThemeId('reader'));
+    return this.selectedMode === 'dark' ? theme.dark.reader.backgroundAssetId : theme.light.reader.backgroundAssetId;
+  }
+
+  /**
+   * 某个背景素材键在阅读页上实际画出来的整图和角饰。内置主题只画角饰（资源里的整图阅读页不用），
+   * 整图只有主题包才有。
+   */
+  static readerItems(assetId: string): ReaderSourceItems {
+    const items = new ReaderSourceItems();
+    items.assetId = assetId || '';
+    if (!items.assetId) return items;
+    items.image = ThemeAssetRegistry.readerBackgroundImage(assetId);
+    items.leading = ThemeAssetRegistry.readerBackgroundDecoration(assetId);
+    items.trailing = ThemeAssetRegistry.readerBackgroundTrailingDecoration(assetId);
+    items.imageFit = ThemeAssetRegistry.readerBackgroundImageFit(assetId);
+    items.leadingScale = ThemeAssetRegistry.readerBackgroundOrnamentScale(assetId, false);
+    items.trailingScale = ThemeAssetRegistry.readerBackgroundOrnamentScale(assetId, true);
+    items.leadingInset = ThemeAssetRegistry.readerBackgroundOrnamentInset(assetId, false);
+    items.trailingInset = ThemeAssetRegistry.readerBackgroundOrnamentInset(assetId, true);
+    return items;
+  }
+
+  /** 这个模式没在用方案包时，改任何一格前先按当前显示的那套重置方案包；在用时为 null。 */
+  readerSeed(): ReaderSourceItems | null {
+    return this.ownReaderMode() ? null : ThemeColorSettingsPage.readerItems(this.readerAssetId());
+  }
+
+  readerSlotImage(slot: string): ResourceStr {
     const id = this.readerAssetId();
-    if (slot === 'image') {
-      if (mode === 'image') return 'own';
-      return ThemeColorSettingsPage.hasImage(ThemeAssetRegistry.readerBackground(id)) ? 'inherit' : 'empty';
-    }
-    // 自传角饰可以只有一角，空着的那角显示成待上传。
-    const own = this.ownOrnamentReader();
-    if (own) return (slot === 'trailing' ? own.trailing : own.leading) ? 'own' : 'empty';
-    const image = slot === 'trailing' ? ThemeAssetRegistry.readerBackgroundTrailingDecoration(id) :
+    if (slot === 'image') return ThemeAssetRegistry.readerBackgroundImage(id);
+    return slot === 'trailing' ? ThemeAssetRegistry.readerBackgroundTrailingDecoration(id) :
       ThemeAssetRegistry.readerBackgroundDecoration(id);
-    return ThemeColorSettingsPage.hasImage(image) ? 'inherit' : 'empty';
+  }
+
+  /** 方案包里这一格是从“取自”主题拷来的（选“不用”别的格子时拷进来的），显示成跟随。 */
+  readerSlotInherited(slot: string): boolean {
+    const pack = this.ownPack();
+    if (!pack) return false;
+    const dark = this.selectedMode === 'dark';
+    const copies = dark ? pack.record.readerInheritedDark : pack.record.readerInheritedLight;
+    const variant = dark ? pack.record.parts.dark : pack.record.parts.light;
+    if (!copies || !variant || copies.sourceAssetId !== this.readerFollowAssetId()) return false;
+    const reader = variant.reader;
+    if (slot === 'image') return !!reader.image && reader.image === copies.image;
+    if (slot === 'trailing') return !!reader.trailing && reader.trailing === copies.trailing;
+    return !!reader.leading && reader.leading === copies.leading;
+  }
+
+  /**
+   * 格子状态：own 自己传的；inherit 跟随“取自”主题（含拷进方案包的）；off 所选主题有这一项但选了“不用”；
+   * empty 所选主题也没有。
+   */
+  readerSlotState(slot: string): string {
+    const own = this.ownOrnamentReader();
+    if (own) {
+      const path = slot === 'image' ? (own.mode === 'image' ? own.image : '') :
+        (slot === 'trailing' ? own.trailing : own.leading);
+      if (path) return this.readerSlotInherited(slot) ? 'inherit' : 'own';
+    } else if (ThemeColorSettingsPage.hasImage(this.readerSlotImage(slot))) {
+      return 'inherit';
+    }
+    // 方案包在用、或者全都不用（素材键为空）时，所选主题有而这里没有的那一项就是“不用”。
+    if (!own && this.readerAssetId()) return 'empty';
+    return ThemeColorSettingsPage.readerItems(this.readerFollowAssetId()).has(slot) ? 'off' : 'empty';
   }
 
   readerOrnamentScalePercent(trailing: boolean): number {
@@ -4059,12 +4113,13 @@ struct ThemeColorSettingsPage {
           rotation: ThemeAssetRegistry.readerBackgroundTrailingRotation(this.readerAssetId()),
           state: this.readerSlotState('trailing'), slotWidth: 64, slotHeight: 64,
           onTap: () => this.tapReaderSlot('trailing') })
-        this.assetSlot({ label: '整图', image: ThemeAssetRegistry.readerBackground(this.readerAssetId()),
+        this.assetSlot({ label: '整图', image: this.readerSlotImage('image'),
           state: this.readerSlotState('image'), slotWidth: 40, slotHeight: 64,
           onTap: () => this.tapReaderSlot('image') })
       }
       .width('100%')
-      Text('角饰可以只传左上或右下一张，也可以两张都传；右下角也能直接用左上角那张旋转 180°。传了整图时角饰叠在整图上面')
+      Text('角饰可以只传左上或右下一张，也可以两张都传；右下角也能直接用左上角那张旋转 180°。传了整图时角饰叠在整图上面。' +
+        '点格子可以选“不用”，只去掉这一项，底色和字色不变')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
         .width('100%')
@@ -4075,7 +4130,8 @@ struct ThemeColorSettingsPage {
     if (this.moreOpen('reader')) {
       this.readerMoreRows()
     }
-    if (this.ownReaderMode()) {
+    // 用了方案包里的素材，或者选了“不用”（素材键和所选主题的不一样）时，可以一键改回所选主题的那套。
+    if (this.readerAssetId() !== this.readerFollowAssetId()) {
       this.resetRow(`恢复为所选主题的${this.modeLabel()}阅读背景`, () => this.clearReaderAssets())
     }
   }
@@ -4136,53 +4192,73 @@ struct ThemeColorSettingsPage {
   }
 
   async tapReaderSlot(slot: string): Promise<void> {
+    // 菜单期间用户可能切换浅色/深色，操作的是点开时那个模式的那一格。
     const dark = this.selectedMode === 'dark';
     const other = dark ? '浅色' : '深色';
     const own = this.ownOrnamentReader();
-    if (this.readerSlotState(slot) !== 'own') {
+    const state = this.readerSlotState(slot);
+    const name = ThemeColorSettingsPage.readerSlotName(slot);
+    const title = `${this.modeLabel()} · ${name}`;
+    if (state === 'empty') {
       if (!(await this.ensureAdvanced())) return;
-      if (slot === 'image') {
-        await this.uploadReaderImage();
-      } else if (slot === 'trailing' && own && own.leading) {
+      if (slot === 'trailing' && own && own.leading) {
         // 已有左上角饰：右下角可以单独上传，也可以直接用左上角那张旋转。
-        const choice = await this.slotMenu(`${this.modeLabel()} · 右下角饰`, '上传图片', '用左上角那张旋转 180°');
-        if (choice === 0) await this.uploadReaderOrnament(true);
+        const choice = await this.slotMenu(title, '上传图片', '用左上角那张旋转 180°');
+        if (choice === 0) await this.uploadReaderSlot(slot);
         else if (choice === 1) await this.mirrorReaderTrailing();
       } else {
-        await this.uploadReaderOrnament(slot === 'trailing');
+        await this.uploadReaderSlot(slot);
       }
       return;
     }
-    const copyLabel = `${other}模式也用这套`;
-    let actions: string[] = [];
-    if (slot === 'image') {
-      actions = ['替换', copyLabel, '移除整图背景'];
-    } else if (slot === 'trailing') {
-      const mirrored = !!own && !!own.leading && own.trailing === own.leading;
-      actions = ['替换', mirrored || !own || !own.leading ? copyLabel : '改用左上角那张旋转', '移除右下角饰'];
-    } else {
-      actions = ['替换', copyLabel, '移除左上角饰'];
+    if (state === 'off') {
+      const choice = await this.slotMenu(title, '上传', '恢复跟随');
+      if (choice === 0) await this.replaceGuarded(() => this.uploadReaderSlot(slot));
+      else if (choice === 1) await this.restoreReaderSlot(slot, dark);
+      return;
     }
-    const name = slot === 'image' ? '整图背景' : (slot === 'trailing' ? '右下角饰' : '左上角饰');
-    const choice = await this.slotMenu(`${this.modeLabel()} · ${name}`, actions[0], actions[1], actions[2]);
+    if (state === 'inherit') {
+      const choice = await this.slotMenu(title, '上传替换', `不用${name}`);
+      if (choice === 0) await this.replaceGuarded(() => this.uploadReaderSlot(slot));
+      else if (choice === 1) await this.setReaderSlotOff(slot, dark);
+      return;
+    }
+    const copyLabel = `${other}模式也用这套`;
+    let second = copyLabel;
+    if (slot === 'trailing' && own && own.leading && own.trailing !== own.leading) second = '改用左上角那张旋转';
+    // 所选主题也有这一项时，自己传的可以改回跟随，也可以干脆不用；没有时就是移除。
+    const follows = ThemeColorSettingsPage.readerItems(this.readerFollowAssetId()).has(slot);
+    const actions: string[] = follows ? ['替换', second, '改回跟随', `不用${name}`] : ['替换', second, `移除${name}`];
+    const choice = await this.slotMenuItems(title, actions);
     if (choice < 0) return;
     const action = actions[choice];
     if (action === '替换') {
-      await this.replaceGuarded(() => slot === 'image' ? this.uploadReaderImage() :
-        this.uploadReaderOrnament(slot === 'trailing'));
+      await this.replaceGuarded(() => this.uploadReaderSlot(slot));
     } else if (action === copyLabel) {
-      await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      const copied = await this.runAssetUpload((): Promise<SchemeAssetResult> =>
         SchemeAssetService.copyToOtherMode(getContext(this), this.schemeId, 'reader', dark), '', false, false, '');
-      if (this.ownPackageId) {
+      if (copied && this.ownPackageId) {
         this.rememberChange();
         this.setReaderBackgroundAssetFor(!dark, packReaderBackgroundId(this.ownPackageId, !dark));
         HdsFeedback.showToast(`${other}模式的阅读背景已换成同一套`);
       }
     } else if (action === '改用左上角那张旋转') {
       await this.mirrorReaderTrailing();
+    } else if (action === '改回跟随') {
+      await this.restoreReaderSlot(slot, dark);
     } else {
-      await this.clearReaderSlot(slot);
+      await this.setReaderSlotOff(slot, dark);
     }
+  }
+
+  static readerSlotName(slot: string): string {
+    if (slot === 'image') return '整图背景';
+    return slot === 'trailing' ? '右下角饰' : '左上角饰';
+  }
+
+  async uploadReaderSlot(slot: string): Promise<void> {
+    if (slot === 'image') await this.uploadReaderImage();
+    else await this.uploadReaderOrnament(slot === 'trailing');
   }
 
   async mirrorReaderTrailing(): Promise<void> {
@@ -4191,16 +4267,39 @@ struct ThemeColorSettingsPage {
       SchemeAssetService.setReaderTrailingMirror(getContext(this), this.schemeId, dark), '', false, false, '');
   }
 
-  async clearReaderSlot(slot: string): Promise<void> {
-    const dark = this.selectedMode === 'dark';
-    await this.runAssetClear((): Promise<SchemeAssetResult> =>
-      SchemeAssetService.clearReaderSlot(getContext(this), this.schemeId, dark, slot), '');
-    if (!this.readerAssetMode()) {
-      const sourceTheme = BuiltinThemeRegistry.findById(this.sourceThemeId('reader'));
-      this.rememberChange();
-      this.setReaderBackgroundAsset(dark ? sourceTheme.dark.reader.backgroundAssetId :
-        sourceTheme.light.reader.backgroundAssetId);
-    }
+  /**
+   * 这一格不用了：还在跟随别的素材时，其余几项拷进方案包继续跟随；已经在用方案包时直接去掉这一格。
+   * 一格都不剩时背景素材键置空，阅读页只画底色。
+   */
+  async setReaderSlotOff(slot: string, dark: boolean): Promise<void> {
+    if (!(await this.ensureAdvanced())) return;
+    const seed = this.readerSeed();
+    const sourceThemeId = this.sourceThemeId('reader');
+    const done = await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setReaderSlotOff(getContext(this), this.schemeId, dark, slot, seed, sourceThemeId),
+      '', false, false, '');
+    if (done) this.pointReaderAtPack(dark, `${dark ? '深色' : '浅色'}${ThemeColorSettingsPage.readerSlotName(slot)}不用了`);
+  }
+
+  /** 把“取自”主题的这一项拷回方案包，显示成跟随。 */
+  async restoreReaderSlot(slot: string, dark: boolean): Promise<void> {
+    if (!(await this.ensureAdvanced())) return;
+    const follow = ThemeColorSettingsPage.readerItems(this.readerFollowAssetId());
+    const seed = this.readerSeed();
+    const sourceThemeId = this.sourceThemeId('reader');
+    const done = await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.restoreReaderSlot(getContext(this), this.schemeId, dark, slot, follow, seed, sourceThemeId),
+      '', false, false, '');
+    if (done) this.pointReaderAtPack(dark, `${dark ? '深色' : '浅色'}${ThemeColorSettingsPage.readerSlotName(slot)}恢复跟随`);
+  }
+
+  /** 方案包这个模式还有阅读背景就指向它，一格不剩就置空（只画底色）。 */
+  pointReaderAtPack(dark: boolean, notice: string): void {
+    const mode = SchemeAssetService.readerMode(this.ownPackageId, dark);
+    this.rememberChange();
+    this.setReaderBackgroundAssetFor(dark, mode === 'image' || mode === 'ornaments' ?
+      packReaderBackgroundId(this.ownPackageId, dark) : '');
+    if (notice) HdsFeedback.showToast(notice);
   }
 
   ownBubbleActive(): boolean {
@@ -5889,8 +5988,9 @@ struct ThemeColorSettingsPage {
     return sources.paletteThemeId;
   }
 
+  /** 返回是否成功；失败时已经提示过。 */
   async runAssetUpload(action: () => Promise<SchemeAssetResult>, category: string, light: boolean,
-    dark: boolean, notice: string): Promise<void> {
+    dark: boolean, notice: string): Promise<boolean> {
     try {
       // 先把编辑中的改动落盘，素材服务读到的才是当前方案。
       await this.onSettingChanged();
@@ -5901,9 +6001,11 @@ struct ThemeColorSettingsPage {
       if (category && result.themeId) this.applyPackSource(category, result.themeId, light, dark);
       if (notice) HdsFeedback.showToast(notice);
       this.refreshAssetIssues();
+      return true;
     } catch (e) {
       console.error('上传方案素材失败:', e);
       HdsFeedback.showToast((e as Error).message || '上传失败，请重试');
+      return false;
     }
   }
 
@@ -6024,41 +6126,43 @@ struct ThemeColorSettingsPage {
 
   async uploadReaderOrnament(trailing: boolean): Promise<void> {
     const dark = this.selectedMode === 'dark';
+    // 还在跟随别的素材时，其余几项先拷进方案包继续跟随，只换这一格。
+    const seed = this.readerSeed();
+    const sourceThemeId = this.sourceThemeId('reader');
     const chosen = await this.pickGalleryOrFile(trailing ? '右下角饰' : '左上角饰');
     if (!chosen.uri) return;
     const uris = [chosen.uri];
-    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+    const done = await this.runAssetUpload((): Promise<SchemeAssetResult> =>
       SchemeAssetService.setReaderOrnament(getContext(this), this.schemeId, uris[0], trailing, dark,
-        this.sourceThemeId('reader')), '', false, false, '');
-    if (this.ownPackageId) {
-      this.rememberChange();
-      this.setReaderBackgroundAsset(packReaderBackgroundId(this.ownPackageId, dark));
-      HdsFeedback.showToast(`${this.modeLabel()}阅读角饰已更新`);
-    }
+        sourceThemeId, seed), '', false, false, '');
+    if (done && this.ownPackageId) this.pointReaderAtPack(dark, `${dark ? '深色' : '浅色'}阅读角饰已更新`);
   }
 
   async uploadReaderImage(): Promise<void> {
     const dark = this.selectedMode === 'dark';
+    const seed = this.readerSeed();
+    const sourceThemeId = this.sourceThemeId('reader');
     const uris = await SchemeAssetService.pickImages(getContext(this), 1);
     if (uris.length === 0) return;
-    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
-      SchemeAssetService.setReaderImage(getContext(this), this.schemeId, uris[0], dark, this.sourceThemeId('reader')),
+    const done = await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setReaderImage(getContext(this), this.schemeId, uris[0], dark, sourceThemeId, seed),
       '', false, false, '');
-    if (this.ownPackageId) {
-      this.rememberChange();
-      this.setReaderBackgroundAsset(packReaderBackgroundId(this.ownPackageId, dark));
-      HdsFeedback.showToast(`${this.modeLabel()}阅读背景已更新`);
-    }
+    if (done && this.ownPackageId) this.pointReaderAtPack(dark, `${dark ? '深色' : '浅色'}阅读背景已更新`);
   }
 
+  /** 去掉方案包里这个模式的阅读背景和所有“不用”，改回所选主题的那套。 */
   async clearReaderAssets(): Promise<void> {
     const dark = this.selectedMode === 'dark';
-    const sourceTheme = BuiltinThemeRegistry.findById(this.sourceThemeId('reader'));
-    await this.runAssetClear((): Promise<SchemeAssetResult> =>
-      SchemeAssetService.clearReader(getContext(this), this.schemeId, dark), '');
+    const follow = this.readerFollowAssetId();
+    if (this.ownReaderMode()) {
+      await this.runAssetClear((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.clearReader(getContext(this), this.schemeId, dark), '', '',
+        `已恢复为所选主题的${dark ? '深色' : '浅色'}阅读背景`);
+    } else {
+      HdsFeedback.showToast(`已恢复为所选主题的${dark ? '深色' : '浅色'}阅读背景`);
+    }
     this.rememberChange();
-    this.setReaderBackgroundAsset(dark ? sourceTheme.dark.reader.backgroundAssetId :
-      sourceTheme.light.reader.backgroundAssetId);
+    this.setReaderBackgroundAssetFor(dark, follow);
   }
 
   async uploadNavigation(): Promise<void> {

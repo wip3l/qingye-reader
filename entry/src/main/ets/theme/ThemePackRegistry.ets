@@ -69,6 +69,42 @@ export class ThemePackRecord {
   // （上传时“首页背景”来源所选的主题），浅色、深色各记各的。
   homeBackdropFallbackLight: string = '';
   homeBackdropFallbackDark: string = '';
+  // 编辑器把“取自”主题的阅读背景素材拷进包里的记录，浅色、深色各一份（见 ReaderInheritedCopies）。
+  readerInheritedLight: ReaderInheritedCopies | null = null;
+  readerInheritedDark: ReaderInheritedCopies | null = null;
+}
+
+/**
+ * 自定义方案的阅读背景按格子选“不用”时，要把其余跟随的素材（来源主题的整图、角饰）拷进方案自己的包，
+ * 这里记下哪几个文件是拷来的、拷自哪个背景素材键：编辑器据此把它们仍显示成“跟随”，
+ * 导出时拷自非免费内置主题的文件不随包分享。
+ */
+export class ReaderInheritedCopies {
+  sourceAssetId: string = '';
+  leading: string = '';
+  trailing: string = '';
+  image: string = '';
+
+  static normalize(value: ReaderInheritedCopies | null | undefined): ReaderInheritedCopies | null {
+    if (!value || typeof value !== 'object' || typeof value.sourceAssetId !== 'string') return null;
+    const copies = new ReaderInheritedCopies();
+    copies.sourceAssetId = value.sourceAssetId;
+    copies.leading = typeof value.leading === 'string' ? value.leading : '';
+    copies.trailing = typeof value.trailing === 'string' ? value.trailing : '';
+    copies.image = typeof value.image === 'string' ? value.image : '';
+    return copies.leading || copies.trailing || copies.image ? copies : null;
+  }
+
+  pathOf(slot: string): string {
+    if (slot === 'image') return this.image;
+    return slot === 'trailing' ? this.trailing : this.leading;
+  }
+
+  setPath(slot: string, path: string): void {
+    if (slot === 'image') this.image = path;
+    else if (slot === 'trailing') this.trailing = path;
+    else this.leading = path;
+  }
 }
 
 export class InstalledThemePackReader {
