@@ -2467,6 +2467,14 @@ export struct BookshelfPage {
         .hitTestBehavior(HitTestMode.None)
         .bindSheet(this.showGalleryCoverSheet, this.galleryCoverSheet(), this.galleryCoverSheetOptions())
 
+      // 一个组件只认最后一个 bindSheet：每个半模态各挂一个空节点，别和根节点上的网络封面面板叠在一起。
+      Column()
+        .width(1)
+        .height(1)
+        .position({ x: 0, y: 0 })
+        .hitTestBehavior(HitTestMode.None)
+        .bindSheet(this.showNetworkIntroSheet, this.networkIntroSheet(), this.networkIntroSheetOptions())
+
       Column()
         .width(1)
         .height(1)
@@ -2488,7 +2496,6 @@ export struct BookshelfPage {
     .onAreaChange((_oldValue: Area, newValue: Area) => this.updateContextViewport(newValue))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet(this.showNetworkCoverDialog, this.networkCoverSheet(), this.networkCoverSheetOptions())
-    .bindSheet(this.showNetworkIntroSheet, this.networkIntroSheet(), this.networkIntroSheetOptions())
   }
 
   @Builder
