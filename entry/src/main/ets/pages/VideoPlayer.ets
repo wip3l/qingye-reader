@@ -14,7 +14,7 @@ import { syncSystemBars } from '../utils/SystemBars';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
-import { VideoPlaybackSource, VideoPlaybackSupport } from '../core/book/VideoPlaybackSupport';
+import { VideoPlaybackSource, VideoPlaybackSupport, VideoPlaylistMode } from '../core/book/VideoPlaybackSupport';
 import { VideoAvSession, VideoAvSessionListener } from '../utils/VideoAvSession';
 import { MixedVideoChapter } from '../core/book/MixedVideoChapter';
 import { MixedVideoProgress } from '../utils/MixedVideoProgress';
@@ -154,6 +154,10 @@ struct VideoPlayerPage {
   @State webFullscreen: boolean = false;
   @State webStatus: string = '';
   @State videoPageUrl: string = '';
+  /** 当前这集由书源接管播放列表请求（content.playlist）；没有时为 null。 */
+  private videoPlaylist: VideoPlaylistMode | null = null;
+  /** Video 组件播直播失败后改用 AVPlayer 的那一集；换到别的集时清掉。 */
+  private liveAvEpisode: number = -1;
   @State @Watch('syncKeepScreenOn') playbackFailed: boolean = false;
   @State @Watch('syncKeepScreenOn') playbackReady: boolean = false;
   @State resumeNotice: string = '';
@@ -182,6 +186,8 @@ struct VideoPlayerPage {
   private resolveTimerId: number = -1;
   private seekTimerId: number = -1;
   private lastNativePositionSec: number = -1;
+  /** 上次记作“有进度”时的位置，卡顿看门狗用。 */
+  private progressMarkSec: number = -1;
   // 合并连续点按的目标，同一时刻只向播放器提交一次 seek，避免旧回调覆盖新目标。
   private pendingSeekSec: number = -1;
   private issuedSeekSec: number = -1;
@@ -501,6 +507,7 @@ struct VideoPlayerPage {
     this.durationSec = 0;
     this.isPlaying = false;
     this.videoUrl = '';
+    this.videoPlaylist = null;
     this.videoPageUrl = previousPageUrl;
     this.playbackFailed = false;
     this.playbackReady = false;
@@ -544,14 +551,21 @@ struct VideoPlayerPage {
       return;
     }
     this.statusText = '正在缓冲...';
+    // 先于 videoUrl 赋值：“听”按钮看它决定显不显示。
+    this.videoPlaylist = result.playlist;
     this.videoUrl = result.url;
     const headers = result.headers || {};
     this.videoHeaders = headers;
     const attempt = new VideoNativeAttempt(++this.activeAttemptId, result.url);
     // 只有 User-Agent 时媒体服务器几乎不校验，仍用 Video 组件；有 Referer、Cookie 等才必须带上。
-    if (Object.keys(headers).some((name: string): boolean => name.toLowerCase() !== 'user-agent')) {
+    // 书源要接管播放列表（content.playlist）时也用 AVPlayer：分片要带上书源请求头，Video 组件不发请求头。
+    // 直播在 Video 组件里会失败（见 onVideoError），同一集改用 AVPlayer 重播。
+    const liveOnAv = this.liveAvEpisode === target;
+    if (!liveOnAv) this.liveAvEpisode = -1;
+    if (result.playlist || liveOnAv ||
+      Object.keys(headers).some((name: string): boolean => name.toLowerCase() !== 'user-agent')) {
       attempt.surface = new XComponentController();
-      attempt.session = new VideoAvSession(result.url, headers, this.speed, this.avListener(attempt));
+      attempt.session = new VideoAvSession(result.url, headers, this.speed, this.avListener(attempt), result.playlist);
     }
     console.info(`[VideoPlayer] play episode=${target} resume=${this.resumeSec} reload=${isReload} ` +
       `retry=${isRetry} headers=${Object.keys(headers).length}`);
@@ -761,6 +775,7 @@ struct VideoPlayerPage {
     this.pendingSeekSec = -1;
     this.issuedSeekSec = -1;
     this.lastNativePositionSec = -1;
+    this.progressMarkSec = -1;
     this.playbackReady = false;
     this.activeAttemptId++;
     this.clearHideTimer();
@@ -810,9 +825,12 @@ struct VideoPlayerPage {
     return snapshot;
   }
 
-  /** 网页播放拿不到声音，取地址或缓冲还没好时也没有可交出去的地址。 */
+  /**
+   * 网页播放拿不到声音，取地址或缓冲还没好时也没有可交出去的地址。
+   * 书源接管播放列表（content.playlist）的视频，听视频的播放器还不会走本机代理，先不提供。
+   */
   private canListen(): boolean {
-    return !this.webMode && !this.listening && !!this.videoUrl && !this.playbackFailed &&
+    return !this.webMode && !this.listening && !!this.videoUrl && !this.playbackFailed && !this.videoPlaylist &&
       this.nativeAttempts.length > 0 && !!this.book && !!this.source && this.chapters.length > 0;
   }
 
@@ -953,7 +971,10 @@ struct VideoPlayerPage {
       this.issuedSeekSec = -1;
       this.isPlaying = false;
     }
-    const resumable = target > 1 && (this.durationSec <= 0 || target < this.durationSec - 3);
+    // AVPlayer 准备好时报的时长为 0 就是直播：直播不能跳转（401 the seek time is out of seekable ranges），
+    // 卡住重载、重试后都从直播当前位置播。Video 组件准备时偶尔报 0，仍按原来的规则续播。
+    const live = this.durationSec <= 0 && this.currentSession() !== null;
+    const resumable = target > 1 && !live && (this.durationSec <= 0 || target < this.durationSec - 3);
     if (!resumable) {
       this.positionSec = 0;
     } else if (reprepared && !shouldStart) {
@@ -990,6 +1011,7 @@ struct VideoPlayerPage {
     this.issuedSeekSec = seconds;
     this.seekAccurate = accurate;
     this.lastNativePositionSec = -1;
+    this.progressMarkSec = -1;
     this.armSeekTimer();
     try {
       this.nativeSeek(seconds, accurate);
@@ -1086,9 +1108,13 @@ struct VideoPlayerPage {
 
   private onVideoUpdated(seconds: number): void {
     if (!this.playbackReady || !Number.isFinite(seconds)) return;
-    const previous = this.lastNativePositionSec;
     this.lastNativePositionSec = VideoPlaybackSupport.position(seconds);
-    if (previous < 0 || Math.abs(this.lastNativePositionSec - previous) >= 0.2) this.markProgress();
+    // 和上次记作“有进度”的位置比，不和上一次回调比：AVPlayer 约每 0.1 秒报一次，相邻两次永远差不到 0.2 秒，
+    // 看门狗会以为一直没动，每 25 秒重载一次。
+    if (this.progressMarkSec < 0 || Math.abs(this.lastNativePositionSec - this.progressMarkSec) >= 0.2) {
+      this.progressMarkSec = this.lastNativePositionSec;
+      this.markProgress();
+    }
     if (this.issuedSeekSec >= 0) {
       if (Math.abs(this.lastNativePositionSec - this.issuedSeekSec) <= this.seekToleranceSec()) {
         this.onVideoSeeked(seconds);
@@ -1147,12 +1173,24 @@ struct VideoPlayerPage {
 
   private onVideoError(code: number): void {
     const position = this.durablePositionSec();
+    const session = this.currentSession();
+    // Video 组件每次播放都会设置“不循环”，直播会被系统拒绝（5400103：Can not SetLooping, it is live-stream），
+    // 组件随即自己停掉。已经准备好、时长为 0 的就是直播：这一集改用 AVPlayer 重播，不算一次重试。
+    if (!session && code === 5400103 && this.playbackReady && this.durationSec <= 0 &&
+      this.liveAvEpisode !== this.episodeIndex) {
+      console.warn(`[VideoPlayer] live stream in Video component, replay with AVPlayer episode=${this.episodeIndex}`);
+      this.liveAvEpisode = this.episodeIndex;
+      this.playEpisode(this.episodeIndex, 0, false, true);
+      return;
+    }
+    // 停止播放会关掉本机代理会话，原因要先取出来。
+    const playlistError = session ? session.playlistError() : '';
     this.saveProgress(true);
     this.stopPlayback();
     this.videoUrl = '';
     this.playbackFailed = true;
-    this.statusText = VideoPlaybackSupport.failureText(code);
-    console.warn(`[VideoPlayer] playback error code=${code}, episode=${this.episodeIndex}`);
+    this.statusText = playlistError || VideoPlaybackSupport.failureText(code);
+    console.warn(`[VideoPlayer] playback error code=${code}, episode=${this.episodeIndex}, playlist=${playlistError}`);
     if (VideoPlaybackSupport.unsupported(code) && this.videoPageUrl && this.playerPageVisible) {
       this.openWebPlayback(true);
       return;

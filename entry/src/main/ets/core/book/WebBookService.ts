@@ -15,7 +15,7 @@ import { BookSourceAudioWebRuntime } from './BookSourceAudioWebRuntime';
 import { AudioRuleSupport } from './AudioRuleSupport';
 import { AudioUrlResolver } from './AudioUrlResolver';
 import { BookSourceMetadataSupport } from './BookSourceMetadataSupport';
-import { VideoPlaybackSource, VideoPlaybackSupport } from './VideoPlaybackSupport';
+import { VideoPlaybackSource, VideoPlaybackSupport, VideoPlaylistMode } from './VideoPlaybackSupport';
 
 class ContentPageData {
   content: string = '';
@@ -136,6 +136,11 @@ export class WebBookService {
         video.pageUrl = VideoPlaybackSupport.httpUrl(result.videoPage || '');
         video.headers = result.mediaHeaders;
         video.error = result.mediaError || '';
+        if (result.playlist) {
+          const mode = new VideoPlaylistMode();
+          mode.lowLatency = result.playlist.lowLatency;
+          video.playlist = mode;
+        }
       } else {
         // 兼容书源沿用“地址,{"headers":{…}}”的写法，整串交给播放器会被当成一个打不开的地址。
         const options = AudioRuleSupport.splitRequestOptions(await this.getContent(source, book, chapter, cancelled));

@@ -1,6 +1,8 @@
 import { media } from '@kit.MediaKit';
 import { audio } from '@kit.AudioKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { VideoPlaylistMode } from '../core/book/VideoPlaybackSupport';
+import { VideoPlaylistProxy, VideoPlaylistSession } from './VideoPlaylistProxy';
 
 /** 与 Video 组件同名的回调，播放页对两种播放器只维护一套进度与跳转逻辑。 */
 export interface VideoAvSessionListener {
@@ -32,12 +34,24 @@ export class VideoAvSession {
   private surfaceWaiters: Array<() => void> = [];
   private stateWaiters: Array<(state: string) => void> = [];
   private speed: number = 1;
+  private playlist: VideoPlaylistMode | null;
+  private proxySession: VideoPlaylistSession | null = null;
+  private live: boolean = false;
+  private mediaSource: media.MediaSource | null = null;
 
-  constructor(url: string, headers: Record<string, string>, speed: number, listener: VideoAvSessionListener) {
+  /** playlist 不为空时播放列表经本机代理取回处理（书源写了 content.playlist），见 VideoPlaylistProxy。 */
+  constructor(url: string, headers: Record<string, string>, speed: number, listener: VideoAvSessionListener,
+    playlist: VideoPlaylistMode | null = null) {
     this.url = url;
     this.headers = headers;
     this.speed = speed;
     this.listener = listener;
+    this.playlist = playlist;
+  }
+
+  /** 本机代理最近一次取播放列表失败的原因；没走代理或没失败时为空。 */
+  playlistError(): string {
+    return this.proxySession ? this.proxySession.lastError : '';
   }
 
   attachSurface(surfaceId: string): void {
@@ -69,7 +83,22 @@ export class VideoAvSession {
       player.on('error', (error: BusinessError): void => {
         if (this.isCurrent(player)) this.listener.onError(error && error.code ? error.code : 0);
       });
-      await player.setMediaSource(media.createMediaSourceWithUrl(this.url, this.headers));
+      let url = this.url;
+      if (this.playlist) {
+        // 播放列表走本机代理，分片仍由播放器直接下载；开不了代理时照常播放原地址。
+        const proxySession = await VideoPlaylistProxy.shared().open(this.url, this.headers, this.playlist);
+        if (!this.isCurrent(player)) {
+          if (proxySession) VideoPlaylistProxy.shared().close(proxySession);
+          return;
+        }
+        this.proxySession = proxySession;
+        if (proxySession) url = proxySession.entryUrl;
+        console.info(`[VideoAvSession] playlist proxy=${proxySession !== null} lowLatency=${this.playlist.lowLatency}`);
+      }
+      // 请求头交给播放器的每一次请求：发往本机代理的会被忽略，发往源站的分片、密钥照样带上。
+      const source = media.createMediaSourceWithUrl(url, this.headers);
+      this.mediaSource = source;
+      await player.setMediaSource(source);
       // setMediaSource 返回不代表已进入 initialized，提前 prepare 会被拒绝。
       await this.waitForState(player, 'initialized');
       if (!this.isCurrent(player)) return;
@@ -81,7 +110,9 @@ export class VideoAvSession {
       await this.waitForState(player, 'prepared');
       if (!this.isCurrent(player)) return;
       this.prepared = true;
-      this.applySpeed(player);
+      // 直播（时长为 0）不能改倍速：系统会回一个 801 错误事件，播放页会当成播放失败。1 倍也不用设。
+      this.live = !(player.duration > 0);
+      if (this.speed !== 1) this.applySpeed(player);
       this.listener.onPrepared(Math.max(0, player.duration || 0) / 1000);
     } catch (error) {
       if (this.released) return;
@@ -131,6 +162,10 @@ export class VideoAvSession {
     for (const resolve of surfaceWaiters) resolve();
     this.stateWaiters = [];
     if (player) player.release().catch((): void => {});
+    const proxySession = this.proxySession;
+    this.proxySession = null;
+    if (proxySession) VideoPlaylistProxy.shared().close(proxySession);
+    this.mediaSource = null;
   }
 
   private isCurrent(player: media.AVPlayer): boolean {
@@ -185,6 +220,7 @@ export class VideoAvSession {
   }
 
   private applySpeed(player: media.AVPlayer): void {
+    if (this.live) return;
     let value = media.PlaybackSpeed.SPEED_FORWARD_1_00_X;
     if (this.speed === 0.75) value = media.PlaybackSpeed.SPEED_FORWARD_0_75_X;
     else if (this.speed === 1.25) value = media.PlaybackSpeed.SPEED_FORWARD_1_25_X;

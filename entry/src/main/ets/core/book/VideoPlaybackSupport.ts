@@ -4,6 +4,12 @@ export class VideoPlaybackSource {
   pageUrl: string = '';
   headers: Record<string, string> = {};
   error: string = '';
+  /** 书源写了 content.playlist：播放列表经应用的本机代理取回处理（VideoPlaylistProxy）。 */
+  playlist: VideoPlaylistMode | null = null;
+}
+
+export class VideoPlaylistMode {
+  lowLatency: boolean = true;
 }
 
 export class VideoPlaybackSupport {
