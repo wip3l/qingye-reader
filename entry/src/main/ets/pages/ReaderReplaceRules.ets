@@ -90,6 +90,21 @@ struct ReaderReplaceRulesPage {
   private ruleFirstVisibleIndex: number = 0;
   private ruleLastVisibleIndex: number = 0;
   private ruleSelectionSuppressClickUntil: number = 0;
+  /** 排序模式：只排用户自己的规则（内置规则是开关，不参与逐条替换），拖动松手即保存。 */
+  @State sortMode: boolean = false;
+  @State sortRules: ReaderReplaceRule[] = [];
+  @State sortUndoVisible: boolean = false;
+  @State sortUndoText: string = '';
+  private sortUndoStack: ReaderReplaceRule[][] = [];
+  private sortUndoTimer: number = -1;
+  private sortDragRuleId: number = 0;
+  private sortDragStartIndex: number = -1;
+  private sortDragSnapshot: ReaderReplaceRule[] = [];
+  private sortSaveChain: Promise<void> = Promise.resolve();
+  private sortListScroller: Scroller = new Scroller();
+  private moveToDialogSession: SystemDialogSession = new SystemDialogSession();
+  @State @Watch('onSystemDialogFlagChanged') showMoveToDialog: boolean = false;
+  @State moveToPosition: string = '';
 
   aboutToAppear(): void {
     this.loadPreviewContext();
@@ -107,9 +122,17 @@ struct ReaderReplaceRulesPage {
     this.persistRuleFormDraftNow();
   }
 
+  aboutToDisappear(): void {
+    this.clearSortUndoTimer();
+  }
+
   onBackPress(): boolean {
     if (this.showRuleMoreDialog) {
       this.showRuleMoreDialog = false;
+      return true;
+    }
+    if (this.sortMode) {
+      this.exitSortMode();
       return true;
     }
     if (this.selectionMode) {
@@ -269,7 +292,13 @@ struct ReaderReplaceRulesPage {
       options.fileSuffixChoices = ['JSON 文件|.json'];
       const result = await saveDocuments(getContext(this), options);
       if (!result || result.length === 0) return;
-      const json = JSON.stringify(selected, null, 2);
+      // 带上 order（按当前执行顺序），导入时按它排，本应用和开源阅读都认。
+      const entries = selected.map((rule: ReaderReplaceRule, index: number): Record<string, Object> => {
+        const entry = JSON.parse(JSON.stringify(rule)) as Record<string, Object>;
+        entry['order'] = index + 1;
+        return entry;
+      });
+      const json = JSON.stringify(entries, null, 2);
       await writeTextFile(getContext(this), result[0], json);
       HdsFeedback.showToast(`已导出 ${selected.length} 条替换规则`);
     } catch (e) {
@@ -305,6 +334,8 @@ struct ReaderReplaceRulesPage {
         .hitTestBehavior(CollapsingHeader.acceptsTouch((this.editing ? 0 : this.headerCollapse)) ? HitTestMode.Default : HitTestMode.None)
         if (this.editing) {
           this.editorView()
+        } else if (this.sortMode) {
+          this.sortView()
         } else {
           this.managerView()
         }
@@ -313,7 +344,18 @@ struct ReaderReplaceRulesPage {
       .height('100%')
       .backgroundColor(this.pageColor())
 
-      if (!this.editing && !this.selectionMode && !this.isImporting) {
+      if (this.sortMode && this.sortUndoVisible) {
+        Row() {
+          this.sortUndoCapsule()
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .margin({ bottom: this.navBarHeight + 22 })
+        .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ y: 16 }))
+          .animation({ duration: 220, curve: Curve.FastOutSlowIn }))
+      }
+
+      if (!this.editing && !this.selectionMode && !this.sortMode && !this.isImporting) {
         Stack() {
           ImmersiveMaterialSurface({
             surfaceWidth: 52,
@@ -375,6 +417,8 @@ struct ReaderReplaceRulesPage {
         onBack: () => {
           if (this.editing) {
             this.closeEditor();
+          } else if (this.sortMode) {
+            this.exitSortMode();
           } else if (this.selectionMode) {
             this.exitRuleSelectionMode();
           } else {
@@ -383,12 +427,26 @@ struct ReaderReplaceRulesPage {
         }
       })
       Text(this.editing ? (this.draft.name ? '编辑替换规则' : '新增替换规则') :
-        (this.previewMode ? '替换净化配置' : '替换净化'))
+        (this.sortMode ? '调整顺序' : (this.previewMode ? '替换净化配置' : '替换净化')))
         .fontSize(AppFontSize.TITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
         .layoutWeight(1)
-      if (!this.editing) {
+      if (this.sortMode) {
+        ImmersiveHeaderAction({
+          label: '完成',
+          tint: this.accentColor(),
+          onTap: () => this.exitSortMode()
+        })
+      } else if (!this.editing) {
+        if (!this.selectionMode) {
+          ImmersiveHeaderAction({
+            icon: $r('sys.symbol.sort'),
+            accessibilityLabel: '调整规则顺序',
+            onTap: () => this.enterSortMode()
+          })
+            .margin({ right: AppSpacing.SM })
+        }
         ImmersiveHeaderAction({
           label: this.selectionMode ? '取消' : '选择',
           onTap: () => {
@@ -442,6 +500,7 @@ struct ReaderReplaceRulesPage {
 
   onSystemDialogFlagChanged(): void {
     if (!this.showImportUrlDialog) this.importUrlDialogSession.close(this.getUIContext());
+    if (!this.showMoveToDialog) this.moveToDialogSession.close(this.getUIContext());
   }
 
   openImportUrlDialog(): void {
@@ -644,6 +703,473 @@ struct ReaderReplaceRulesPage {
     }
     .width('100%')
     .layoutWeight(1)
+  }
+
+  // ---------- 排序模式 ----------
+  // 规则从上到下逐条执行，上一条的输出交给下一条，所以列表顺序就是优先级。
+
+  @Builder
+  sortView() {
+    Column() {
+      Row({ space: AppSpacing.SM }) {
+        SymbolGlyph($r('sys.symbol.arrow_down'))
+          .fontSize(16)
+          .fontColor([this.accentColor()])
+        Text('从上到下依次执行，长按拖动调整顺序')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.accentColor())
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.SM, bottom: AppSpacing.SM })
+      .backgroundColor(this.accentSoftColor())
+      .borderRadius(ThemeRuntime.mediumRadius())
+      .margin({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.MD })
+
+      List({ space: AppSpacing.SM, scroller: this.sortListScroller }) {
+        if (this.builtinRules().length > 0) {
+          ListItem() {
+            this.sortSectionLabel('内置 · 只是开关，不分先后')
+          }
+          ForEach(this.builtinRules(), (rule: ReaderReplaceRule) => {
+            ListItem() {
+              this.sortBuiltinRow(rule)
+            }
+          }, (rule: ReaderReplaceRule) => `builtin_${rule.id}`)
+        }
+
+        ListItem() {
+          this.sortSectionLabel(this.sortRules.length > 0 ? '我的规则' : '还没有自己的规则')
+        }
+
+        ForEach(this.sortRules, (rule: ReaderReplaceRule) => {
+          ListItem() {
+            this.sortRuleRow(rule)
+          }
+        }, (rule: ReaderReplaceRule) => `sort_${rule.id}`)
+          // List 原地抬起条目、挤压让位并在边缘自动滚动；拖动中只改顺序，松手再保存。
+          .onMove((from: number, to: number) => this.moveSortRuleDuringDrag(from, to), {
+            onDragStart: (index: number) => this.beginSortDrag(index),
+            onDrop: (_index: number) => this.finishSortDrag()
+          })
+
+        ListItem() {
+          Column()
+            .height(this.ruleListBottomInset())
+            .hitTestBehavior(HitTestMode.None)
+        }
+      }
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      .layoutWeight(1)
+      .width('100%')
+      .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
+      .clip(true)
+    }
+    .width('100%')
+    .layoutWeight(1)
+  }
+
+  @Builder
+  sortSectionLabel(label: string) {
+    Text(label)
+      .fontSize(AppFontSize.CAPTION)
+      .fontColor(this.subTextColor())
+      .width('100%')
+      .padding({ left: AppSpacing.XS, top: AppSpacing.XS })
+  }
+
+  @Builder
+  sortChip(label: string) {
+    Text(label)
+      .fontSize(10)
+      .fontColor(this.secondaryTextColor())
+      .padding({ left: 5, right: 5, top: 1, bottom: 1 })
+      .backgroundColor(this.inputColor())
+      .borderRadius(5)
+      .flexShrink(0)
+  }
+
+  @Builder
+  sortBuiltinRow(rule: ReaderReplaceRule) {
+    Row({ space: AppSpacing.MD }) {
+      SymbolGlyph($r('sys.symbol.lock'))
+        .fontSize(16)
+        .fontColor([this.subTextColor()])
+        .width(24)
+      Column({ space: 2 }) {
+        Row({ space: 6 }) {
+          Text(rule.name || '内置规则')
+            .fontSize(AppFontSize.BODY)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.primaryTextColor())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .flexShrink(1)
+          this.sortChip('内置')
+          if (!rule.enabled) {
+            this.sortChip('已禁用')
+          }
+        }
+        Text(ReaderReplaceRuleStore.builtinDescription(rule))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .height(58)
+    .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.mediumRadius())
+    .border({ width: 1, color: ThemeRuntime.glassBorderColor(this.appDarkMode), style: BorderStyle.Dashed })
+    .accessibilityGroup(true)
+    .accessibilityText(`内置规则 ${rule.name}，固定在最前，不参与排序`)
+  }
+
+  @Builder
+  sortRuleRow(rule: ReaderReplaceRule) {
+    Row({ space: AppSpacing.MD }) {
+      // 序号读 sortRules 而不是 ForEach 的 index：拖动只换位置、条目不重建，index 会停在旧值。
+      Text(`${this.sortNumber(rule.id)}`)
+        .fontSize(AppFontSize.CAPTION)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.accentColor())
+        .width(24)
+        .height(24)
+        .textAlign(TextAlign.Center)
+        .borderRadius(12)
+        .backgroundColor(this.accentSoftColor())
+      Column({ space: 2 }) {
+        Row({ space: 6 }) {
+          Text(rule.name || '未命名规则')
+            .fontSize(AppFontSize.BODY)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.primaryTextColor())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .flexShrink(1)
+          this.sortChip(this.sortTargetLabel(rule))
+          if (!rule.enabled) {
+            this.sortChip('已禁用')
+          }
+        }
+        Text(rule.pattern || '未填写匹配规则')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      .opacity(rule.enabled ? 1 : 0.55)
+      SymbolGlyph($r('sys.symbol.line_3_horizontal'))
+        .fontSize(20)
+        .fontColor([this.subTextColor()])
+    }
+    .width('100%')
+    .height(58)
+    .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .backgroundColor(this.cardColor())
+    .borderRadius(ThemeRuntime.mediumRadius())
+    .border({ width: ThemeRuntime.glassBorderWidth(), color: ThemeRuntime.glassBorderColor(this.appDarkMode) })
+    .accessibilityGroup(true)
+    .accessibilityText(`第 ${this.sortNumber(rule.id)} 条，${rule.name || '未命名规则'}，长按拖动调整顺序`)
+  }
+
+  @Builder
+  sortUndoCapsule() {
+    ImmersiveMaterialSurface({
+      surfaceWidth: this.sortUndoCapsuleWidth(),
+      surfaceHeight: 44,
+      darkMode: this.appDarkMode,
+      fallbackColor: this.cardColor(),
+      glowColor: `#40${this.accentColor().substring(1)}`
+    }) {
+      Row({ space: AppSpacing.MD }) {
+        Text(this.sortUndoText)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.primaryTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+        Text('撤销')
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.accentColor())
+          .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: 5, bottom: 5 })
+          .backgroundColor(this.accentSoftColor())
+          .borderRadius(14)
+          .accessibilityText('撤销上一次调整')
+          .onClick(() => this.undoSortStep())
+      }
+      .width('100%')
+      .height('100%')
+      .padding({ left: AppSpacing.XL, right: 8 })
+    }
+  }
+
+  sortUndoCapsuleWidth(): number {
+    return Math.max(240, Math.min(340, this.contextViewportWidth - 48));
+  }
+
+  accentSoftColor(): string {
+    return `#1F${this.accentColor().substring(1)}`;
+  }
+
+  builtinRules(): ReaderReplaceRule[] {
+    return this.rules.filter((rule: ReaderReplaceRule) => ReaderReplaceRuleStore.isBuiltin(rule));
+  }
+
+  userRules(): ReaderReplaceRule[] {
+    return this.rules.filter((rule: ReaderReplaceRule) => !ReaderReplaceRuleStore.isBuiltin(rule));
+  }
+
+  sortNumber(ruleId: number): number {
+    return this.sortRules.findIndex((rule: ReaderReplaceRule) => rule.id === ruleId) + 1;
+  }
+
+  sortTargetLabel(rule: ReaderReplaceRule): string {
+    if (rule.applyToTitle && rule.applyToContent) return '标题·正文';
+    if (rule.applyToTitle) return '标题';
+    return rule.applyToContent ? '正文' : '未选范围';
+  }
+
+  enterSortMode(): void {
+    if (this.isBatchOperating || this.editing) return;
+    this.closeRuleActions();
+    this.showAddRuleDialog = false;
+    if (this.selectionMode) this.exitRuleSelectionMode();
+    this.sortRules = this.userRules();
+    this.sortUndoStack = [];
+    this.sortUndoVisible = false;
+    this.headerCollapse = 0;
+    this.sortMode = true;
+  }
+
+  exitSortMode(): void {
+    this.clearSortUndoTimer();
+    this.sortUndoVisible = false;
+    this.sortUndoStack = [];
+    this.sortDragRuleId = 0;
+    this.sortDragStartIndex = -1;
+    this.sortMode = false;
+  }
+
+  beginSortDrag(index: number): void {
+    if (index < 0 || index >= this.sortRules.length) {
+      this.sortDragRuleId = 0;
+      this.sortDragStartIndex = -1;
+      return;
+    }
+    this.sortDragRuleId = this.sortRules[index].id;
+    this.sortDragStartIndex = index;
+    this.sortDragSnapshot = this.sortRules.slice();
+  }
+
+  moveSortRuleDuringDrag(from: number, to: number): void {
+    if (from === to || from < 0 || to < 0 || from >= this.sortRules.length || to >= this.sortRules.length) return;
+    if (!this.sortDragRuleId) this.beginSortDrag(from);
+    const next = this.sortRules.slice();
+    const moved = next.splice(from, 1)[0];
+    next.splice(to, 0, moved);
+    this.sortRules = next;
+  }
+
+  finishSortDrag(): void {
+    const ruleId = this.sortDragRuleId;
+    const startIndex = this.sortDragStartIndex;
+    this.sortDragRuleId = 0;
+    this.sortDragStartIndex = -1;
+    if (!ruleId || startIndex < 0) return;
+    const endIndex = this.sortRules.findIndex((rule: ReaderReplaceRule) => rule.id === ruleId);
+    if (endIndex < 0 || endIndex === startIndex) return;
+    this.sortUndoStack.push(this.sortDragSnapshot);
+    this.persistSortOrder();
+    const name = this.sortRules[endIndex].name || '未命名规则';
+    this.showSortUndo(`“${name}”移到第 ${endIndex + 1} 条`);
+  }
+
+  undoSortStep(): void {
+    const previous = this.sortUndoStack.pop();
+    this.clearSortUndoTimer();
+    this.sortUndoVisible = false;
+    if (!previous) return;
+    this.sortRules = previous;
+    this.persistSortOrder();
+    HdsFeedback.showToast('已撤销');
+  }
+
+  showSortUndo(text: string): void {
+    this.sortUndoText = text;
+    this.sortUndoVisible = true;
+    this.clearSortUndoTimer();
+    this.sortUndoTimer = setTimeout(() => {
+      this.sortUndoTimer = -1;
+      this.sortUndoVisible = false;
+    }, 4000);
+  }
+
+  clearSortUndoTimer(): void {
+    if (this.sortUndoTimer >= 0) {
+      clearTimeout(this.sortUndoTimer);
+      this.sortUndoTimer = -1;
+    }
+  }
+
+  /** 连续拖动时按先后排队保存，后一次总是写最新的顺序。 */
+  persistSortOrder(): void {
+    const ordered = this.sortRules.slice();
+    this.sortSaveChain = this.sortSaveChain
+      .then(() => this.persistUserRuleOrder(ordered))
+      .catch((e: Error) => {
+        console.error('保存替换规则顺序失败:', e);
+        HdsFeedback.showToast('保存顺序失败');
+      });
+  }
+
+  /** 内置规则排最前，后面接用户规则的新顺序。 */
+  async persistUserRuleOrder(ordered: ReaderReplaceRule[]): Promise<void> {
+    const orderedIds = ordered.map((rule: ReaderReplaceRule) => rule.id);
+    // 以 this.rules 里的最新内容为准，只取 ordered 的先后。
+    const byId = new Map<number, ReaderReplaceRule>();
+    for (const rule of this.rules) byId.set(rule.id, rule);
+    const users: ReaderReplaceRule[] = [];
+    for (const id of orderedIds) {
+      const rule = byId.get(id);
+      if (rule && !ReaderReplaceRuleStore.isBuiltin(rule)) users.push(ReaderReplaceRuleStore.cloneRule(rule));
+    }
+    for (const rule of this.rules) {
+      if (!ReaderReplaceRuleStore.isBuiltin(rule) && !orderedIds.includes(rule.id)) {
+        users.push(ReaderReplaceRuleStore.cloneRule(rule));
+      }
+    }
+    const next = this.builtinRules().map((rule: ReaderReplaceRule) => ReaderReplaceRuleStore.cloneRule(rule))
+      .concat(users);
+    await ReaderReplaceRuleStore.save(getContext(this), next);
+    this.rules = next;
+  }
+
+  // ---------- 多选后批量移动 ----------
+
+  /** 把选中的用户规则按原来的相对顺序挪到第 position 条（从 0 数，-1 表示最后）。 */
+  async batchMoveRules(position: number): Promise<void> {
+    if (this.selectedRuleIds.length === 0 || this.isBatchOperating) return;
+    const users = this.userRules();
+    const picked = users.filter((rule: ReaderReplaceRule) => this.selectedRuleIds.includes(rule.id));
+    if (picked.length === 0) {
+      HdsFeedback.showToast('内置规则固定在最前，不参与排序');
+      return;
+    }
+    const rest = users.filter((rule: ReaderReplaceRule) => !this.selectedRuleIds.includes(rule.id));
+    const at = position < 0 ? rest.length : Math.max(0, Math.min(position, rest.length));
+    const ordered = rest.slice(0, at).concat(picked).concat(rest.slice(at));
+    this.isBatchOperating = true;
+    try {
+      await this.persistUserRuleOrder(ordered);
+      const where = at === 0 ? '最前' : (at === rest.length ? '最后' : `第 ${at + 1} 条起`);
+      HdsFeedback.showToast(`已把 ${picked.length} 条规则移到${where}`);
+      this.exitRuleSelectionMode();
+      if (!(this.query || '').trim()) {
+        const target = this.builtinRules().length + at;
+        setTimeout((): void => {
+          this.ruleListScroller.scrollToIndex(target, true, ScrollAlign.START);
+        }, 60);
+      }
+    } catch (e) {
+      console.error('批量移动替换规则失败:', e);
+      HdsFeedback.showToast('移动失败');
+    } finally {
+      this.isBatchOperating = false;
+    }
+  }
+
+  openMoveToDialog(): void {
+    const picked = this.userRules().filter((rule: ReaderReplaceRule) => this.selectedRuleIds.includes(rule.id));
+    if (picked.length === 0) {
+      HdsFeedback.showToast('内置规则固定在最前，不参与排序');
+      return;
+    }
+    this.moveToPosition = '';
+    this.showMoveToDialog = true;
+    this.moveToDialogSession.open(this.getUIContext(), (): void => {
+      this.moveToDialogContent();
+    }, {
+      autoCancel: true,
+      maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
+      warnTag: '显示移动位置弹窗失败:'
+    });
+  }
+
+  moveToMaxPosition(): number {
+    const users = this.userRules();
+    const rest = users.filter((rule: ReaderReplaceRule) => !this.selectedRuleIds.includes(rule.id));
+    return rest.length + 1;
+  }
+
+  confirmMoveTo(): void {
+    const value = Number.parseInt((this.moveToPosition || '').trim(), 10);
+    const max = this.moveToMaxPosition();
+    if (!Number.isFinite(value) || value < 1 || value > max) {
+      HdsFeedback.showToast(`请输入 1 到 ${max} 之间的数字`);
+      return;
+    }
+    this.showMoveToDialog = false;
+    this.batchMoveRules(value - 1);
+  }
+
+  @Builder
+  moveToDialogContent() {
+    Column() {
+      Text('移到第几条')
+        .fontSize(AppFontSize.SUBTITLE)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.primaryTextColor())
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .margin({ bottom: AppSpacing.SM })
+
+      Text(`选中的规则会从这一条开始，按原来的先后排列（1 到 ${this.moveToMaxPosition()}）`)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .margin({ bottom: AppSpacing.XL })
+
+      TextInput({ placeholder: `1 到 ${this.moveToMaxPosition()}`, text: this.moveToPosition })
+        .type(InputType.Number)
+        .width('100%')
+        .height(48)
+        .borderRadius(ThemeRuntime.mediumRadius())
+        .backgroundColor(this.inputColor())
+        .fontColor(this.primaryTextColor())
+        .placeholderColor(this.subTextColor())
+        .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+        .margin({ bottom: AppSpacing.XL })
+        .defaultFocus(true)
+        .onChange((value: string) => this.moveToPosition = value)
+        .onSubmit(() => this.confirmMoveTo())
+
+      Row({ space: AppSpacing.MD }) {
+        Button('取消')
+          .layoutWeight(1)
+          .height(44)
+          .backgroundColor(this.inputColor())
+          .fontColor(this.primaryTextColor())
+          .onClick(() => this.showMoveToDialog = false)
+        Button('移动')
+          .layoutWeight(1)
+          .height(44)
+          .backgroundColor(this.buttonColor())
+          .fontColor(ThemeRuntime.onAccentColor())
+          .onClick(() => this.confirmMoveTo())
+      }
+      .width('100%')
+    }
+    .constraintSize({ maxWidth: 420 })
+    .padding(AppSpacing.XXXL)
   }
 
   private ruleSwipeActions(rule: ReaderReplaceRule): HdsSwipeActionOptions {
@@ -986,6 +1512,18 @@ struct ReaderReplaceRulesPage {
     Scroll() {
       Column() {
         PopupMenuHeader(`已选择 ${this.selectedRuleIds.length} 条规则`, this.subTextColor())
+        this.ruleAddActionItem($r('sys.symbol.arrow_up_to_line'), '移到最前', () => {
+          this.showRuleMoreDialog = false;
+          this.batchMoveRules(0);
+        })
+        this.ruleAddActionItem($r('sys.symbol.arrow_down_to_line'), '移到最后', () => {
+          this.showRuleMoreDialog = false;
+          this.batchMoveRules(-1);
+        })
+        this.ruleAddActionItem($r('sys.symbol.text_arrow_up_and_down'), '移到第几条…', () => {
+          this.showRuleMoreDialog = false;
+          this.openMoveToDialog();
+        })
         this.ruleAddActionItem($r('sys.symbol.download'), '导出 JSON', () => {
           this.showRuleMoreDialog = false;
           this.exportRules();
@@ -1254,6 +1792,10 @@ struct ReaderReplaceRulesPage {
           const rule = this.actionRule();
           this.closeRuleActions();
           if (rule) this.enterRuleSelectionMode(rule.id);
+        })
+        this.contextActionItem($r('sys.symbol.sort'), '调整顺序', this.primaryTextColor(), () => {
+          this.closeRuleActions();
+          this.enterSortMode();
         })
         if (!this.actionRuleBuiltin()) {
           this.contextActionItem($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.appDarkMode), () => {
