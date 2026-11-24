@@ -2,7 +2,8 @@ import { common } from '@kit.AbilityKit';
 import { router, window } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { Book, BookChapter, BookSource, CookieStore } from '@legado/sourceengine';
+import { Book, BookChapter, BookSource } from '@legado/sourceengine';
+import { AppCookies } from '../platform/Cookies';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { ReadBookEngine } from '../core/book/ReadBookEngine';
 import { WebBookService } from '../core/book/WebBookService';
@@ -746,7 +747,7 @@ struct VideoPlayerPage {
       if (!attempt.attached) continue;
       try { attempt.controller.pauseAllMedia(); attempt.controller.onInactive(); } catch (_) {}
     }
-    if (this.webAttempts.length > 0) CookieStore.saveSync();
+    if (this.webAttempts.length > 0) AppCookies.saveSync();
   }
 
   private stopPlayback(): void {
@@ -771,7 +772,7 @@ struct VideoPlayerPage {
         try { attempt.controller.stopAllMedia(); attempt.controller.onInactive(); } catch (_) {}
       }
     }
-    if (this.webAttempts.length > 0) CookieStore.saveSync();
+    if (this.webAttempts.length > 0) AppCookies.saveSync();
     for (const attempt of this.nativeAttempts) {
       if (attempt.session) attempt.session.release();
     }

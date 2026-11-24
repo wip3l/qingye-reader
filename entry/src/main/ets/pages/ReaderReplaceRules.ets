@@ -8,7 +8,7 @@ import { syncSystemBars } from '../utils/SystemBars';
 import { ResponsiveManagerListLayout } from '../utils/ResponsiveManagerListLayout';
 import { FormDraftStore } from '../utils/FormDraftStore';
 import deviceInfo from '@ohos.deviceInfo';
-import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
+import { HdsListItem, HdsSwipeActionOptions } from '../platform/Hds';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
 import picker from '@ohos.file.picker';
 import fs from '@ohos.file.fs';
@@ -23,6 +23,7 @@ import { CollapsingHeader } from '../utils/CollapsingHeader';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
 import { PopupMenuAction, PopupMenuHeader } from '../components/common/PopupMenuAction';
+import { saveDocuments, selectDocuments, writeTextFile } from '../platform/Files';
 
 const REPLACE_RULE_IMPORT_FILE_LIMIT_BYTES: number = 5 * 1024 * 1024;
 const REPLACE_RULE_IMPORT_TIMEOUT_MS: number = 20000;
@@ -138,7 +139,7 @@ struct ReaderReplaceRulesPage {
       const options: picker.DocumentSelectOptions = new picker.DocumentSelectOptions();
       options.maxSelectNumber = 1;
       options.fileSuffixFilters = ['JSON|.json', '文本|.txt'];
-      const result: Array<string> = await new picker.DocumentViewPicker(getContext(this)).select(options);
+      const result: Array<string> = await selectDocuments(getContext(this), options);
       if (!result || result.length === 0) return;
       this.isImporting = true;
       const content = await this.readRuleTextFile(result[0]);
@@ -262,27 +263,18 @@ struct ReaderReplaceRulesPage {
       HdsFeedback.showToast('请先选择规则（内置规则不导出）');
       return;
     }
-    let file: fs.File | null = null;
     try {
       const options: picker.DocumentSaveOptions = new picker.DocumentSaveOptions();
       options.newFileNames = [`qingye-replace-rules-${this.exportTimestamp()}.json`];
       options.fileSuffixChoices = ['JSON 文件|.json'];
-      const result = await new picker.DocumentViewPicker(getContext(this)).save(options);
+      const result = await saveDocuments(getContext(this), options);
       if (!result || result.length === 0) return;
       const json = JSON.stringify(selected, null, 2);
-      const bytes = new util.TextEncoder().encodeInto(json);
-      file = await fs.open(result[0], fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
-      await fs.write(file.fd, bytes.buffer, { offset: 0, length: bytes.byteLength });
-      await fs.close(file);
-      file = null;
+      await writeTextFile(getContext(this), result[0], json);
       HdsFeedback.showToast(`已导出 ${selected.length} 条替换规则`);
     } catch (e) {
       console.error('导出替换规则失败:', e);
       HdsFeedback.showToast(`导出失败: ${this.importErrorMessage(e as Object)}`);
-    } finally {
-      if (file) {
-        try { await fs.close(file); } catch (_) {}
-      }
     }
   }
 

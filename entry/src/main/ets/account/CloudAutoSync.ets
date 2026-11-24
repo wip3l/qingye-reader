@@ -1,6 +1,6 @@
 import { Context } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import preferences from '@ohos.data.preferences';
 import { Book, BookTypeSupport } from '@legado/sourceengine';
 import { AccountSessionStore } from './AccountSessionStore';
@@ -16,6 +16,7 @@ import { LocalBookService } from '../core/book/LocalBookService';
 import { ReaderFontHelper } from '../utils/ReaderFontHelper';
 import { ReaderFontBootstrap } from '../utils/ReaderFontBootstrap';
 import { ReaderSettingsStore } from '../utils/ReaderSettingsStore';
+import { copyFile } from '../platform/Files';
 
 /** 云端有、本机还没下载的字体，供各字体下拉框置灰显示。 */
 export class CloudRemoteFont {
@@ -181,7 +182,7 @@ export class CloudAutoSync {
       const downloaded = await CloudFileClient.download(context, item, progress, onWait);
       const dir = `${context.filesDir}/reader_fonts`;
       if (!fs.accessSync(dir)) await fs.mkdir(dir);
-      await fs.copy(fileUri.getUriFromPath(downloaded), fileUri.getUriFromPath(target));
+      await copyFile(fileUri.getUriFromPath(downloaded), fileUri.getUriFromPath(target));
       try { await fs.unlink(downloaded); } catch (e) { /* the transfer copy is only a cache */ }
     }
     await CloudFontImport.saveNames(context, context.filesDir, [item]);
@@ -202,7 +203,7 @@ export class CloudAutoSync {
     }
     const dir = `${context.filesDir}/reader_fonts`;
     if (!fs.accessSync(dir)) await fs.mkdir(dir);
-    if (path !== target) await fs.copy(fileUri.getUriFromPath(path), fileUri.getUriFromPath(target));
+    if (path !== target) await copyFile(fileUri.getUriFromPath(path), fileUri.getUriFromPath(target));
     await CloudFontImport.saveNames(context, context.filesDir, [file]);
     CloudAutoSync.publishRemoteFonts(CloudAutoSync.remoteFonts().filter((entry: CloudRemoteFont) => entry.id !== file.id));
     return target;

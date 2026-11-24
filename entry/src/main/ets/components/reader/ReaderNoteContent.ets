@@ -1,4 +1,4 @@
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../../platform/FileUri';
 import { ReaderImageMarker } from '../../core/book/ReaderImageMarker';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';

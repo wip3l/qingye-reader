@@ -1,5 +1,6 @@
 import { Context } from '@kit.AbilityKit';
 import preferences from '@ohos.data.preferences';
+import { PlatformInfo } from '../platform/PlatformInfo';
 
 /**
  * 智感握姿开关显式落盘。PersistentStorage 在 onCreate 时还没有界面实例，关掉后重启不会被写回，
@@ -11,7 +12,16 @@ export class SmartGripSettingsStore {
   private static revision: number = 0;
   private static writes: Promise<void> = Promise.resolve();
 
+  /** 握姿依赖系统的握持手检测，安卓上没有。 */
+  static supported(): boolean {
+    return !PlatformInfo.ANDROID;
+  }
+
   static async load(context: Context): Promise<void> {
+    if (!SmartGripSettingsStore.supported()) {
+      AppStorage.setOrCreate(SmartGripSettingsStore.KEY, false);
+      return;
+    }
     const revision = SmartGripSettingsStore.revision;
     const store = await preferences.getPreferences(context, SmartGripSettingsStore.STORE_NAME);
     const value = await store.get(SmartGripSettingsStore.KEY, '');

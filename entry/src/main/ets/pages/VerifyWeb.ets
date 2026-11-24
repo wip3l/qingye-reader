@@ -1,6 +1,7 @@
 import { router, promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
-import { CookieStore, VerificationSupport, BookSource, NativeSourceInteraction } from '@legado/sourceengine';
+import { VerificationSupport, BookSource, NativeSourceInteraction } from '@legado/sourceengine';
+import { AppCookies } from '../platform/Cookies';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { ReadBookEngine } from '../core/book/ReadBookEngine';
 import { BookSourceRuntimeSnapshotStore } from '../core/book/BookSourceRuntimeSnapshot';
@@ -83,7 +84,7 @@ class BookSourceBrowserJavaBridge {
   getCookie(url: string): string {
     if (!this.activeProvider()) return '';
     const target = this.sameOriginTarget(url);
-    return target ? CookieStore.getCookie(target) : '';
+    return target ? AppCookies.getCookie(target) : '';
   }
 
   setCookie(url: string, value: string): boolean {
@@ -91,8 +92,8 @@ class BookSourceBrowserJavaBridge {
     const target = this.sameOriginTarget(url);
     const cookie = String(value || '');
     if (!target || !cookie || cookie.length > 16 * 1024) return false;
-    CookieStore.setCookies(target, cookie);
-    CookieStore.saveAsync();
+    AppCookies.setCookies(target, cookie);
+    AppCookies.saveAsync();
     return true;
   }
 
@@ -100,7 +101,7 @@ class BookSourceBrowserJavaBridge {
     if (!this.activeProvider()) return false;
     const target = this.sameOriginTarget(url);
     if (!target) return false;
-    CookieStore.removeCookie(target, String(name || '') || undefined);
+    AppCookies.removeCookie(target, String(name || '') || undefined);
     return true;
   }
 
@@ -342,7 +343,7 @@ struct VerifyWebPage {
     }
     if (this.browserPayloadToken) {
       this.saveCookies(this.currentUrl || this.browserPayloadBaseUrl);
-      CookieStore.saveSync();
+      AppCookies.saveSync();
       const variableSaved = this.browserVariableDirty;
       await this.persistBrowserSourceVariable();
       if (variableSaved) {
@@ -358,10 +359,10 @@ struct VerifyWebPage {
     this.saveCookies(verifyUrl);
     if (this.currentUrl && this.currentUrl !== this.url) {
       this.saveCookies(this.url);
-      CookieStore.copyCookies(this.currentUrl, this.url);
+      AppCookies.copyCookies(this.currentUrl, this.url);
     }
     this.syncBookSourceLoginCookies();
-    CookieStore.saveSync();
+    AppCookies.saveSync();
     const verified = this.requireLoginCookie ? this.hasEffectiveBookSourceLoginCookie() :
       true;
     if (verified) {
@@ -571,10 +572,10 @@ struct VerifyWebPage {
       this.saveCookies(verifyUrl);
       if (this.url && verifyUrl !== this.url) {
         this.saveCookies(this.url);
-        CookieStore.copyCookies(verifyUrl, this.url);
+        AppCookies.copyCookies(verifyUrl, this.url);
       }
       this.syncBookSourceLoginCookies();
-      CookieStore.saveSync();
+      AppCookies.saveSync();
       const raw = await this.controller.runJavaScript(this.browserAwaitResultScript());
       const body = this.normalizeBrowserScriptResult(raw);
       if (body.length > 2 * 1024 * 1024) {
@@ -646,7 +647,7 @@ struct VerifyWebPage {
       this.originOf(sourceUrl)
     ];
     for (const url of urls) {
-      if (url && VerificationSupport.hasEffectiveLoginCookie(CookieStore.getCookie(url))) {
+      if (url && VerificationSupport.hasEffectiveLoginCookie(AppCookies.getCookie(url))) {
         return true;
       }
     }
@@ -655,8 +656,8 @@ struct VerifyWebPage {
 
   saveCookies(url: string): void {
     if (!url) return;
-    CookieStore.getCookie(url);
-    CookieStore.saveSync();
+    AppCookies.getCookie(url);
+    AppCookies.saveSync();
   }
 
   async resolveBookSourceLoginUrl(url: string): Promise<void> {
@@ -742,11 +743,11 @@ struct VerifyWebPage {
       const targets = this.documentCookieTargets(sourceUrl);
       for (const target of targets) {
         for (const pair of pairs) {
-          CookieStore.setCookies(target, pair);
-          CookieStore.setCookies(target, `${pair}; Path=/`);
+          AppCookies.setCookies(target, pair);
+          AppCookies.setCookies(target, `${pair}; Path=/`);
         }
       }
-      CookieStore.saveSync();
+      AppCookies.saveSync();
     } catch (_) {
     }
   }

@@ -17,7 +17,7 @@ import { AccountSessionStore } from '../account/AccountSessionStore';
 import { TtsVoiceInfo } from '../account/AccountCommerceModels';
 import { FormDraftStore } from '../utils/FormDraftStore';
 import deviceInfo from '@ohos.deviceInfo';
-import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
+import { HdsListItem, HdsSwipeActionOptions } from '../platform/Hds';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ListDissolve } from '../utils/ListDissolve';
@@ -35,6 +35,7 @@ import { LocalTtsSelection } from '../utils/localtts/LocalTtsSelection';
 import { LocalTtsEngine } from '../utils/localtts/LocalTtsEngine';
 import { LocalTtsImport } from '../utils/localtts/LocalTtsImport';
 import { LocalTtsSpeakers } from '../utils/localtts/LocalTtsSpeakers';
+import { saveDocuments, selectDocuments, writeTextFile } from '../platform/Files';
 
 class ManagedTtsVoiceEntry {
   key: string = '';
@@ -1540,7 +1541,7 @@ struct CustomTtsVoiceManagerPage {
       const options: picker.DocumentSelectOptions = new picker.DocumentSelectOptions();
       options.maxSelectNumber = 1;
       options.fileSuffixFilters = ['JSON|.json', '文本|.txt'];
-      const result: Array<string> = await new picker.DocumentViewPicker().select(options);
+      const result: Array<string> = await selectDocuments(getContext(this), options);
       if (!result || result.length === 0) {
         return;
       }
@@ -1598,27 +1599,19 @@ struct CustomTtsVoiceManagerPage {
     }
     if (this.isExporting) return;
     this.isExporting = true;
-    let file: fs.File | null = null;
     try {
       const options: picker.DocumentSaveOptions = new picker.DocumentSaveOptions();
       const baseName = voices.length === 1 ? this.exportFileNamePart(voices[0].name || '') : '';
       options.newFileNames = [`qingye-tts-${baseName ? `${baseName}-` : ''}${this.exportTimestamp()}.json`];
       options.fileSuffixChoices = ['JSON 文件|.json'];
-      const result = await new picker.DocumentViewPicker(getContext(this)).save(options);
+      const result = await saveDocuments(getContext(this), options);
       if (!result || result.length === 0) return;
-      const bytes = new util.TextEncoder().encodeInto(JSON.stringify(voices, null, 2));
-      file = await fs.open(result[0], fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
-      await fs.write(file.fd, bytes.buffer, { offset: 0, length: bytes.byteLength });
-      await fs.close(file);
-      file = null;
+      await writeTextFile(getContext(this), result[0], JSON.stringify(voices, null, 2));
       HdsFeedback.showToast(`已导出 ${voices.length} 个自定义音色`);
     } catch (error) {
       console.error('导出自定义音色失败:', error);
       HdsFeedback.showToast(`导出失败：${this.shortErrorMessage(error as Object)}`);
     } finally {
-      if (file) {
-        try { await fs.close(file); } catch (_) {}
-      }
       this.isExporting = false;
     }
   }

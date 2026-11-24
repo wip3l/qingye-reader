@@ -1,5 +1,5 @@
-import { avSession } from '@kit.AVSessionKit';
-import { common, WantAgent, wantAgent } from '@kit.AbilityKit';
+import { avSession } from '../platform/MediaSession';
+import { common, WantAgent } from '@kit.AbilityKit';
 import { router } from '@kit.ArkUI';
 import { Book, BookChapter, BookSource } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
@@ -11,6 +11,7 @@ import { BookCoverResolver } from './BookCoverResolver';
 import { MixedVideoProgress } from './MixedVideoProgress';
 import { ReaderTtsFloatingSession } from './ReaderTtsFloatingSession';
 import { RemoteAudioPlayback, RemoteAudioPlaybackListener } from './RemoteAudioPlayback';
+import { createLaunchAgent } from '../platform/LaunchAgent';
 
 /** 播放页把正在看的视频交过来时带的信息。book 与播放页是同一个对象，进度写在它上面。 */
 export interface VideoListenRequest {
@@ -590,12 +591,7 @@ export class VideoListenSession implements RemoteAudioPlaybackListener {
   private async wantAgent(context: common.UIAbilityContext): Promise<WantAgent> {
     if (this.launchAgent) return this.launchAgent;
     // 点通知栏媒体卡片只回到应用，停在当时的页面。
-    this.launchAgent = await wantAgent.getWantAgent({
-      wants: [{ bundleName: context.abilityInfo.bundleName, abilityName: 'EntryAbility' }],
-      actionType: wantAgent.OperationType.START_ABILITY,
-      requestCode: 1102,
-      actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
-    });
+    this.launchAgent = await createLaunchAgent(context, 1102);
     return this.launchAgent;
   }
 

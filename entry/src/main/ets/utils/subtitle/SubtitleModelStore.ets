@@ -1,9 +1,11 @@
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../../platform/FileUri';
 import http from '@ohos.net.http';
 import picker from '@ohos.file.picker';
 import statvfs from '@ohos.file.statvfs';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
+import { selectDocuments } from '../../platform/Files';
+import { streamReadTimeout } from '../../platform/HttpTimeouts';
 
 /** 字幕模型的一个文件：本地文件名、下载来源（仓库按顺序试）、大小与 SHA-256。 */
 export class SubtitleModelFile {
@@ -200,7 +202,7 @@ export class SubtitleModelStore {
     if (SubtitleModelStore.running) throw new Error('模型正在下载，请先取消下载');
     const options = new picker.DocumentSelectOptions();
     options.maxSelectNumber = SubtitleModelStore.FILES.length;
-    const uris = await new picker.DocumentViewPicker(context).select(options);
+    const uris = await selectDocuments(context, options);
     if (!uris || uris.length === 0) return -1;
     const dir = SubtitleModelStore.directory();
     if (!dir) throw new Error('无法保存模型');
@@ -403,7 +405,7 @@ export class SubtitleModelStore {
         const header: Record<string, string> = {};
         if (offset > 0) header['Range'] = `bytes=${offset}-`;
         client.requestInStream(url, {
-          method: http.RequestMethod.GET, header: header, connectTimeout: 20000, readTimeout: 60000, usingProxy: false
+          method: http.RequestMethod.GET, header: header, connectTimeout: 20000, readTimeout: streamReadTimeout(60000, 60 * 60 * 1000), usingProxy: false
         }).then((status: number): void => {
           if (status !== 200 && status !== 206) { fail(`模型下载失败（${status}）`); return; }
           accepted = true;

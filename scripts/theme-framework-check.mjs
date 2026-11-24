@@ -7,7 +7,8 @@ const etsRoot = path.join(root, 'entry', 'src', 'main', 'ets');
 const mediaRoot = path.join(root, 'entry', 'src', 'main', 'resources', 'base', 'media');
 
 function read(relativePath) {
-  return fs.readFileSync(path.join(root, relativePath), 'utf8');
+  // Windows 检出（core.autocrlf）是 CRLF；正则按 LF 写，先统一换行。
+  return fs.readFileSync(path.join(root, relativePath), 'utf8').replace(/\r\n/g, '\n');
 }
 
 function assert(condition, message) {

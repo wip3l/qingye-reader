@@ -1,6 +1,7 @@
 import { SourceGroupSortList } from '../components/book/SourceGroupSortList';
 import { BookSourceExport } from '../utils/BookSourceExport';
-import { NativeSourceService, NativeSourceSpec, BookSource, SearchBook, BookListRule, SearchRule, ExploreRule, BookInfoRule, TocRule, ContentRule, HttpClient, HttpResponse, RawHttpTextClient, VerificationSupport, CookieStore, TlsTrustStore, BookSourceLoginItem, BookSourceScriptRunner, BookSourceLoginCrypto, BookSourceExecutionJournal, BookSourceRuntimeRouter, SourceRuntimeDecision, SourceRuntimeStage, AnalyzeUrl, sleepMs } from '@legado/sourceengine';
+import { NativeSourceService, NativeSourceSpec, BookSource, SearchBook, BookListRule, SearchRule, ExploreRule, BookInfoRule, TocRule, ContentRule, HttpClient, HttpResponse, RawHttpTextClient, VerificationSupport, TlsTrustStore, BookSourceLoginItem, BookSourceScriptRunner, BookSourceLoginCrypto, BookSourceExecutionJournal, BookSourceRuntimeRouter, SourceRuntimeDecision, SourceRuntimeStage, AnalyzeUrl, sleepMs } from '@legado/sourceengine';
+import { AppCookies } from '../platform/Cookies';
 import { router, promptAction } from '@kit.ArkUI';
 import { AppDatabase, BookSourcePositionUpdate } from '../model/data/AppDatabase';
 import { SearchCoordinator, SearchProgress, SearchSourceResult } from '../core/book/SearchCoordinator';
@@ -19,7 +20,7 @@ import { BookSourceGroupStore } from '../utils/BookSourceGroupStore';
 import { ResponsiveManagerListLayout } from '../utils/ResponsiveManagerListLayout';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import deviceInfo from '@ohos.deviceInfo';
-import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
+import { HdsListItem, HdsSwipeActionOptions } from '../platform/Hds';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { VirtualListScrollbar } from '../utils/VirtualListScrollbar';
@@ -45,6 +46,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
 import { HeaderBackdrop } from '../components/common/HeaderBackdrop';
 import { PopupMenuAction, PopupMenuHeader } from '../components/common/PopupMenuAction';
+import { saveDocuments, selectDocuments, writeTextFile } from '../platform/Files';
 
 const BOOK_SOURCE_IMPORT_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 const BOOK_SOURCE_IMPORT_MAX_FILES = 50;
@@ -4192,7 +4194,7 @@ struct BookSourcePage {
       this.sourceUrlOrigin(String(source.bookSourceUrl || '').trim())
     ];
     for (const url of urls) {
-      if (url && this.hasLoginCookie(CookieStore.getCookie(url))) {
+      if (url && this.hasLoginCookie(AppCookies.getCookie(url))) {
         return true;
       }
     }
@@ -5013,7 +5015,7 @@ struct BookSourcePage {
     }
     if (step.pendingCookie) {
       this.snapshotLoginRuntimeCookie(step.pendingCookie);
-      this.loginRuntimeCookies[step.pendingCookie] = CookieStore.getCookie(step.pendingCookie);
+      this.loginRuntimeCookies[step.pendingCookie] = AppCookies.getCookie(step.pendingCookie);
       if (!this.loginRuntimeCookieUrls.includes(step.pendingCookie)) {
         this.loginRuntimeCookieUrls.push(step.pendingCookie);
       }
@@ -5067,7 +5069,7 @@ struct BookSourcePage {
       }
       this.loginRuntimeJournal.recordResponse(step.pendingAjax, response.body || '');
       for (const key of this.loginRuntimeCookieUrls) {
-        this.loginRuntimeCookies[key] = CookieStore.getCookie(key);
+        this.loginRuntimeCookies[key] = AppCookies.getCookie(key);
       }
       this.loginRuntimeStepRunning = false;
       this.continueLoginRuntime();
@@ -5255,24 +5257,24 @@ struct BookSourcePage {
       if (!this.loginRuntimeJournal.markOperationApplied('cookie', payload)) continue;
       this.snapshotLoginRuntimeCookie(operation.url);
       if (operation.operation === 'set') {
-        CookieStore.setCookies(operation.url, operation.value);
+        AppCookies.setCookies(operation.url, operation.value);
       } else if (operation.operation === 'replace') {
-        CookieStore.replaceCookies(operation.url, operation.value);
+        AppCookies.replaceCookies(operation.url, operation.value);
       } else if (operation.operation === 'remove') {
-        CookieStore.removeCookie(operation.url, operation.name || undefined);
+        AppCookies.removeCookie(operation.url, operation.name || undefined);
       }
-      this.loginRuntimeCookies[operation.url] = CookieStore.getCookie(operation.url);
+      this.loginRuntimeCookies[operation.url] = AppCookies.getCookie(operation.url);
       if (!this.loginRuntimeCookieUrls.includes(operation.url)) {
         this.loginRuntimeCookieUrls.push(operation.url);
       }
     }
-    if (operations.length > 0) CookieStore.saveAsync();
+    if (operations.length > 0) AppCookies.saveAsync();
   }
 
   snapshotLoginRuntimeCookie(url: string): void {
     const key = (url || '').trim();
     if (!key || this.loginRuntimeCookieSnapshots[key] !== undefined) return;
-    this.loginRuntimeCookieSnapshots[key] = CookieStore.getCookie(key);
+    this.loginRuntimeCookieSnapshots[key] = AppCookies.getCookie(key);
   }
 
   snapshotLoginRuntimeRequestCookie(requestUrl: string): void {
@@ -5291,11 +5293,11 @@ struct BookSourcePage {
   rollbackLoginRuntimeCookies(): void {
     const urls = Object.keys(this.loginRuntimeCookieSnapshots);
     for (const url of urls) {
-      CookieStore.removeCookie(url);
+      AppCookies.removeCookie(url);
       const snapshot = this.loginRuntimeCookieSnapshots[url] || '';
-      if (snapshot) CookieStore.setCookies(url, snapshot);
+      if (snapshot) AppCookies.setCookies(url, snapshot);
     }
-    CookieStore.saveSync();
+    AppCookies.saveSync();
   }
 
   suspendLoginRuntimeForBrowser(step: LoginRuntimeStep): void {
@@ -5340,10 +5342,10 @@ struct BookSourcePage {
     // observed before suspension so the resumed pass sees credentials created by the browser,
     // instead of the deliberately cleared pre-login snapshot.
     for (const url of this.loginRuntimeCookieUrls) {
-      this.loginRuntimeCookies[url] = CookieStore.getCookie(url);
+      this.loginRuntimeCookies[url] = AppCookies.getCookie(url);
     }
     if (browserUrl) {
-      this.loginRuntimeCookies[browserUrl] = CookieStore.getCookie(browserUrl);
+      this.loginRuntimeCookies[browserUrl] = AppCookies.getCookie(browserUrl);
       if (!this.loginRuntimeCookieUrls.includes(browserUrl)) this.loginRuntimeCookieUrls.push(browserUrl);
     }
     this.loginRuntimeJournal.recordResponse(`browser:${browserUrl}`, body);
@@ -6601,7 +6603,7 @@ struct BookSourcePage {
       const options: picker.DocumentSelectOptions = new picker.DocumentSelectOptions();
       options.maxSelectNumber = BOOK_SOURCE_IMPORT_MAX_FILES;
       options.fileSuffixFilters = ['JSON|.json', '文本|.txt'];
-      const pickerResult: Array<string> = await new picker.DocumentViewPicker().select(options);
+      const pickerResult: Array<string> = await selectDocuments(getContext(this), options);
 
       if (!pickerResult || pickerResult.length === 0) {
         return;
@@ -6735,12 +6737,11 @@ struct BookSourcePage {
       return;
     }
 
-    let file: fs.File | null = null;
     try {
       const options: picker.DocumentSaveOptions = new picker.DocumentSaveOptions();
       options.newFileNames = [`qingye-book-source-${this.exportTimestamp()}.json`];
       options.fileSuffixChoices = ['JSON 文件|.json'];
-      const result = await new picker.DocumentViewPicker(getContext(this)).save(options);
+      const result = await saveDocuments(getContext(this), options);
       if (!result || result.length === 0) {
         return;
       }
@@ -6755,23 +6756,13 @@ struct BookSourcePage {
       }
       const exported = selected.map((source: BookSource): Object => this.bookSourceExportObject(source));
       const json = JSON.stringify(exported, null, 2);
-      const bytes = new util.TextEncoder().encodeInto(json);
-      file = await fs.open(result[0], fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
-      await fs.write(file.fd, bytes.buffer, { offset: 0, length: bytes.byteLength });
-      await fs.close(file);
-      file = null;
+      await writeTextFile(getContext(this), result[0], json);
       HdsFeedback.showToast(`已导出 ${selected.length} 个书源`);
     } catch (e) {
       console.error('导出书源失败:', e);
       const message = e instanceof Error ? e.message : String(e);
       HdsFeedback.showToast(`导出失败: ${message}`);
     } finally {
-      if (file) {
-        try {
-          await fs.close(file);
-        } catch (_) {
-        }
-      }
       this.isBatchOperating = false;
       this.batchOperationText = '正在操作书源...';
     }

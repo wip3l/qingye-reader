@@ -32,6 +32,17 @@ export const config = {
   membershipSalesPilot: parseMembershipSalesPilot(process.env.MEMBERSHIP_PILOT_USER_IDS,
     process.env.MEMBERSHIP_PILOT_SKUS, process.env.MEMBERSHIP_PILOT_UNTIL),
   membershipSourceLimitsEnabled: process.env.MEMBERSHIP_SOURCE_LIMITS_ENABLED === 'true',
+  // 安卓端支付宝手机网站支付（docs/android-recharge.md）。四个必填项缺任何一个就不开放支付宝下单，兑换码不受影响。
+  alipay: {
+    appId: process.env.ALIPAY_APP_ID?.trim() || '',
+    privateKeyPath: process.env.ALIPAY_PRIVATE_KEY_PATH?.trim() || '',
+    publicKeyPath: process.env.ALIPAY_PUBLIC_KEY_PATH?.trim() || '',
+    notifyUrl: process.env.ALIPAY_NOTIFY_URL?.trim() || '',
+    returnUrl: process.env.ALIPAY_RETURN_URL?.trim() || '',
+    quitUrl: process.env.ALIPAY_QUIT_URL?.trim() || '',
+    sellerId: process.env.ALIPAY_SELLER_ID?.trim() || '',
+    gateway: process.env.ALIPAY_GATEWAY?.trim() || 'https://openapi.alipay.com/gateway.do'
+  },
   lottery: {
     campaignId: process.env.LOTTERY_CAMPAIGN_ID?.trim() || 'double11-2026',
     // e.g. https://huodong.example.com; the page and /lottery/api/ must share this origin.

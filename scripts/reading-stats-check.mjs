@@ -12,7 +12,9 @@ process.env.TZ = 'America/Denver';
 const root = new URL('../entry/src/main/ets/', import.meta.url);
 function load(file, globals, names) {
   const code = fs.readFileSync(new URL(file, root), 'utf8').replace(/^import[\s\S]*?;\r?\n/gm, '').replace(/^export /gm, '');
-  const context = vm.createContext({ console, ...globals });
+  // platform/TextCompare 的鸿蒙实现就是 localeCompare。
+  const compareText = (a, b, locale, options) => a.localeCompare(b, locale, options);
+  const context = vm.createContext({ console, compareText, ...globals });
   vm.runInContext(stripTypeScriptTypes(code, { mode: 'strip' }) + `\nthis.exports={${names}};`, context);
   return context.exports;
 }

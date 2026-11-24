@@ -11,6 +11,7 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { syncSystemBars } from '../utils/SystemBars';
+import { PlatformInfo } from '../platform/PlatformInfo';
 
 const VIEW_OVERVIEW = '';
 const VIEW_PASSWORD = 'password';
@@ -231,14 +232,15 @@ struct AccountSecurityPage {
   }
 
   private methodAction(kind: string): string {
-    if (kind === 'huawei') return this.methods.huaweiBound ? '' : (this.busy ? '绑定中' : '绑定');
+    // 安卓上没有华为账号服务，不提供绑定。
+    if (kind === 'huawei') return this.methods.huaweiBound || PlatformInfo.ANDROID ? '' : (this.busy ? '绑定中' : '绑定');
     if (kind === 'password') return this.methods.hasPassword ? '修改密码' : '设置';
     return '重新生成';
   }
 
   private runMethodAction(kind: string): void {
     if (kind === 'huawei') {
-      this.bindHuawei();
+      if (!PlatformInfo.ANDROID) this.bindHuawei();
     } else if (kind === 'password') {
       this.showView(VIEW_PASSWORD);
     } else {

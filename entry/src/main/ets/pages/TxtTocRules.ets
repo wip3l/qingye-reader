@@ -14,6 +14,7 @@ import { HdsFeedback } from '../utils/HdsFeedback';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { TxtTocRuleSettings, TxtTocRuleStore } from '../utils/TxtTocRuleStore';
 import { TxtTocRule, TxtTocRules } from '../core/book/TxtTocRules';
+import { saveDocuments, selectDocuments, writeTextFile } from '../platform/Files';
 
 const TXT_TOC_RULE_IMPORT_LIMIT_BYTES = 2 * 1024 * 1024;
 
@@ -129,7 +130,7 @@ struct TxtTocRulesPage {
       const options = new picker.DocumentSelectOptions();
       options.maxSelectNumber = 1;
       options.fileSuffixFilters = ['JSON|.json', '文本|.txt'];
-      const result: string[] = await new picker.DocumentViewPicker(context).select(options);
+      const result: string[] = await selectDocuments(context, options);
       if (!result || result.length === 0) return;
       const stat = await fs.stat(result[0]);
       if (stat.size > TXT_TOC_RULE_IMPORT_LIMIT_BYTES) throw new Error('文件过大');
@@ -185,24 +186,19 @@ struct TxtTocRulesPage {
       HdsFeedback.showToast('还没有自己的规则可导出');
       return;
     }
-    let file: fs.File | null = null;
     try {
       const options = new picker.DocumentSaveOptions();
       options.newFileNames = ['txt-toc-rules.json'];
       options.fileSuffixChoices = ['JSON 文件|.json'];
-      const result = await new picker.DocumentViewPicker(context).save(options);
+      const result = await saveDocuments(context, options);
       if (!result || result.length === 0) return;
       const payload = rules.map((rule: TxtTocRule, index: number): Record<string, Object> =>
         TxtTocRules.toExport(rule, index + 1));
-      const bytes = new util.TextEncoder().encodeInto(JSON.stringify(payload, null, 2));
-      file = await fs.open(result[0], fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
-      await fs.write(file.fd, bytes.buffer, { offset: 0, length: bytes.byteLength });
+      await writeTextFile(context, result[0], JSON.stringify(payload, null, 2));
       HdsFeedback.showToast(`已导出 ${rules.length} 条目录规则`);
     } catch (e) {
       console.warn('[TxtTocRules] 导出失败:', e);
       HdsFeedback.showToast('导出失败，请重试');
-    } finally {
-      if (file) await fs.close(file);
     }
   }
 

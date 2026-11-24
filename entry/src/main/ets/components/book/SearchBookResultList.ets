@@ -6,7 +6,7 @@ import { BookTileLayout } from '../../utils/BookTileLayout';
 import { BookCover } from './BookCover';
 import { SearchBookShelfHelper } from '../../utils/SearchBookShelfHelper';
 import deviceInfo from '@ohos.deviceInfo';
-import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
+import { HdsListItem, HdsSwipeActionOptions } from '../../platform/Hds';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';

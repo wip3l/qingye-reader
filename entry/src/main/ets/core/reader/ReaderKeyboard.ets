@@ -1,4 +1,4 @@
-import { KeyCode } from '@kit.InputKit';
+import { KeyCode } from '../../platform/InputKeys';
 
 /** Device-local bindings; independent of book, theme and cloud preferences. */
 export class ReaderKeyboardSettings {

@@ -1,6 +1,6 @@
 import { ReaderCacheCoordinator } from '../book/ReaderCacheCoordinator';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../../platform/FileUri';
 import { http } from '@kit.NetworkKit';
 import { ImageFileExport } from '../../utils/ImageFileExport';
 import { util } from '@kit.ArkTS';

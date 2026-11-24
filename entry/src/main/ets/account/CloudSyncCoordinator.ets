@@ -53,6 +53,7 @@ import {
 } from '../utils/CustomThemeSchemeStore';
 import { BookIdentity } from '../utils/BookIdentity';
 import { LocalBookService } from '../core/book/LocalBookService';
+import { PlatformInfo } from '../platform/PlatformInfo';
 
 class BookshelfSyncPayload {
   bookUrl: string = '';
@@ -982,7 +983,7 @@ export class CloudSyncCoordinator {
     const request = new CloudSyncExchangeRequest();
     request.deviceId = deviceId;
     request.deviceName = CloudSyncCoordinator.deviceName();
-    request.platform = 'HarmonyOS';
+    request.platform = PlatformInfo.NAME;
     request.appVersion = CloudSyncCoordinator.appVersion();
     request.deviceKind = CloudSyncCoordinator.deviceKind();
     request.conflictPolicy = conflictPolicy === 'local' ? 'local' : 'cloud';
@@ -1003,9 +1004,9 @@ export class CloudSyncCoordinator {
   private static deviceName(): string {
     try {
       return deviceInfo.marketName || deviceInfo.productModelAlias ||
-        deviceInfo.productModel || deviceInfo.productSeries || deviceInfo.brand || 'HarmonyOS 设备';
+        deviceInfo.productModel || deviceInfo.productSeries || deviceInfo.brand || `${PlatformInfo.NAME} 设备`;
     } catch (e) {
-      return 'HarmonyOS 设备';
+      return `${PlatformInfo.NAME} 设备`;
     }
   }
 

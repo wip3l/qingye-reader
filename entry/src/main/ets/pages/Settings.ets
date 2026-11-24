@@ -50,6 +50,7 @@ import { CloudFontMenu } from '../account/CloudFontMenu';
 import { ReaderHaptics } from '../utils/ReaderHaptics';
 import { ReaderCommentCardSettings } from '../utils/ReaderCommentCardSettings';
 import { ReaderTypographyThemes, TypographyThemeOption } from '../utils/ReaderTypographyThemes';
+import { PlatformInfo } from '../platform/PlatformInfo';
 class ReaderCustomFontItem {
   familyName: string = '';
   filePath: string = '';
@@ -858,26 +859,29 @@ struct SettingsPage {
           this.setReaderQuickBookmarkEnabled(value);
         }
       })
-      SettingSwitchRow({
-        title: '眼动翻页（beta）',
-        description: '向上看即翻页；摄像头图像仅在本机处理',
-        isOn: this.readerEyeTurnEnabled,
-        showDivider: this.readerEyeTurnEnabled,
-        onChange: (value: boolean) => {
-          this.setReaderEyeTurnEnabled(value);
-        }
-      })
-      if (this.readerEyeTurnEnabled) {
+      // 安卓首版不带眼动翻页。
+      if (!PlatformInfo.ANDROID) {
         SettingSwitchRow({
-          title: '新版识别模型（beta）',
-          description: '暗光、戴眼镜也稳；看向屏幕上沿以外翻页，略耗电',
-          isOn: this.readerEyeTurnModelEnabled,
-          showDivider: true,
+          title: '眼动翻页（beta）',
+          description: '向上看即翻页；摄像头图像仅在本机处理',
+          isOn: this.readerEyeTurnEnabled,
+          showDivider: this.readerEyeTurnEnabled,
           onChange: (value: boolean) => {
-            this.setReaderEyeTurnModelEnabled(value);
+            this.setReaderEyeTurnEnabled(value);
           }
         })
-        this.eyeTurnCalibrationStatusItem()
+        if (this.readerEyeTurnEnabled) {
+          SettingSwitchRow({
+            title: '新版识别模型（beta）',
+            description: '暗光、戴眼镜也稳；看向屏幕上沿以外翻页，略耗电',
+            isOn: this.readerEyeTurnModelEnabled,
+            showDivider: true,
+            onChange: (value: boolean) => {
+              this.setReaderEyeTurnModelEnabled(value);
+            }
+          })
+          this.eyeTurnCalibrationStatusItem()
+        }
       }
     }
     .width('calc(100% - 24vp)')

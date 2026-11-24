@@ -33,6 +33,11 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
+import { selectImages } from '../platform/Files';
+import { PlatformInfo } from '../platform/PlatformInfo';
+import {
+  checkExternalRecharge, EXTERNAL_RECHARGE_AVAILABLE, ExternalRechargeResult, redeemRechargeCode, startExternalRecharge
+} from '../platform/Payments';
 
 class BenefitCompareRow {
   title: string;
@@ -74,6 +79,12 @@ struct AccountCenterPage {
   @State ordersExpanded: boolean = false;
   @State sourceUsage: CloudSyncSummary = new CloudSyncSummary();
   @State showRechargeSheet: boolean = false;
+  /** 安卓：兑换码输入框与是否正在兑换。 */
+  @State redeemCodeInput: string = '';
+  @State redeeming: boolean = false;
+  /** 安卓：已在浏览器打开收银台、还没确认结果的支付宝订单；回到本页时查单。 */
+  private pendingRechargeOrderId: string = '';
+  private checkingRecharge: boolean = false;
   @State compareExpanded: boolean = false;
   @State editingProfile: boolean = false;
   @State profileNameInput: string = '';
@@ -133,6 +144,10 @@ struct AccountCenterPage {
       this.shownLoggedIn = false;
       this.resetLoggedOutState();
       return;
+    }
+    // 安卓：从浏览器的支付宝收银台回来，查一下刚才的订单。
+    if (this.pendingRechargeOrderId) {
+      this.checkPendingRecharge();
     }
     // 从我的权益页领取礼包后返回，入口提示要跟着更新。
     if (this.accountLoggedIn) {
@@ -243,14 +258,43 @@ struct AccountCenterPage {
       await HuaweiAccountService.initialize(this.context);
       if (AccountSessionStore.isLoggedIn() && AccountCommerceConfig.isServerConfigured()) {
         await this.refreshMembership(true);
-        await this.loadIapProducts();
-        await this.recoverUnfinishedPurchases();
+        if (this.huaweiServicesAvailable()) {
+          await this.loadIapProducts();
+          await this.recoverUnfinishedPurchases();
+        }
       } else if (AccountCommerceConfig.isServerConfigured()) {
         await this.refreshMembership(false);
       }
     } catch (e) {
       console.warn('初始化账号中心失败:', e);
     }
+  }
+
+  /** 华为账号登录、应用内充值依赖华为账号服务和应用内支付，安卓上没有：只走用户名登录，不开放充值。 */
+  huaweiServicesAvailable(): boolean {
+    return !PlatformInfo.ANDROID;
+  }
+
+  /** 打开用户名登录页；register 为真时直接停在“注册”页签。 */
+  openPasswordLogin(register: boolean = false): void {
+    if (!AccountCommerceConfig.isServerConfigured()) {
+      HdsFeedback.showToast('请先配置账号服务端地址');
+      return;
+    }
+    if (register) {
+      router.pushUrl({ url: 'pages/AccountPasswordLogin', params: { mode: 'register' } });
+    } else {
+      router.pushUrl({ url: 'pages/AccountPasswordLogin' });
+    }
+  }
+
+  openRecharge(): void {
+    // 安卓上没有应用内支付：走平台层的应用外充值（支付宝 + 兑换码）；都没有时才提示去鸿蒙设备。
+    if (!this.huaweiServicesAvailable() && !EXTERNAL_RECHARGE_AVAILABLE) {
+      HdsFeedback.showToast('安卓版暂未开放充值，可在鸿蒙设备上充值，点数随账号同步');
+      return;
+    }
+    this.showRechargeSheet = true;
   }
 
   async login(): Promise<void> {
@@ -285,8 +329,10 @@ struct AccountCenterPage {
     CloudAutoSync.schedule(this.context, 0);
     try {
       await this.refreshMembership(false);
-      await this.loadIapProducts();
-      await this.recoverUnfinishedPurchases();
+      if (this.huaweiServicesAvailable()) {
+        await this.loadIapProducts();
+        await this.recoverUnfinishedPurchases();
+      }
     } catch (e) {
       console.warn('登录后刷新账号失败:', e);
     }
@@ -409,14 +455,11 @@ struct AccountCenterPage {
     let file: fs.File | null = null;
     let source: image.ImageSource | null = null;
     try {
-      const options: picker.PhotoSelectOptions = new picker.PhotoSelectOptions();
-      options.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
-      options.maxSelectNumber = 1;
-      const result = await new picker.PhotoViewPicker(this.context).select(options);
-      if (!result || result.photoUris.length === 0) {
+      const photoUris = await selectImages(this.context, 1);
+      if (photoUris.length === 0) {
         return;
       }
-      const uri = result.photoUris[0];
+      const uri = photoUris[0];
       file = fs.openSync(uri, fs.OpenMode.READ_ONLY);
       source = image.createImageSource(file.fd);
       const info = await source.getImageInfo();
@@ -748,6 +791,10 @@ struct AccountCenterPage {
       HdsFeedback.showToast('请先登录');
       return;
     }
+    if (!this.huaweiServicesAvailable()) {
+      await this.buyExternal(product);
+      return;
+    }
     this.purchasingProductId = product.productId;
     try {
       const result = await iap.createPurchase(this.context, {
@@ -766,6 +813,80 @@ struct AccountCenterPage {
     } finally {
       this.purchasingProductId = '';
     }
+  }
+
+  /** 安卓：服务端下单并在浏览器里打开支付宝收银台；付完回到本页时 onPageShow 查单。 */
+  async buyExternal(product: RechargeProduct): Promise<void> {
+    this.purchasingProductId = product.productId;
+    try {
+      this.pendingRechargeOrderId = await startExternalRecharge(product.productId, AccountSessionStore.token());
+      HdsFeedback.showToast('已打开支付宝收银台，付款后回到轻页即可到账');
+    } catch (e) {
+      HdsFeedback.showToast(this.errorMessage(e, '暂时无法发起支付宝付款'));
+    } finally {
+      this.purchasingProductId = '';
+    }
+  }
+
+  /** 查刚才的支付宝订单：通知可能比用户回来得晚，没结果时隔两秒再查，最多三次。 */
+  async checkPendingRecharge(): Promise<void> {
+    if (this.checkingRecharge || !this.pendingRechargeOrderId) return;
+    this.checkingRecharge = true;
+    const orderId = this.pendingRechargeOrderId;
+    try {
+      let result: ExternalRechargeResult | null = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) await new Promise<void>((resolve: () => void): number => setTimeout(resolve, 2000));
+        result = await checkExternalRecharge(orderId, AccountSessionStore.token());
+        if (result.status !== 'PENDING') break;
+      }
+      if (!result || result.status === 'PENDING') {
+        HdsFeedback.showToast('还没收到付款结果，付款后回到本页会再查一次');
+        return;
+      }
+      this.pendingRechargeOrderId = '';
+      if (result.status === 'PAID') {
+        await HuaweiAccountService.refresh(this.context);
+        HdsFeedback.showToast(this.creditedMessage(result));
+        this.showRechargeSheet = false;
+      } else {
+        HdsFeedback.showToast('订单已关闭，没有扣款');
+      }
+    } catch (e) {
+      console.warn('查询充值订单失败:', e);
+    } finally {
+      this.checkingRecharge = false;
+    }
+  }
+
+  /** 安卓：兑换码充值。 */
+  async redeemCode(): Promise<void> {
+    if (this.redeeming) return;
+    if (!this.accountLoggedIn) {
+      HdsFeedback.showToast('请先登录');
+      return;
+    }
+    const code = this.redeemCodeInput.trim();
+    if (!code) {
+      HdsFeedback.showToast('请输入兑换码');
+      return;
+    }
+    this.redeeming = true;
+    try {
+      const result = await redeemRechargeCode(code, AccountSessionStore.token());
+      await HuaweiAccountService.refresh(this.context);
+      this.redeemCodeInput = '';
+      HdsFeedback.showToast(this.creditedMessage(result));
+    } catch (e) {
+      HdsFeedback.showToast(this.errorMessage(e, '兑换失败'));
+    } finally {
+      this.redeeming = false;
+    }
+  }
+
+  creditedMessage(result: ExternalRechargeResult): string {
+    const debtMessage = result.debtOffsetPoints > 0 ? `，其中 ${result.debtOffsetPoints} 点用于抵扣退款欠款` : '';
+    return `充值成功，已到账 ${result.creditedPoints} 点${debtMessage}`;
   }
 
   async recoverUnfinishedPurchases(): Promise<void> {
@@ -938,7 +1059,12 @@ struct AccountCenterPage {
 
   async buyMembership(): Promise<void> {
     if (!this.accountLoggedIn) {
-      this.login();
+      // 安卓上没有华为账号，未登录时去用户名登录页（可切到注册）。
+      if (this.huaweiServicesAvailable()) {
+        this.login();
+      } else {
+        this.openPasswordLogin();
+      }
       return;
     }
     const product = this.selectedProduct();
@@ -958,7 +1084,7 @@ struct AccountCenterPage {
             `${quote.payablePoints - this.paidPoints} 点。赠送点不可抵扣。`,
           buttons: [{ text: '取消', color: this.subTextColor() }, { text: '去充值', color: this.accentColor() }]
         });
-        if (recharge.index === 1) this.showRechargeSheet = true;
+        if (recharge.index === 1) this.openRecharge();
         return;
       }
       const credit = quote.creditPoints > 0 ? `\n升级抵扣 ${quote.creditPoints} 点` : '';
@@ -1101,8 +1227,10 @@ struct AccountCenterPage {
           // 不限宽时 Row 按昵称全长排开，会越过右侧“编辑资料”；限宽后昵称先省略，徽章始终完整。
           .width('100%')
           .alignItems(VerticalAlign.Center)
+          // 新用户赠点只发给华为账号，安卓上只能用户名注册，不提赠点。
           Text(this.membershipSku ? MembershipIcons.label(this.membershipSku) :
-            (this.accountLoggedIn ? '普通用户' : '登录后新用户免费获得 300 点'))
+            (this.accountLoggedIn ? '普通用户' :
+              (this.huaweiServicesAvailable() ? '登录后新用户免费获得 300 点' : '注册或登录后，点数和会员随账号同步')))
             .fontSize(AppFontSize.CAPTION)
             .fontColor(MembershipIcons.cardSubTextColor(this.appDarkMode))
         }
@@ -1119,7 +1247,7 @@ struct AccountCenterPage {
             .onClick(() => {
               this.beginEditProfile();
             })
-        } else {
+        } else if (this.huaweiServicesAvailable()) {
           Button(this.loading ? '登录中' : '华为账号登录')
             .height(36)
             .fontSize(AppFontSize.BODY)
@@ -1129,6 +1257,28 @@ struct AccountCenterPage {
             .onClick(() => {
               this.login();
             })
+        } else {
+          // 安卓上没有华为账号：注册、登录都走用户名，两个入口并排放在卡片上。
+          Row({ space: AppSpacing.SM }) {
+            Button('注册')
+              .height(36)
+              .fontSize(AppFontSize.BODY)
+              .backgroundColor(Color.Transparent)
+              .fontColor(MembershipIcons.cardTextColor(this.appDarkMode))
+              .border({ width: 1, color: MembershipIcons.cardSubTextColor(this.appDarkMode) })
+              .onClick(() => {
+                this.openPasswordLogin(true);
+              })
+            Button('登录')
+              .height(36)
+              .fontSize(AppFontSize.BODY)
+              .backgroundColor(this.accentColor())
+              .fontColor(ThemeRuntime.onAccentColor(this.accentColor()))
+              .onClick(() => {
+                this.openPasswordLogin();
+              })
+          }
+          .flexShrink(0)
         }
       }
       .width('100%')
@@ -1167,7 +1317,7 @@ struct AccountCenterPage {
             .border({ width: 1, color: MembershipIcons.cardSubTextColor(this.appDarkMode) })
             .margin({ right: AppSpacing.MD })
             .onClick(() => {
-              this.showRechargeSheet = true;
+              this.openRecharge();
             })
           Text('?')
             .fontSize(AppFontSize.CAPTION)
@@ -2176,6 +2326,9 @@ struct AccountCenterPage {
   rechargeSheet() {
     Column({ space: AppSpacing.SM }) {
       this.rechargeSection()
+      if (EXTERNAL_RECHARGE_AVAILABLE) {
+        this.redeemCodeSection()
+      }
       Text(`当前充值点 ${this.paidPoints} · 可开通会员、兑换朗读字数包与主题`)
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
@@ -2221,7 +2374,9 @@ struct AccountCenterPage {
                   .height(18)
                   .color(this.accentColor())
               } else {
-                Text(product.localPrice || `预计 ¥${product.expectedPriceYuan}`)
+                // 安卓走支付宝，价格由服务端定，就是这个数；鸿蒙按应用内支付返回的本地价格显示。
+                Text(EXTERNAL_RECHARGE_AVAILABLE ? `¥${product.expectedPriceYuan}` :
+                  (product.localPrice || `预计 ¥${product.expectedPriceYuan}`))
                   .fontSize(AppFontSize.BODY)
                   .fontColor(this.accentColor())
               }
@@ -2244,6 +2399,50 @@ struct AccountCenterPage {
       .width('100%')
       .height(this.rechargeGridHeight())
       .enableScrollInteraction(false)
+    }
+    .width('100%')
+    .padding(AppSpacing.XL)
+    .borderRadius(ThemeRuntime.cardRadius())
+    .backgroundColor(this.cardColor())
+  }
+
+  /** 安卓：兑换码充值（支付宝之外的另一条路，码在别处购买）。 */
+  @Builder
+  redeemCodeSection() {
+    Column({ space: AppSpacing.SM }) {
+      Text('兑换码')
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.primaryTextColor())
+        .width('100%')
+      Row({ space: AppSpacing.SM }) {
+        TextInput({ placeholder: 'XXXX-XXXX-XXXX-XXXX', text: this.redeemCodeInput })
+          .layoutWeight(1)
+          .height(44)
+          .maxLength(24)
+          .borderRadius(ThemeRuntime.mediumRadius())
+          .backgroundColor(this.inputColor())
+          .fontColor(this.primaryTextColor())
+          .onChange((value: string) => {
+            this.redeemCodeInput = value;
+          })
+          .onSubmit(() => {
+            this.redeemCode();
+          })
+        Button(this.redeeming ? '兑换中' : '兑换')
+          .height(44)
+          .fontSize(AppFontSize.BODY)
+          .backgroundColor(this.accentColor())
+          .enabled(!this.redeeming)
+          .onClick(() => {
+            this.redeemCode();
+          })
+      }
+      .width('100%')
+      Text('付款用支付宝；点数仅用于本应用数字内容，不支持转让或提现')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .width('100%')
     }
     .width('100%')
     .padding(AppSpacing.XL)
@@ -2283,34 +2482,42 @@ struct AccountCenterPage {
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
         .width('100%')
-      Text('• 每个华为账号首次登录赠送 300 点\n• 点数余额、会员和主题权益可跨终端同步')
+      Text(this.huaweiServicesAvailable() ?
+        '• 每个华为账号首次登录赠送 300 点\n• 点数余额、会员和主题权益可跨终端同步' :
+        '• 用户名和密码注册，注册后会给出恢复码，用来找回密码\n• 点数余额、会员和主题权益可跨终端同步，和鸿蒙设备上是同一个账号')
         .fontSize(AppFontSize.BODY)
         .fontColor(this.subTextColor())
         .lineHeight(22)
         .width('100%')
-      Row() {
-        Text('不用华为账号？用用户名登录或注册')
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.accentColor())
-          .layoutWeight(1)
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(16)
-          .fontColor([this.accentColor()])
+      if (this.huaweiServicesAvailable()) {
+        this.loginGuideLink('不用华为账号？用用户名登录或注册', false)
+      } else {
+        this.loginGuideLink('没有账号？注册新账号', true)
+        this.loginGuideLink('已有账号，用户名登录', false)
       }
-      .width('100%')
-      .padding({ top: AppSpacing.XS })
-      .onClick(() => {
-        if (!AccountCommerceConfig.isServerConfigured()) {
-          HdsFeedback.showToast('请先配置账号服务端地址');
-          return;
-        }
-        router.pushUrl({ url: 'pages/AccountPasswordLogin' });
-      })
     }
     .width('100%')
     .padding(AppSpacing.XL)
     .borderRadius(ThemeRuntime.cardRadius())
     .backgroundColor(this.cardColor())
+  }
+
+  @Builder
+  loginGuideLink(label: string, register: boolean) {
+    Row() {
+      Text(label)
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.accentColor())
+        .layoutWeight(1)
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(16)
+        .fontColor([this.accentColor()])
+    }
+    .width('100%')
+    .padding({ top: AppSpacing.XS })
+    .onClick(() => {
+      this.openPasswordLogin(register);
+    })
   }
 
   @Builder

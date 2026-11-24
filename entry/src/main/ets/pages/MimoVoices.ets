@@ -1,6 +1,6 @@
 import { router, SymbolGlyphModifier } from '@kit.ArkUI';
 import deviceInfo from '@ohos.deviceInfo';
-import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
+import { HdsListItem, HdsSwipeActionOptions } from '../platform/Hds';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow, SettingSwitchRow } from '../components/common/SettingRow';
 import { MimoVoiceSelectRow } from '../components/MimoVoiceSelectRow';

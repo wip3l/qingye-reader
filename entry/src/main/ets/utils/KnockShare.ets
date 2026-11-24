@@ -1,5 +1,6 @@
 import { common } from '@kit.AbilityKit';
-import { fileIo, fileUri } from '@kit.CoreFileKit';
+import { fileIo } from '@kit.CoreFileKit';
+import { fileUri } from '../platform/FileUri';
 import { harmonyShare, systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor } from '@kit.ArkData';
 import { Book } from '@legado/sourceengine';

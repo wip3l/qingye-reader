@@ -53,6 +53,7 @@ function importHarness(t) {
   };
   const sandbox = vm.createContext({ console, fs: platformFs, setTimeout,
     fileUri: { getUriFromPath: file => `file://${file}` },
+    copyFile: (from, to) => platformFs.copy(from, to),
     appDb: { commitBookSourceSwitch: async (_url, book, index, upsert) => {
       assert.equal(upsert, true);
       if (failCommit) throw new Error('injected transaction failure');

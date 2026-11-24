@@ -8,7 +8,7 @@ import {
   SnackBarMessageOptions,
   SnackBarOperationOptions,
   SnackBarOperationType
-} from '@kit.UIDesignKit';
+} from '../platform/Hds';
 
 /** Shows API 26+ immersive-light feedback and lets callers retain their Toast fallback. */
 export class HdsFeedback {
@@ -34,7 +34,7 @@ export class HdsFeedback {
   /** Uses the API 26 system-material Toast when supported, otherwise the legacy Toast. */
   static showToast(message: string): void {
     try {
-      if (deviceInfo.sdkApiVersion >= 26 && uiMaterial.isImmersiveMaterialSupported()) {
+      if (ImmersiveMaterialRuntime.supportsHds()) {
         const material: uiMaterial.Material = ImmersiveMaterialRuntime.componentMaterial({
           style: ImmersiveMaterialRuntime.materialStyle(),
           applyShadow: true,

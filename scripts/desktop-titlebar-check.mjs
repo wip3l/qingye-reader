@@ -10,7 +10,9 @@ const context = vm.createContext({
   console: { warn() {}, error() {} }, deviceInfo,
   AppStorage: { get: key => storage.get(key), setOrCreate: (key, value) => storage.set(key, value) },
   ConfigurationConstant: { ColorMode: { COLOR_MODE_DARK: 0, COLOR_MODE_LIGHT: 1 } },
-  window: { AvoidAreaType: { TYPE_SYSTEM: 0, TYPE_NAVIGATION_INDICATOR: 1, TYPE_SYSTEM_GESTURE: 2 } }
+  window: { AvoidAreaType: { TYPE_SYSTEM: 0, TYPE_NAVIGATION_INDICATOR: 1, TYPE_SYSTEM_GESTURE: 2 } },
+  PlatformInfo: { ANDROID: false },
+  systemInsetsPx: async () => null
 });
 const source = readFileSync(new URL('../entry/src/main/ets/utils/SystemBars.ets', import.meta.url), 'utf8');
 vm.runInContext(stripTypeScriptTypes(source.replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '')), context);

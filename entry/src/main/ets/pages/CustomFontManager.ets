@@ -5,7 +5,7 @@ import { ReaderSystemFontHelper } from '../utils/ReaderSystemFontHelper';
 import { ReaderFontBootstrap } from '../utils/ReaderFontBootstrap';
 import picker from '@ohos.file.picker';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ListDissolve } from '../utils/ListDissolve';
@@ -15,6 +15,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { CloudAutoSync, CloudRemoteFont } from '../account/CloudAutoSync';
 import { CloudDownloadQueue } from '../account/CloudDownloadQueue';
+import { copyFile, selectDocuments } from '../platform/Files';
 
 class ReaderCustomFontItem {
   familyName: string = '';
@@ -301,7 +302,7 @@ struct CustomFontManagerPage {
       const options: picker.DocumentSelectOptions = new picker.DocumentSelectOptions();
       options.fileSuffixFilters = ['字体文件|.ttf', '字体文件|.otf', '字体文件|.ttc'];
       options.maxSelectNumber = 1;
-      const result = await new picker.DocumentViewPicker(getContext(this)).select(options);
+      const result = await selectDocuments(getContext(this), options);
       if (!result || result.length === 0) {
         return;
       }
@@ -313,7 +314,7 @@ struct CustomFontManagerPage {
       const destName = await this.uniqueFontFileName(dir, this.asciiStoredFontName(sourceName, Date.now()));
       const destPath = `${dir}/${destName}`;
       const copySource = sourceUri.startsWith('/') ? fileUri.getUriFromPath(sourceUri) : sourceUri;
-      await fs.copy(copySource, fileUri.getUriFromPath(destPath));
+      await copyFile(copySource, fileUri.getUriFromPath(destPath));
       const familyName = this.familyNameForPath(destPath);
 
       const item = new ReaderCustomFontItem();

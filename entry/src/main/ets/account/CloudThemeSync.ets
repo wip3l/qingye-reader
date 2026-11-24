@@ -1,6 +1,6 @@
 import { Context } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import zlib from '@ohos.zlib';
 import hash from '@ohos.file.hash';
 import preferences from '@ohos.data.preferences';

@@ -1,4 +1,4 @@
-import { textToSpeech } from '@kit.CoreSpeechKit';
+import { textToSpeech } from '../platform/SpeechKit';
 import { connection } from '@kit.NetworkKit';
 import { CloudTtsAudio, CloudTtsClient, CloudTtsTiming } from '../account/CloudTtsClient';
 import { HttpTTS } from '@legado/sourceengine';
