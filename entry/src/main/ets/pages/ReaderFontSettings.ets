@@ -65,6 +65,8 @@ export const READER_FONT_SECTION_BODY: number = 1;
 
 /** 共用规则控件时，编辑页草稿用的下标（-1 已被标题强调占用）。 */
 const EDITING_REGEX_RULE_INDEX: number = -2;
+/** 正则规则列表的行高：列表嵌在页面滚动里，按行数给定高度。 */
+const REGEX_RULE_ROW_HEIGHT: number = 64;
 const TITLE_PREVIEW_BOX_ID: string = 'reader_title_preview_box';
 /** 规则预览没有命中时，直接画成强调效果的那几个字。 */
 const REGEX_PREVIEW_FALLBACK_SAMPLE: string = '强调文字';
@@ -144,6 +146,8 @@ export struct ReaderFontSettingsEditor {
   @StorageLink('cloudRemoteFontsRaw') cloudRemoteFontsRaw: string = '';
   private downloadingRemoteFont: boolean = false;
   @State regexRules: ReaderRegexFontRule[] = [];
+  /** 正在拖动排序的规则 id；嵌入时只给这一行补卡片底色。 */
+  @State draggingRegexRuleId: string = '';
   /** 正在消散的正则规则 id，见 ListDissolve。 */
   @State dissolvingRuleIds: string[] = [];
   @State deleteParticleBursts: DeleteParticleBurst[] = [];
@@ -491,20 +495,43 @@ export struct ReaderFontSettingsEditor {
       this.regexRulesGroupTitle()
       // 编辑器可能嵌在主题编辑器里、没有统一的根层，粒子层套在规则卡片外面（外层不裁切，颗粒能飘出卡片）。
       Stack() {
-        Column() {
-          if (this.regexRules.length === 0) {
+        if (this.regexRules.length === 0) {
+          Column() {
             this.emptyRegexRule()
           }
-          // 键里带上“是否最后一行”：增删后上一条的分隔线要跟着重画。
-          ForEach(this.regexRules, (rule: ReaderRegexFontRule, index: number) => {
-            this.regexRuleRow(rule, index)
-          }, (rule: ReaderRegexFontRule, index: number) =>
-            `${rule.id}|${rule.name}|${rule.pattern}|${rule.scope}|${index === this.regexRules.length - 1}`)
+          .width('100%')
+          .borderRadius(ThemeRuntime.cardRadius())
+          .clip(true)
+          .backgroundColor(this.embedded ? Color.Transparent : this.cardColor())
+        } else {
+          // 同一段字被几条规则命中时用靠上的那条，所以列表顺序就是优先级：长按一行拖动调整。
+          // 外层是页面的滚动容器，列表按行数给定高度，不自己滚。
+          List() {
+            // 键里不能带下标或“是否最后一行”：拖动只换位置，键一变条目就重建、拖动会断。
+            // 序号和分隔线在行里按 id 现查。
+            ForEach(this.regexRules, (rule: ReaderRegexFontRule) => {
+              ListItem() {
+                this.regexRuleRow(rule)
+              }
+            }, (rule: ReaderRegexFontRule) => `${rule.id}|${rule.name}|${rule.pattern}|${rule.scope}`)
+              .onMove((from: number, to: number) => this.moveRegexRuleDuringDrag(from, to), {
+                onDragStart: (index: number) => {
+                  this.draggingRegexRuleId = index >= 0 && index < this.regexRules.length ? this.regexRules[index].id : '';
+                },
+                onDrop: (_index: number) => {
+                  this.draggingRegexRuleId = '';
+                  this.saveSettings();
+                }
+              })
+          }
+          .width('100%')
+          .height(REGEX_RULE_ROW_HEIGHT * this.regexRules.length)
+          .scrollBar(BarState.Off)
+          .edgeEffect(EdgeEffect.None)
+          .borderRadius(ThemeRuntime.cardRadius())
+          .clip(true)
+          .backgroundColor(this.embedded ? Color.Transparent : this.cardColor())
         }
-        .width('100%')
-        .borderRadius(ThemeRuntime.cardRadius())
-        .clip(true)
-        .backgroundColor(this.embedded ? Color.Transparent : this.cardColor())
 
         if (this.deleteParticleBursts.length > 0) {
           DeleteParticleLayer({ bursts: this.deleteParticleBursts })
@@ -513,7 +540,40 @@ export struct ReaderFontSettingsEditor {
       .id('reader_regex_rules_root')
       .width('calc(100% - 24vp)')
       .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+      if (this.regexRules.length >= 2) {
+        this.regexRuleOrderHint()
+      }
     }
+  }
+
+  @Builder
+  regexRuleOrderHint() {
+    Row({ space: AppSpacing.XS }) {
+      SymbolGlyph($r('sys.symbol.info_circle'))
+        .fontSize(14)
+        .fontColor([this.subTextColor()])
+        .margin({ top: 2 })
+      Text('同一段文字被几条规则命中时，用排在上面的那条。长按拖动调整顺序。')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM })
+  }
+
+  /** 拖动中只改顺序；松手由 onDrop 保存一次。 */
+  moveRegexRuleDuringDrag(from: number, to: number): void {
+    if (from === to || from < 0 || to < 0 || from >= this.regexRules.length || to >= this.regexRules.length) return;
+    const next = this.regexRules.slice();
+    const moved = next.splice(from, 1)[0];
+    next.splice(to, 0, moved);
+    this.regexRules = next;
+  }
+
+  regexRuleNumber(ruleId: string): number {
+    return this.regexRules.findIndex((rule: ReaderRegexFontRule) => rule.id === ruleId) + 1;
   }
 
   saveSettings(regexRules: ReaderRegexFontRule[] = this.regexRules): void {
@@ -1186,11 +1246,17 @@ export struct ReaderFontSettingsEditor {
   }
 
   @Builder
-  regexRuleRow(rule: ReaderRegexFontRule, index: number) {
+  regexRuleRow(rule: ReaderRegexFontRule) {
     Row({ space: AppSpacing.MD }) {
+      // 序号按 id 现查：拖动不重建条目，ForEach 的下标会停在旧值。
+      Text(`${this.regexRuleNumber(rule.id)}`)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .width(16)
+        .textAlign(TextAlign.Center)
       Column({ space: AppSpacing.XXS }) {
         Row({ space: AppSpacing.SM }) {
-          Text(rule.name || `规则${index + 1}`)
+          Text(rule.name || `规则${this.regexRuleNumber(rule.id)}`)
             .fontSize(AppFontSize.BODY_LARGE)
             .fontWeight(FontWeight.Medium)
             .fontColor(this.primaryTextColor())
@@ -1222,11 +1288,15 @@ export struct ReaderFontSettingsEditor {
         .fontColor([this.subTextColor()])
     }
     .width('calc(100% - 32vp)')
-    .padding({ left: 0, right: 0, top: AppSpacing.MD, bottom: AppSpacing.MD })
+    .height(REGEX_RULE_ROW_HEIGHT)
     .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
-    .backgroundColor(Color.Transparent)
-    .border({ width: { bottom: index < this.regexRules.length - 1 ? 0.5 : 0 }, color: this.settingsDividerColor() })
+    // 嵌在悬浮样式面板里时卡片是透明的；拖起来的那一行要盖住下面的行，拖动时补上卡片色。
+    .backgroundColor(!this.embedded || this.draggingRegexRuleId === rule.id ? this.cardColor() : Color.Transparent)
+    .border({ width: { bottom: this.regexRuleNumber(rule.id) < this.regexRules.length ? 0.5 : 0 },
+      color: this.settingsDividerColor() })
     .alignItems(VerticalAlign.Center)
+    .accessibilityGroup(true)
+    .accessibilityText(`第 ${this.regexRuleNumber(rule.id)} 条，${rule.name || '正则规则'}，点按编辑，长按拖动调整顺序`)
     .opacity(ListDissolve.opacity(this.isRegexRuleDissolving(rule)))
     .scale(ListDissolve.scale(this.isRegexRuleDissolving(rule)))
     .blur(ListDissolve.blur(this.isRegexRuleDissolving(rule)))

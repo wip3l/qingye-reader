@@ -1219,7 +1219,10 @@ struct ThemeTypographySettingsPage {
     return index >= 0 && index < this.previewRules.length ? this.previewRules[index] : new ReaderRegexFontRule();
   }
 
-  /** 每个字符归第一条命中它的规则，与阅读页的规则顺序一致。 */
+  /**
+   * 与阅读页同一种判定：按规则顺序认领命中，后面的命中只要碰到已认领的字就整段放弃，
+   * 不会只拿走剩下的半截。
+   */
   paragraphSlices(index: number): TypographyPreviewSlice[] {
     const text = this.paragraphText(index);
     const owners: number[] = new Array<number>(text.length).fill(-1);
@@ -1235,8 +1238,12 @@ struct ThemeTypographySettingsPage {
           if (end <= start) {
             regex.lastIndex = start + 1;
           } else {
-            for (let position = start; position < end; position++) {
-              if (owners[position] < 0) owners[position] = ruleIndex;
+            let claimed = false;
+            for (let position = start; position < end && !claimed; position++) {
+              if (owners[position] >= 0) claimed = true;
+            }
+            if (!claimed) {
+              for (let position = start; position < end; position++) owners[position] = ruleIndex;
             }
           }
           if (regex.lastIndex >= text.length) break;
