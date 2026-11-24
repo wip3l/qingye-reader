@@ -303,7 +303,7 @@ BuiltinThemeRegistry.register(theme);
 | 规则 | `ReaderRegexFontRule.emphasisMode` | `inherit`、`none`、`custom` |
 
 - 规则为 `inherit` 时，使用当前主题的强调模式、气泡形状、端饰和颜色，忽略规则中残留的样式字段。
-- 规则为 `custom` 时，规则自己的 `customTextColorEnabled`、`customHighlightEnabled`、`customBubbleEnabled` 及对应颜色、`bubbleStyleId` 才生效。
+- 规则为 `custom` 时，规则自己的 `customTextColorEnabled`、`customHighlightEnabled`、`customBubbleEnabled` 及对应颜色、`bubbleStyleId` 才生效。三种颜色各有一个深色模式的值（`customTextColorDark`、`customHighlightColorDark`、`customBubbleColorDark`），留空时深色模式沿用浅色那份。
 - 旧数据里规则级的 `text`、`highlight`、`bubble`、`accent` 会被归一化为 `custom`。
 - `highlightColorEnabled` 和 `shadowColor` 是为 schema v2 保留的兼容字段，仍会读取和输出。
 

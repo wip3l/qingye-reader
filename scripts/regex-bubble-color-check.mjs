@@ -123,3 +123,27 @@ console.log('PASS: independent rule weights and ARGB colors survive codec, reade
   assert.equal(resolver.resolve(inherited.rule, inherited.context, false).textColor, '#8C3A12');
 }
 console.log('PASS: text-only emphasis uses the emphasis text color and falls back to the fill only when unreadable');
+
+// 自定义颜色分深浅：深色模式另存了就用另存的，留空沿用浅色那份；编解码保留这三个字段。
+{
+  const Context = vm.runInContext('ReaderRegexEmphasisContext', sandbox);
+  const rule = new Rule();
+  rule.emphasisMode = 'custom';
+  rule.customTextColorEnabled = true;
+  rule.customTextColor = '#FF2F6FB2';
+  rule.customTextColorDark = '#FFF2C66D';
+  rule.customHighlightEnabled = true;
+  rule.customHighlightColor = '#FFFFE08A';
+  const decoded = codec.decode(codec.encode([rule]))[0];
+  assert.equal(decoded.customTextColorDark, '#FFF2C66D');
+  assert.equal(decoded.customHighlightColorDark, '');
+  assert.equal(codec.decode(JSON.stringify([{ id: 'old', pattern: 'x' }]))[0].customBubbleColorDark, '');
+  const at = (dark) => { const c = new Context(); c.darkMode = dark; return resolver.resolve(decoded, c, false); };
+  assert.equal(at(false).textColor, '#FF2F6FB2');
+  assert.equal(at(true).textColor, '#FFF2C66D');
+  assert.equal(at(true).backgroundColor, at(false).backgroundColor, 'empty dark highlight follows the light one');
+  decoded.customHighlightColorDark = '#FF1F3B5C';
+  assert.equal(at(true).backgroundColor, '#FF1F3B5C');
+  assert.equal(at(false).backgroundColor, '#FFFFE08A');
+}
+console.log('PASS: custom text, highlight and bubble colors keep a separate dark-mode value that falls back to the light one');

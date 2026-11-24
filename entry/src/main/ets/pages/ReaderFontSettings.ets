@@ -21,7 +21,7 @@ import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStor
 import { ReaderFontHelper, ReaderFontItem } from '../utils/ReaderFontHelper';
 import { ReaderSystemFontHelper } from '../utils/ReaderSystemFontHelper';
 import { ReaderFontBootstrap } from '../utils/ReaderFontBootstrap';
-import { AdaptiveColorPicker } from '../components/AdaptiveColorPicker';
+import { ColorCodePicker } from '../components/ColorCodePicker';
 import { AdaptiveIconButton } from '../components/AdaptiveIconButton';
 import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
 import { MaterialSegmentTabs } from '../components/common/MaterialSegmentTabs';
@@ -2770,21 +2770,7 @@ export struct ReaderFontSettingsEditor {
           });
         })
         if (this.regexRuleAt(index).customTextColorEnabled) {
-          AdaptiveColorPicker({
-            allowAlpha: true,
-            value: this.regexRuleAt(index).customTextColor,
-            placeholder: this.accentColor(),
-            appDarkMode: this.appDarkMode,
-            accentColor: this.accentColor(),
-            optionTitle: '文字颜色',
-            directSelection: true,
-            rowDivider: true,
-            onColorChange: (value: string) => {
-              this.updateRegexRule(index, (target: ReaderRegexFontRule) => {
-                target.customTextColor = this.normalizeColorInput(value, target.customTextColor || this.accentColor());
-              });
-            }
-          })
+          this.regexDayNightColorRow(index, 'text', '文字颜色')
         }
 
         this.regexEmphasisToggle('设置高亮色块', this.regexRuleAt(index).customHighlightEnabled,
@@ -2797,22 +2783,7 @@ export struct ReaderFontSettingsEditor {
             });
           })
         if (this.regexRuleAt(index).customHighlightEnabled) {
-          AdaptiveColorPicker({
-            allowAlpha: true,
-            value: this.regexRuleAt(index).customHighlightColor,
-            placeholder: this.accentColor(),
-            appDarkMode: this.appDarkMode,
-            accentColor: this.accentColor(),
-            optionTitle: '高亮色块颜色',
-            directSelection: true,
-            rowDivider: true,
-            onColorChange: (value: string) => {
-              this.updateRegexRule(index, (target: ReaderRegexFontRule) => {
-                target.customHighlightColor = this.normalizeColorInput(value,
-                  target.customHighlightColor || this.accentColor());
-              });
-            }
-          })
+          this.regexDayNightColorRow(index, 'highlight', '高亮色块颜色')
         }
 
         this.regexEmphasisToggle('设置强调气泡', this.regexRuleAt(index).customBubbleEnabled,
@@ -2859,26 +2830,85 @@ export struct ReaderFontSettingsEditor {
           }
           .width('100%')
           .alignItems(VerticalAlign.Center)
-          AdaptiveColorPicker({
-            allowAlpha: true,
-            value: this.regexRuleAt(index).customBubbleColor,
-            placeholder: this.accentColor(),
-            appDarkMode: this.appDarkMode,
-            accentColor: this.accentColor(),
-            optionTitle: '强调气泡颜色',
-            directSelection: true,
-            rowDivider: true,
-            onColorChange: (value: string) => {
-              this.updateRegexRule(index, (target: ReaderRegexFontRule) => {
-                target.customBubbleColor = this.normalizeColorInput(value,
-                  target.customBubbleColor || this.accentColor());
-              });
-            }
-          })
+          this.regexDayNightColorRow(index, 'bubble', '强调气泡颜色')
         }
       }
     }
     .width('100%')
+  }
+
+  /** 规则自定义颜色在浅色/深色模式下的值；kind 为 text、highlight、bubble。深色为空表示同浅色。 */
+  regexRuleColor(index: number, kind: string, dark: boolean): string {
+    const rule = this.regexRuleAt(index);
+    if (kind === 'text') return dark ? rule.customTextColorDark : rule.customTextColor;
+    if (kind === 'highlight') return dark ? rule.customHighlightColorDark : rule.customHighlightColor;
+    return dark ? rule.customBubbleColorDark : rule.customBubbleColor;
+  }
+
+  setRegexRuleColor(index: number, kind: string, dark: boolean, value: string): void {
+    this.updateRegexRule(index, (target: ReaderRegexFontRule) => {
+      if (dark) {
+        // 深色色块可以选“同白天”清空；其余输入按浅色那份兜底。
+        const next = value.trim() === '' ? '' : this.normalizeColorInput(value,
+          this.regexRuleColor(index, kind, false) || this.accentColor());
+        if (kind === 'text') target.customTextColorDark = next;
+        else if (kind === 'highlight') target.customHighlightColorDark = next;
+        else target.customBubbleColorDark = next;
+        return;
+      }
+      if (kind === 'text') {
+        target.customTextColor = this.normalizeColorInput(value, target.customTextColor || this.accentColor());
+      } else if (kind === 'highlight') {
+        target.customHighlightColor = this.normalizeColorInput(value,
+          target.customHighlightColor || this.accentColor());
+      } else {
+        target.customBubbleColor = this.normalizeColorInput(value, target.customBubbleColor || this.accentColor());
+      }
+    });
+  }
+
+  /** 一行并排白天、夜间两枚色块，各点各改；夜间没设时画成虚线空心圈，表示同白天。 */
+  @Builder
+  regexDayNightColorRow(index: number, kind: string, title: string) {
+    Row({ space: AppSpacing.SM }) {
+      Text(title)
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontColor(this.primaryTextColor())
+        .layoutWeight(1)
+      ColorCodePicker({
+        allowAlpha: true,
+        value: this.regexRuleColor(index, kind, false),
+        placeholder: this.accentColor(),
+        appDarkMode: this.appDarkMode,
+        accentColor: this.accentColor(),
+        optionTitle: `${title}（白天）`,
+        swatchCaption: '白天',
+        swatchNight: false,
+        onColorChange: (value: string) => {
+          this.setRegexRuleColor(index, kind, false, value);
+        }
+      })
+      ColorCodePicker({
+        allowAlpha: true,
+        allowEmpty: true,
+        emptyOptionLabel: '同白天',
+        value: this.regexRuleColor(index, kind, true),
+        placeholder: this.regexRuleColor(index, kind, false) || this.accentColor(),
+        appDarkMode: this.appDarkMode,
+        accentColor: this.accentColor(),
+        optionTitle: `${title}（夜间）`,
+        swatchCaption: this.regexRuleColor(index, kind, true).trim() ? '夜间' : '同白天',
+        swatchNight: true,
+        onColorChange: (value: string) => {
+          this.setRegexRuleColor(index, kind, true, value);
+        }
+      })
+    }
+    .width('100%')
+    .constraintSize({ minHeight: 64 })
+    .padding({ top: AppSpacing.SM, bottom: AppSpacing.SM })
+    .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
+    .alignItems(VerticalAlign.Center)
   }
 
   @Builder

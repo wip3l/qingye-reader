@@ -35,6 +35,13 @@ export struct ColorCodePicker {
   @Prop colorMode: string = '';
   /** 颜色行底部画一条和相邻设置行一样的分隔线。 */
   @Prop rowDivider: boolean = false;
+  /**
+   * 非空时只画一枚色块，下面带这行小字（同一行并排放浅色、深色两枚时用），点色块打开取色面板。
+   * allowEmpty 且值为空时画成虚线空心圈，中间一颗 placeholder 颜色的小点，表示沿用那个颜色。
+   */
+  @Prop swatchCaption: string = '';
+  /** 色块小字前的图标：false 太阳，true 月亮。 */
+  @Prop swatchNight: boolean = false;
   @State pickerVisible: boolean = false;
   @State draftColor: string = '#007DFF';
   @State hue: number = 210;
@@ -382,6 +389,45 @@ export struct ColorCodePicker {
         .width('100%')
         .height(56)
         .alignItems(VerticalAlign.Center)
+      } else if (this.swatchCaption !== '') {
+        Column({ space: 4 }) {
+          if (this.triggerFollowsDefault()) {
+            Stack() {
+              Row()
+                .width(12)
+                .height(12)
+                .borderRadius(6)
+                .backgroundColor(this.normalizeColor(this.placeholder, '#007DFF'))
+            }
+            .width(30)
+            .height(30)
+            .borderRadius(15)
+            .border({ width: 1.5, color: this.subTextColor(), style: BorderStyle.Dashed })
+          } else {
+            Row()
+              .width(30)
+              .height(30)
+              .borderRadius(15)
+              .backgroundColor(this.normalizeColor(this.value, this.placeholder))
+              .border({ width: 2, color: this.swatchBorderColor() })
+          }
+          Row({ space: 2 }) {
+            SymbolGlyph(this.swatchNight ? $r('sys.symbol.moon') : $r('sys.symbol.sun_max'))
+              .fontSize(10)
+              .fontColor([this.subTextColor()])
+            Text(this.swatchCaption)
+              .fontSize(10)
+              .fontColor(this.subTextColor())
+              .maxLines(1)
+          }
+          .alignItems(VerticalAlign.Center)
+        }
+        .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+        .alignItems(HorizontalAlign.Center)
+        .accessibilityText(`${this.optionTitle}：${this.triggerLabel()}`)
+        .onClick(() => {
+          this.openPicker();
+        })
       } else if (this.optionTitle !== '') {
         if (this.hideOptionTrigger) {
           Button('')
@@ -454,7 +500,7 @@ export struct ColorCodePicker {
           })
       }
     }
-      .width('100%')
+      .width(this.swatchCaption !== '' ? 52 : '100%')
       .bindSheet($$this.pickerVisible, this.colorPickerSheet(), {
         height: this.allowAlpha ? 760 : 670,
         dragBar: true,

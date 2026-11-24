@@ -28,6 +28,10 @@ export class ReaderRegexFontRule {
   customHighlightColor: string = '';
   customBubbleEnabled: boolean = false;
   customBubbleColor: string = '';
+  /** 上面三种颜色在深色模式下各另存一份；空着时深色模式也用上面那份。没有这些字段的旧规则同样按空处理。 */
+  customTextColorDark: string = '';
+  customHighlightColorDark: string = '';
+  customBubbleColorDark: string = '';
   // Kept in schema v2 so older installations can still read a compatible rule.
   highlightColorEnabled: boolean = false;
   shadowColor: string = '';
@@ -177,6 +181,9 @@ export class ReaderRegexFontCodec {
       rule.customBubbleEnabled = item.customBubbleEnabled === true || legacyEmphasisMode === 'bubble';
       rule.customBubbleColor = (item.customBubbleColor ||
         (legacyEmphasisMode === 'bubble' ? rule.emphasisColor : '')).trim();
+      rule.customTextColorDark = ReaderRegexFontCodec.colorText(item.customTextColorDark);
+      rule.customHighlightColorDark = ReaderRegexFontCodec.colorText(item.customHighlightColorDark);
+      rule.customBubbleColorDark = ReaderRegexFontCodec.colorText(item.customBubbleColorDark);
       if (legacyEmphasisMode === 'text' || legacyEmphasisMode === 'highlight' || legacyEmphasisMode === 'bubble') {
         rule.emphasisMode = 'custom';
       }
@@ -250,6 +257,24 @@ export class ReaderRegexFontCodec {
     return value === 'inherit' ? 'qq-soft' : value;
   }
 
+  private static colorText(value: string): string {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  /** 按深浅模式取规则的自定义颜色：深色模式另存了就用另存的，否则用浅色那份。 */
+  static customTextColor(rule: ReaderRegexFontRule, dark: boolean): string {
+    return (dark && rule.customTextColorDark.trim() ? rule.customTextColorDark : rule.customTextColor).trim();
+  }
+
+  static customHighlightColor(rule: ReaderRegexFontRule, dark: boolean): string {
+    return (dark && rule.customHighlightColorDark.trim() ? rule.customHighlightColorDark :
+      rule.customHighlightColor).trim();
+  }
+
+  static customBubbleColor(rule: ReaderRegexFontRule, dark: boolean): string {
+    return (dark && rule.customBubbleColorDark.trim() ? rule.customBubbleColorDark : rule.customBubbleColor).trim();
+  }
+
   static normalizeParagraphIndent(value: number): number {
     return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.min(4, Math.round(value)) : -1;
   }
@@ -283,6 +308,9 @@ export class ReaderRegexFontCodec {
     rule.customTextColor = (rule.customTextColor || '').trim();
     rule.customHighlightColor = (rule.customHighlightColor || '').trim();
     rule.customBubbleColor = (rule.customBubbleColor || '').trim();
+    rule.customTextColorDark = (rule.customTextColorDark || '').trim();
+    rule.customHighlightColorDark = (rule.customHighlightColorDark || '').trim();
+    rule.customBubbleColorDark = (rule.customBubbleColorDark || '').trim();
     rule.emphasisColor = (rule.customHighlightColor || rule.customBubbleColor || rule.customTextColor ||
       rule.emphasisColor || rule.shadowColor || '').trim();
     rule.highlightColorEnabled = mode === 'custom' &&
@@ -421,16 +449,17 @@ export class ReaderRegexBubbleStyleResolver {
     );
 
     if (result.mode === 'custom' && rule) {
+      const dark = context.darkMode;
       const bubbleColor = ReaderRegexBubbleStyleResolver.normalizeColor(
-        rule.customBubbleColor || context.inheritedColor || context.accentColor,
+        ReaderRegexFontCodec.customBubbleColor(rule, dark) || context.inheritedColor || context.accentColor,
         context.accentColor
       );
       const highlightColor = ReaderRegexBubbleStyleResolver.normalizeColor(
-        rule.customHighlightColor || context.inheritedColor || context.accentColor,
+        ReaderRegexFontCodec.customHighlightColor(rule, dark) || context.inheritedColor || context.accentColor,
         context.accentColor
       );
       const textColor = ReaderRegexBubbleStyleResolver.normalizeColor(
-        rule.customTextColor || context.inheritedTextColor || context.accentColor,
+        ReaderRegexFontCodec.customTextColor(rule, dark) || context.inheritedTextColor || context.accentColor,
         context.accentColor
       );
       // Custom mode is opt-in: when every custom effect is disabled, keep the
