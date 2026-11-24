@@ -13,6 +13,7 @@ import { AppThemeSettingsStore } from '../utils/AppThemeSettingsStore';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { CloudAutoSync } from '../account/CloudAutoSync';
 import { ShelfPreload } from '../utils/ShelfPreload';
+import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 
 @Entry
 @Component
@@ -32,6 +33,10 @@ struct StartupPage {
   pendingLocalBookImportNonce: number = 0;
   private jumpTimer: number = -1;
   private isOpeningTarget: boolean = false;
+  /** 自定义启动图是动图时，启动页最多为它多停留到这么久。 */
+  private static readonly MAX_ANIMATED_STAY_MS: number = 8000;
+  /** 动图从页面出现到开始播放还要解码，多等一点免得最后几帧被切掉。 */
+  private static readonly ANIMATED_DECODE_MARGIN_MS: number = 200;
 
   aboutToAppear(): void {
     hilog.info(0x0000, 'testTag', 'StartupTrace Startup aboutToAppear %{public}d', Date.now());
@@ -45,13 +50,36 @@ struct StartupPage {
       this.hasPendingLocalBookImport() || (ThemeRuntime.startupThemeId(this.appDarkMode) === ThemeIds.PLAIN_DEFAULT &&
         !this.customStartupImage()) ?
       0 : 720;
+    this.scheduleStartupJump(startupDelay);
+    if (startupDelay > 0 && this.customStartupImage()) {
+      this.extendForAnimatedCover(this.customStartupImage(), startupDelay, Date.now());
+    }
+  }
+
+  scheduleStartupJump(delay: number): void {
+    if (this.jumpTimer >= 0) {
+      clearTimeout(this.jumpTimer);
+    }
     this.jumpTimer = setTimeout(() => {
       this.jumpTimer = -1;
       hilog.info(0x0000, 'testTag', 'StartupTrace replace Index %{public}d', Date.now());
       this.openStartupTarget().catch((e: Error) => {
         console.error('打开启动目标失败:', e);
       });
-    }, startupDelay);
+    }, delay);
+  }
+
+  /** 自定义启动图是动图时，让它完整播一遍再进首页（最长 MAX_ANIMATED_STAY_MS）。 */
+  extendForAnimatedCover(src: string, baseDelay: number, startedAt: number): void {
+    AnimatedImagePolicy.loopDuration(src).then((duration: number): void => {
+      if (duration <= 0) return;
+      const stay = Math.min(StartupPage.MAX_ANIMATED_STAY_MS, duration + StartupPage.ANIMATED_DECODE_MARGIN_MS);
+      // 已经跳走、被外部导入改成立即跳转，或者动图本来就短于默认停留时，都不再改。
+      if (stay <= baseDelay || this.jumpTimer < 0 || this.isOpeningTarget || this.hasPendingLocalBookImport()) return;
+      this.scheduleStartupJump(Math.max(0, stay - (Date.now() - startedAt)));
+    }).catch((e: Error) => {
+      console.warn('读取启动动图时长失败:', e);
+    });
   }
 
   aboutToDisappear(): void {

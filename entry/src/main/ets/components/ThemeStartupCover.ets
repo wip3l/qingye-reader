@@ -2,6 +2,7 @@ import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
 import { SuperExclusiveThemes, ThemeIds, ThemePack, ThemeVariant } from '../theme/ThemeModels';
 import { StartupCoverTextStore } from '../utils/StartupCoverTextStore';
+import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 
 @Component
 export struct ThemeStartupCover {
@@ -21,6 +22,7 @@ export struct ThemeStartupCover {
   @Prop showTextEditButton: boolean = false;
   onEditText: () => void = (): void => {};
   @StorageLink('startupCoverTextsRevision') startupCoverTextsRevision: number = 0;
+  @StorageProp('animatedImageRevision') animatedImageRevision: number = 0;
   @State artScale: number = 1;
   @State contentOpacity: number = 1;
   @State viewportHeight: number = 0;
@@ -60,7 +62,8 @@ export struct ThemeStartupCover {
         }
       } else {
         // 使用参考主题封面视觉语言重新绘制的独立启动插画，不复用书籍封面本身。
-        Image(this.customImagePath || ThemeAssetRegistry.startupBackground(this.resolvedThemeId(), this.darkMode))
+        Image(this.customImagePath ? this.customImage() :
+          ThemeAssetRegistry.startupBackground(this.resolvedThemeId(), this.darkMode))
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Cover)
@@ -77,25 +80,28 @@ export struct ThemeStartupCover {
         // Keep the fade attached to the current viewport bottom. A percentage
         // y-position plus a fixed height leaves a bright strip above the
         // navigation indicator on tall screens and after a fold-state change.
-        Column() {
-          Blank()
-            .layoutWeight(1)
+        // 底部压暗只为衬托文案，标题和副标题都为空时不画。
+        if (this.hasCoverText()) {
+          Column() {
+            Blank()
+              .layoutWeight(1)
 
-          Column()
-            .width('100%')
-            .height(this.bottomFadeHeight())
-            .linearGradient({
-              angle: 180,
-              colors: [['#00000000', 0], [this.darkMode ? '#CC000000' : '#8F000000', 1]]
-            })
-            // The startup page is edge-to-edge. Expanding the fade itself is
-            // required; expanding only the page does not expand child layout.
-            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+            Column()
+              .width('100%')
+              .height(this.bottomFadeHeight())
+              .linearGradient({
+                angle: 180,
+                colors: [['#00000000', 0], [this.darkMode ? '#CC000000' : '#8F000000', 1]]
+              })
+              // The startup page is edge-to-edge. Expanding the fade itself is
+              // required; expanding only the page does not expand child layout.
+              .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+          }
+          .width('100%')
+          .height('100%')
+          .opacity(this.contentOpacity)
+          .hitTestBehavior(HitTestMode.None)
         }
-        .width('100%')
-        .height('100%')
-        .opacity(this.contentOpacity)
-        .hitTestBehavior(HitTestMode.None)
 
         Column() {
           Blank()
@@ -203,6 +209,16 @@ export struct ThemeStartupCover {
   variant(): ThemeVariant {
     const theme = this.theme();
     return this.darkMode ? theme.dark : theme.light;
+  }
+
+  /** 自定义启动图是动图时由 AnimatedImagePolicy 决定播放还是只显示第一帧。 */
+  customImage(): string {
+    if (this.animatedImageRevision < 0) return this.customImagePath;
+    return AnimatedImagePolicy.display(getContext(this), this.customImagePath);
+  }
+
+  hasCoverText(): boolean {
+    return !!this.coverTitle().trim() || !!this.coverSubtitle().trim();
   }
 
   coverTitle(): string {

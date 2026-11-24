@@ -122,6 +122,36 @@ export class AnimatedImagePolicy {
     return !!path && AnimatedImagePolicy.mayBeAnimated(path);
   }
 
+  /**
+   * 本地动图完整播一遍要多少毫秒（各帧延时相加）。不是动图、读不出来、超过播放上限或“播放动图”关闭时返回 0。
+   * 帧延时不超过 10ms 的按 100ms 算，和常见浏览器、解码器的处理一致，否则这类 GIF 会被算成一闪而过。
+   */
+  static async loopDuration(src: string): Promise<number> {
+    const path = AnimatedImagePolicy.localPath(src);
+    if (!path || !AnimatedImagePolicy.enabled() || !AnimatedImagePolicy.mayBeAnimated(path)) return 0;
+    let source: image.ImageSource | null = null;
+    try {
+      if (fs.statSync(path).size > AnimatedImagePolicy.MAX_PLAY_BYTES) return 0;
+      source = image.createImageSource(path);
+      if ((await source.getFrameCount()) <= 1) return 0;
+      const delays = await source.getDelayTimeList();
+      let total = 0;
+      for (const delay of delays) {
+        total += delay > 10 ? delay : 100;
+      }
+      return total;
+    } catch (_) {
+      return 0;
+    } finally {
+      if (source) {
+        try {
+          await source.release();
+        } catch (_) {
+        }
+      }
+    }
+  }
+
   /** 是不是多帧图片（GIF / 动态 WebP）。读不出来时按不是处理。 */
   static async isAnimated(uri: string): Promise<boolean> {
     return (await AnimatedImagePolicy.inspect(uri)).animated;

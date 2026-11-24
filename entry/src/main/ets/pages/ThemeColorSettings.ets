@@ -1388,10 +1388,17 @@ struct ThemeColorSettingsPage {
       const oldPath = this.currentStartupImagePath();
       const picked = await StartupCoverImageStore.pickSource(getContext(this));
       if (!picked) return;
-      const cropped = await this.cropImage(picked, '启动封面取景', 841, 1870, 841, false);
+      const oversize = await AnimatedImagePolicy.oversizeAnimatedMessage(picked);
+      if (oversize) {
+        HdsFeedback.showToast(oversize);
+        return;
+      }
+      // 动图重新编码只剩第一帧，所以不取景、原样保存，启动页按居中铺满显示。
+      const animated = await AnimatedImagePolicy.isAnimated(picked);
+      const cropped = animated ? picked : await this.cropImage(picked, '启动封面取景', 841, 1870, 841, false);
       if (!cropped) return;
       const imagePath = await StartupCoverImageStore.saveFrom(getContext(this), this.schemeId, darkMode, cropped);
-      this.discardCropFile(cropped, picked);
+      if (!animated) this.discardCropFile(cropped, picked);
       this.rememberChange();
       if (darkMode) this.darkStartupImagePath = imagePath;
       else this.lightStartupImagePath = imagePath;
