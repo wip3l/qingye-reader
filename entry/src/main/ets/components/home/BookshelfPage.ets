@@ -174,6 +174,24 @@ class TileGroupFlyer {
   toY: number = 0;
   toScaleX: number = 1;
   toScaleY: number = 1;
+  /**
+   * 陪伴布局飞整本立体书（书口、底板、书脊高光、角标都跟着走）：两头各有书架上那本书的排版参数，
+   * 按起点和终点的样子各画一本，同一条路径上前后叠着交替淡入淡出。为空时飞上面那张平面封面。
+   */
+  book: Book | undefined = undefined;
+  hardFrom: TileGroupBookPose | undefined = undefined;
+  hardTo: TileGroupBookPose | undefined = undefined;
+}
+
+/** 书架上一本立体书的排版：舞台左上角（相对书架根节点，vp）、封面宽高、侧转角度与厚度、以书底中点为轴的斜靠角度。 */
+class TileGroupBookPose {
+  stageX: number = 0;
+  stageY: number = 0;
+  coverWidth: number = 0;
+  coverHeight: number = 0;
+  angle: number = 24;
+  depth: number = 0.2;
+  lean: number = 0;
 }
 
 /** 下一帧开始渲染时回调。 */
@@ -422,6 +440,11 @@ export struct BookshelfPage {
   /** 关书挪位时单独飞的封面。 */
   @State tileGroupFlyers: TileGroupFlyer[] = [];
   @State tileGroupFlyProgress: number = 0;
+  /** 飞整本立体书时目的地那本整本藏起来（书口、底板都藏），只藏封面图会先露出一本空壳。 */
+  @State tileGroupHiddenBooks: string[] = [];
+  /** 整本书飞行时叠在上面、按终点样子画的那本的不透明度，与下面按起点样子画的那本的不透明度。 */
+  @State tileGroupFlyFront: number = 0;
+  @State tileGroupFlyBack: number = 1;
   /**
    * 分组页那一层显示的分组（0 为没有这一层）。平铺布局的分组页盖在书架上，书架底层不拆、停在进入前的分组上：
    * 打开不用销毁书架，返回不用重建、滚回。返回动画结束后才卸下这一层。
@@ -2848,6 +2871,11 @@ export struct BookshelfPage {
   tileGroupFlyerLayer() {
     Stack({ alignContent: Alignment.TopStart }) {
       ForEach(this.tileGroupFlyers, (flyer: TileGroupFlyer) => {
+        if (flyer.book && flyer.hardFrom && flyer.hardTo) {
+          // 下面一本按起点的样子画，上面一本按终点的样子画，走同一条路径；上面那本先淡入盖住，下面那本再淡出。
+          this.tileGroupHardcoverFlyer(flyer.book, flyer.hardFrom, flyer.hardTo, flyer.hardFrom, false)
+          this.tileGroupHardcoverFlyer(flyer.book, flyer.hardFrom, flyer.hardTo, flyer.hardTo, true)
+        } else {
         Stack() {
           if (flyer.cover && flyer.fill && this.themeImageCrop(ThemeImageSlots.COVER, flyer.cover)) {
             ThemeCroppedImage({ src: flyer.cover,
@@ -2888,12 +2916,39 @@ export struct BookshelfPage {
         .scale({ x: this.tileGroupFlyValue(flyer.fromScaleX, flyer.toScaleX),
           y: this.tileGroupFlyValue(flyer.fromScaleY, flyer.toScaleY), centerX: 0, centerY: 0 })
         .translate({ x: this.tileGroupFlyValue(flyer.fromX, flyer.toX), y: this.tileGroupFlyValue(flyer.fromY, flyer.toY) })
+        }
       }, (flyer: TileGroupFlyer): string => flyer.key)
     }
     .width('100%')
     .height('100%')
     .hitTestBehavior(HitTestMode.None)
     .accessibilityLevel('no-hide-descendants')
+  }
+
+  /**
+   * 按 pose 的排版画一本完整的立体书，从 from 的舞台飞到 to 的舞台：最里层按书底中点斜靠（与格子里一致），
+   * 中间一层以左上角缩放到两头的封面大小，最外层平移。旋转、缩放、平移都由 tileGroupFlyProgress 插值。
+   */
+  @Builder
+  tileGroupHardcoverFlyer(book: Book, from: TileGroupBookPose, to: TileGroupBookPose, pose: TileGroupBookPose,
+    front: boolean) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Stack({ alignContent: Alignment.TopStart }) {
+        Stack({ alignContent: Alignment.TopStart }) {
+          this.shelfHardcoverBook(book, '', pose.coverWidth, pose.coverHeight, false, false, pose.angle, pose.depth,
+            true)
+        }
+        .rotate({ angle: this.tileGroupFlyValue(from.lean, to.lean), centerX: '50%', centerY: '100%' })
+      }
+      .scale({
+        x: this.tileGroupFlyValue(from.coverWidth / pose.coverWidth, to.coverWidth / pose.coverWidth),
+        y: this.tileGroupFlyValue(from.coverHeight / pose.coverHeight, to.coverHeight / pose.coverHeight),
+        centerX: 0, centerY: 0
+      })
+    }
+    .position({ x: 0, y: 0 })
+    .translate({ x: this.tileGroupFlyValue(from.stageX, to.stageX), y: this.tileGroupFlyValue(from.stageY, to.stageY) })
+    .opacity(front ? this.tileGroupFlyFront : this.tileGroupFlyBack)
   }
 
   /** 换源：系统对话框，API 26+ 是沉浸光感表面。 */
@@ -7019,18 +7074,20 @@ export struct BookshelfPage {
    * 立着的精装书，绕竖轴侧转：封面近大远小，右侧书口是一个往里收的面，两头露出硬壳的厚度，中间是带明暗的书页。
    * 封面和书口各是一个矩形，套上 ShelfBookPerspective 算好的矩阵变成投影后的四边形；矩阵以左上角为原点，
    * 所以先用 scale 把变换中心挪到左上角。封面仍走 coverView，开书动画按原作用域定位。
+   * flying 是关书挪位时飞行层里画的那本：不挂 id 与共享转场、不跟着藏起来，封面同步解码。
    */
   @Builder
   shelfHardcoverBook(book: Book, idScope: string, coverWidth: number, coverHeight: number,
-    animateCovers: boolean = false, selected: boolean = false, angle: number = 24, depthRatio: number = 0.2) {
+    animateCovers: boolean = false, selected: boolean = false, angle: number = 24, depthRatio: number = 0.2,
+    flying: boolean = false) {
     Stack({ alignContent: Alignment.TopStart }) {
       this.shelfHardcoverSide(coverWidth, coverHeight, angle, depthRatio)
 
       // 封面：大而淡的落地投影挂在这一层。
       Stack({ alignContent: Alignment.TopStart }) {
         // 圆角交给外面的封面面板裁，封面图自己不再裁 8vp，否则四角会露出下面的深色底板。
-        this.coverView(book, '100%', '100%', ImageFit.Cover, animateCovers, true, idScope, 0,
-          this.shelfHardcoverSpineWidth(coverWidth) + this.shelfHardcoverHingeWidth(coverWidth))
+        this.coverView(book, '100%', '100%', ImageFit.Cover, animateCovers, !flying, idScope, 0,
+          this.shelfHardcoverSpineWidth(coverWidth) + this.shelfHardcoverHingeWidth(coverWidth), flying)
         this.shelfHardcoverCoverLight(coverWidth)
       }
       .width(coverWidth)
@@ -7045,9 +7102,10 @@ export struct BookshelfPage {
       .transform(this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).coverMatrix)
     }
     // 整本书的舞台自己没有变换，继续阅读卡片里的书按它量位置再算封面四角（见 shelfOpeningCoverQuad）。
-    .id(`${this.shelfCoverElementId(book, idScope)}_stage`)
+    .id(flying ? '' : `${this.shelfCoverElementId(book, idScope)}_stage`)
     .width(this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).stageWidth)
     .height(coverHeight + BookshelfPage.SHELF_HARDCOVER_STAGE_PAD)
+    .opacity(!flying && this.tileGroupHiddenBooks.length > 0 && this.tileGroupHiddenBooks.includes(book.bookUrl) ? 0 : 1)
   }
 
   /**
@@ -8239,6 +8297,7 @@ export struct BookshelfPage {
     const held = BookshelfSortHelper.heldReadTime(bookUrl);
     const book = this.allBooks.find((item: Book): boolean => item.bookUrl === bookUrl);
     const from = held !== undefined && book ? this.measureShelfReorderCover(book, false) : undefined;
+    const fromPose = from && book ? this.measureShelfReorderBook(book, false) : undefined;
     let fresh: Book | undefined = undefined;
     if (from && book) {
       const db = AppDatabase.getInstance();
@@ -8274,9 +8333,22 @@ export struct BookshelfPage {
     }
     const current = this.allBooks.find((item: Book): boolean => item.bookUrl === bookUrl) || book;
     const travels = !!to && (Math.abs(to.x - from.x) > 1 || Math.abs(to.y - from.y) > 1);
+    let hardcover = false;
     if (to && travels) {
       this.tileGroupFlyProgress = 0;
-      this.tileGroupFlyers = [this.makeShelfReorderFlyer(current, from, to)];
+      const flyer = this.makeShelfReorderFlyer(current, from, to);
+      // 陪伴布局飞整本立体书：两头都量得到才飞，目的地整本藏起来，不再先露出一本没有封面的空壳。
+      const hardTo = fromPose ? this.measureShelfReorderBook(current, true) : undefined;
+      if (fromPose && hardTo) {
+        flyer.book = current;
+        flyer.hardFrom = fromPose;
+        flyer.hardTo = hardTo;
+        hardcover = true;
+        this.tileGroupFlyFront = 0;
+        this.tileGroupFlyBack = 1;
+        this.tileGroupHiddenBooks = [bookUrl];
+      }
+      this.tileGroupFlyers = [flyer];
     } else {
       // 位置没变（多半本来就排在最前）就没有飞行封面顶替它：趁截图还盖着先把封面放出来，
       // 否则截图淡出时露出的是一本没有封面的空书，淡完才补上。
@@ -8299,6 +8371,17 @@ export struct BookshelfPage {
           onFinish: (): void => resolve() }, (): void => {
           this.tileGroupFlyProgress = 1;
         });
+        if (hardcover) {
+          // 起点与终点的书侧转角度、厚度不同：飞到前半程按终点样子画的那本淡入盖住，随后下面那本淡出。
+          this.getUIContext().animateTo({ duration: Math.round(BookshelfPage.SHELF_REORDER_DURATION * 0.4),
+            delay: Math.round(BookshelfPage.SHELF_REORDER_DURATION * 0.08), curve: Curve.EaseInOut }, (): void => {
+            this.tileGroupFlyFront = 1;
+          });
+          this.getUIContext().animateTo({ duration: Math.round(BookshelfPage.SHELF_REORDER_DURATION * 0.3),
+            delay: Math.round(BookshelfPage.SHELF_REORDER_DURATION * 0.45), curve: Curve.EaseIn }, (): void => {
+            this.tileGroupFlyBack = 0;
+          });
+        }
       });
     } else {
       await new Promise<void>((resolve: () => void): void => {
@@ -8310,14 +8393,18 @@ export struct BookshelfPage {
     }
     // 封面先在新位置露出来，下一帧再撤飞行封面，中间不空一帧。
     this.tileGroupHiddenCovers = [];
+    this.tileGroupHiddenBooks = [];
     await this.waitShelfFrames(1);
     this.clearShelfReorderLayers();
   }
 
   clearShelfReorderLayers(): void {
     this.tileGroupHiddenCovers = [];
+    this.tileGroupHiddenBooks = [];
     this.tileGroupFlyers = [];
     this.tileGroupFlyProgress = 0;
+    this.tileGroupFlyFront = 0;
+    this.tileGroupFlyBack = 1;
     const shot = this.shelfReorderCurtain;
     this.shelfReorderCurtain = undefined;
     setTimeout((): void => this.releaseTileGroupShot(shot), 200);
@@ -8335,6 +8422,42 @@ export struct BookshelfPage {
       if (rect && rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= this.contextViewportWidth + 1 &&
         rect.y + rect.height <= this.contextViewportHeight + 1) {
         return rect;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * 陪伴布局里这本书在当前分类页上看得见的那本立体书的排版与舞台位置（相对书架根节点，vp），取法与
+   * measureShelfReorderCover 相同。锚点与 shelfOpeningCoverQuad 一样量自己没有变换的节点：继续阅读卡片是整本书的舞台，
+   * 网格是书所在的格子，再按 shelfTileBook 里的摆法算出舞台左上角和斜靠角度。其他布局返回 undefined。
+   */
+  measureShelfReorderBook(book: Book, preferLatest: boolean): TileGroupBookPose | undefined {
+    if (!this.isCompanionLayout()) return undefined;
+    const pageKey = this.shelfPageKey();
+    const order: boolean[] = preferLatest ? [true, false] : [false, true];
+    for (const latest of order) {
+      const coverId = this.shelfCoverElementId(book, this.shelfCoverScope(pageKey, latest));
+      const anchor = this.measureTileGroupRect(`${coverId}${latest ? '_stage' : '_slot'}`);
+      if (!anchor) continue;
+      const pose = new TileGroupBookPose();
+      pose.coverWidth = latest ? this.shelfCompanionCoverWidth() : this.shelfTileBookCoverWidth(book);
+      pose.coverHeight = latest ? this.shelfCompanionCoverHeight() : this.shelfTileBookCoverHeight(book);
+      pose.angle = latest ? 36 : this.shelfTileBookTurn(book);
+      pose.depth = latest ? 0.24 : this.shelfTileBookDepth(book);
+      if (pose.coverWidth <= 0 || pose.coverHeight <= 0) continue;
+      const shape = this.shelfBookShape(pose.coverWidth, pose.coverHeight, pose.angle, pose.depth);
+      pose.stageX = anchor.x;
+      pose.stageY = anchor.y;
+      if (!latest) {
+        pose.stageX += Math.round((this.shelfTileColumnWidth() - shape.stageWidth) / 2);
+        pose.stageY += this.shelfTileHardcoverHeight() - pose.coverHeight;
+        pose.lean = this.shelfTileBookLean(book);
+      }
+      const stageHeight = pose.coverHeight + BookshelfPage.SHELF_HARDCOVER_STAGE_PAD;
+      if (pose.stageX >= -1 && pose.stageY >= -1 && pose.stageX + shape.stageWidth <= this.contextViewportWidth + 1 &&
+        pose.stageY + stageHeight <= this.contextViewportHeight + 1) {
+        return pose;
       }
     }
     return undefined;
