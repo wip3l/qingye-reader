@@ -261,7 +261,7 @@ for (const rateLimited of [false, true]) {
   assert.ok(f.state.rateWait <= 100 && f.state.rateWait > 0);
   if (!rateLimited) assert.ok(f.calls[0].readTimeout <= 100);
 }
-// Inline comments share one operation budget, including cold-context reconstruction.
+// Inline comments have one operation budget; cold-context reconstruction is a normal content load and stays outside it.
 {
   const f = fixture();
   const host = new f.NativeHost({bookSourceUrl:'https://source.example', enabledCookieJar:false}, new f.HttpClient(), () => false, 1024*1024);
@@ -272,6 +272,29 @@ for (const rateLimited of [false, true]) {
   }
   await assert.rejects(host.fetch({...request(),body:'',charset:'',retry:0,primary:false}),/8 次/);
   assert.equal(f.calls.length,8);
+  assert(f.calls.every(call => call.readTimeout <= 1000 && call.connectTimeout <= 1000));
+}
+{
+  // 脚本书源冷启动时取一章正文就可能用掉十来次请求：重建期间不计数，但仍受截止时间约束。
+  const f = fixture();
+  const host = new f.NativeHost({bookSourceUrl:'https://source.example', enabledCookieJar:false}, new f.HttpClient(), () => false, 1024*1024);
+  host.limitCommentPage(Date.now()+1000);
+  host.commentContextRebuild(true);
+  for (let i=0;i<11;i++) {
+    f.replies.push({body:'中'.repeat(100000)});
+    await host.fetch({...request(),body:'',charset:'',retry:0,primary:false});
+  }
+  // 单个响应也不按评论页的 1 MiB 截断：脚本可能要取整本书的目录（1.2 MB）。
+  f.replies.push({body:'中'.repeat(400000)});
+  const large = await host.fetch({...request(),body:'',charset:'',retry:0,primary:false});
+  assert.equal(large.body.length, 400000, 'rebuild responses are not capped at 1 MiB');
+  host.commentContextRebuild(false);
+  for (let i=0;i<8;i++) {
+    f.replies.push({body:'{}'});
+    await host.fetch({...request(),body:'',charset:'',retry:0,primary:false});
+  }
+  await assert.rejects(host.fetch({...request(),body:'',charset:'',retry:0,primary:false}),/8 次/);
+  assert.equal(f.calls.length,20);
   assert(f.calls.every(call => call.readTimeout <= 1000 && call.connectTimeout <= 1000));
 }
 {
