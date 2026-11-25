@@ -343,6 +343,8 @@ export struct ReaderTtsPlayerPanel {
       Stack() {
         this.heroCover(true)
       }
+      // 阴影按这一层的外形画并挖掉内部；不带圆角时封面圆角外那几块没有阴影，看起来像白底。
+      .borderRadius(14)
       .shadow({ radius: 24, color: this.darkMode ? '#73000000' : '#40000000', offsetX: 0, offsetY: 10 })
       .margin({ top: AppSpacing.SM })
 
