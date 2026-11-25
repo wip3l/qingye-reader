@@ -1,4 +1,7 @@
 import { router } from '@kit.ArkUI';
+import { webview } from '@kit.ArkWeb';
+import { LengthMetrics } from '@ohos.arkui.node';
+import { ReaderCommentCardSettings } from '../utils/ReaderCommentCardSettings';
 import { motion } from '@kit.MultimodalAwarenessKit';
 import deviceInfo from '@ohos.deviceInfo';
 import { Book, BookGroup, SearchBook, BookChapter, BookFieldSanitizer, BookSource, BookTypeSupport, BookUrlResolver, SourceEventCallback } from '@legado/sourceengine';
@@ -79,6 +82,14 @@ struct SearchBookDetailPage {
   @State sourceCustomButtonLabel: string = '书源功能';
   private customButtonSource: BookSource | null = null;
   private customButtonRunning: boolean = false;
+  /** 书源要求打开的网页（书评、作者主页）用底部弹层显示，和阅读页的评论面板同一种形态。 */
+  @State showSourceWebSheet: boolean = false;
+  @State sourceWebUrl: string = '';
+  @State sourceWebLoading: boolean = false;
+  @State sourceWebFailed: boolean = false;
+  @State sourceWebHeight: number = 0;
+  @StorageProp('readerCommentPanelHeight') sourceWebPanelHeightSetting: number = ReaderCommentCardSettings.PANEL_DEFAULT;
+  private sourceWebController: webview.WebviewController = new webview.WebviewController();
   /** 当前书源能打开作者主页（回调脚本处理作者点击）：点作者名的确认框换成“搜索这位作者 / 作者主页”两项。 */
   @State sourceHasAuthorHome: boolean = false;
   private authorHomeSource: BookSource | null = null;
@@ -190,8 +201,7 @@ struct SearchBookDetailPage {
   private detailScroller: Scroller = new Scroller();
   private knockShareOwner: string = `book-detail-${Date.now()}-${Math.random()}`;
   private openingCatalogChapter: boolean = false;
-  private authorSearchDialogBuilder: CustomBuilder | undefined = undefined;
-  private authorSearchDialogId: number = -1;
+  private authorSearchDialogSession: SystemDialogSession = new SystemDialogSession();
   private changeSourceDialogBuilder: CustomBuilder | undefined = undefined;
   private changeSourceDialogId: number = -1;
   @StorageLink('searchExplorePromptAddToShelfOnBack') searchExplorePromptAddToShelfOnBack: boolean = true;
@@ -473,6 +483,13 @@ struct SearchBookDetailPage {
       })
       // 外层 Stack 和正文 Scroll 已各绑了目录、标记半模态，分组面板挂在常驻的阅读按钮这一行。
       .bindSheet($$this.showGroupSheet, this.shelfGroupSheet(), this.shelfGroupSheetOptions())
+
+      // 书源网页弹层的挂载点：不占位、不接触摸。外层 Stack、正文 Scroll、阅读按钮行已各绑了一个半模态。
+      Column()
+        .width(1)
+        .height(1)
+        .hitTestBehavior(HitTestMode.None)
+        .bindSheet($$this.showSourceWebSheet, this.sourceWebSheet(), this.sourceWebSheetOptions())
 
       if (this.groupNudgeVisible) {
         Row() {
@@ -965,17 +982,117 @@ struct SearchBookDetailPage {
     return this.runSourceEvent(this.authorHomeSource, SourceEventCallback.CLICK_AUTHOR, '作者主页');
   }
 
-  /** 把一次点击交给书源的事件回调；label 是这件事的名字，用作网页标题和失败提示。 */
+  openSourceWebSheet(url: string): void {
+    this.sourceWebUrl = url;
+    this.sourceWebLoading = true;
+    this.sourceWebFailed = false;
+    this.sourceWebHeight = 0;
+    this.showSourceWebSheet = true;
+  }
+
+  private sourceWebBackground(): string {
+    return this.appDarkMode ? '#131313' : '#FFFFFF';
+  }
+
+  /**
+   * 高度跟“阅读设置 › 段评 › 面板高度”走，和阅读页的评论面板一致。
+   * 不要系统拖动条：它会在网页上方留一条弹层底色的空带，盖不住网页自己的头图。改高度和关闭靠在网页顶端继续下拉。
+   */
+  sourceWebSheetOptions(): SheetOptions {
+    const full = ReaderCommentCardSettings.isPanelFull(this.sourceWebPanelHeightSetting);
+    const height = `${ReaderCommentCardSettings.normalizePanelHeight(this.sourceWebPanelHeightSetting)}%`;
+    return {
+      height: full ? SheetSize.LARGE : height,
+      detents: full ? [SheetSize.LARGE] : [height, SheetSize.LARGE],
+      dragBar: false,
+      showClose: false,
+      scrollSizeMode: ScrollSizeMode.CONTINUOUS,
+      backgroundColor: this.sourceWebBackground(),
+      radius: LengthMetrics.vp(ThemeRuntime.largeRadius()),
+      onDisappear: () => {
+        if (!this.showSourceWebSheet) this.sourceWebUrl = '';
+      }
+    };
+  }
+
+  @Builder
+  sourceWebSheet() {
+    Stack({ alignContent: Alignment.Top }) {
+      if (this.sourceWebUrl) {
+        // 与弹层同步合成，拖动改高度时底部不会露出没画到的白条。
+        Web({ src: this.sourceWebUrl, controller: this.sourceWebController, renderMode: RenderMode.SYNC_RENDER })
+          .width('100%')
+          .height(this.sourceWebHeight > 0 ? this.sourceWebHeight : '100%')
+          .backgroundColor(this.sourceWebBackground())
+          .javaScriptAccess(true)
+          .domStorageAccess(true)
+          .onlineImageAccess(true)
+          .imageAccess(true)
+          .darkMode(this.appDarkMode ? WebDarkMode.On : WebDarkMode.Off)
+          .forceDarkAccess(false)
+          // 往上滑只滚网页；滚到顶再往下拉才带动弹层（收起或关闭），没有拖动条也能关。
+          .nestedScroll({ scrollForward: NestedScrollMode.SELF_ONLY, scrollBackward: NestedScrollMode.SELF_FIRST })
+          .onWindowExit(() => { this.showSourceWebSheet = false; })
+          .onPageBegin(() => {
+            this.sourceWebLoading = true;
+            this.sourceWebFailed = false;
+          })
+          .onPageEnd(() => {
+            if (!this.sourceWebFailed) this.sourceWebLoading = false;
+          })
+          .onErrorReceive((event) => {
+            if (event.request.isMainFrame()) this.sourceWebFailed = true;
+          })
+      }
+
+      if (this.sourceWebLoading) {
+        Column({ space: 10 }) {
+          if (!this.sourceWebFailed) {
+            LoadingProgress()
+              .width(38)
+              .height(38)
+              .color(this.accentColor())
+          }
+          Text(this.sourceWebFailed ? '页面打不开，请稍后再试' : '加载中…')
+            .fontSize(AppFontSize.BODY)
+            .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
+            .textAlign(TextAlign.Center)
+          if (this.sourceWebFailed) {
+            Button('重试')
+              .onClick(() => {
+                this.sourceWebFailed = false;
+                this.sourceWebController.refresh();
+              })
+          }
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor(this.sourceWebBackground())
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .onSizeChange((_oldValue: SizeOptions, newValue: SizeOptions) => {
+      // 网页按弹层内容区的高度铺满。
+      const height = Number(newValue.height);
+      if (Number.isFinite(height) && height > 0 && Math.abs(height - this.sourceWebHeight) >= 0.5) {
+        this.sourceWebHeight = height;
+      }
+    })
+    .backgroundColor(this.sourceWebBackground())
+    .clip(true)
+  }
+
+  /** 把一次点击交给书源的事件回调；label 是这件事的名字，用作失败提示。 */
   private async runSourceEvent(source: BookSource | null, event: string, label: string): Promise<void> {
     if (!source || this.customButtonRunning) return;
     this.customButtonRunning = true;
     try {
       const result = await SourceEventCallback.dispatch(source, event, this.buildCurrentBook(), null);
       if (/^https?:\/\//i.test(result.requestedUrl)) {
-        await router.pushUrl({
-          url: 'pages/VerifyWeb',
-          params: { url: result.requestedUrl, title: label, readerCommentMode: 'true' }
-        });
+        this.openSourceWebSheet(result.requestedUrl);
         return;
       }
       if (result.toastMessage) {
@@ -1609,27 +1726,19 @@ struct SearchBookDetailPage {
 
   showAuthorSearchPrompt(): void {
     if (!this.author.trim()) return;
-    // 与“点数使用说明”相同的系统自定义对话框：表面材质由系统提供，API 26+ 即沉浸光感效果。
-    this.authorSearchDialogBuilder = (): void => {
+    // 和页面里其他居中弹窗一样走 SystemDialogSession：表面是沉浸光感材质，跟随“沉浸光感”强度设置。
+    this.authorSearchDialogSession.open(this.getUIContext(), (): void => {
       this.authorSearchDialogContent();
-    };
-    this.getUIContext().getPromptAction().openCustomDialog({
-      builder: this.authorSearchDialogBuilder,
+    }, {
+      darkMode: this.appDarkMode,
       autoCancel: true,
-      alignment: DialogAlignment.Center,
-      maskColor: ThemeRuntime.scrimColor(this.appDarkMode)
-    }).then((dialogId: number) => {
-      this.authorSearchDialogId = dialogId;
-    }).catch((error: Error) => {
-      console.warn('显示作者检索确认失败:', error);
+      maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
+      warnTag: '显示作者检索确认失败:'
     });
   }
 
   closeAuthorSearchDialog(): void {
-    if (this.authorSearchDialogId >= 0) {
-      this.getUIContext().getPromptAction().closeCustomDialog(this.authorSearchDialogId);
-      this.authorSearchDialogId = -1;
-    }
+    this.authorSearchDialogSession.close(this.getUIContext());
   }
 
   confirmAuthorSearch(): void {
@@ -2407,13 +2516,16 @@ struct SearchBookDetailPage {
   @Builder
   authorChoiceRow(icon: Resource, title: string, hint: string, action: () => void) {
     Row({ space: AppSpacing.LG }) {
-      SymbolGlyph(icon)
-        .fontSize(18)
-        .fontColor([this.accentColor()])
-        .width(36)
-        .height(36)
-        .borderRadius(18)
-        .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+      // 图标放进 Stack 里才会在圆底正中；直接给 SymbolGlyph 定宽高，字形会贴着左上角画。
+      Stack() {
+        SymbolGlyph(icon)
+          .fontSize(18)
+          .fontColor([this.accentColor()])
+      }
+      .width(36)
+      .height(36)
+      .borderRadius(18)
+      .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
       Column({ space: 2 }) {
         Text(title)
           .fontSize(AppFontSize.BODY_LARGE)
@@ -2433,8 +2545,9 @@ struct SearchBookDetailPage {
     }
     .width('100%')
     .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.MD, bottom: AppSpacing.MD })
-    .borderRadius(ThemeRuntime.mediumRadius())
-    .backgroundColor(this.inputColor())
+    .borderRadius(ThemeRuntime.largeRadius())
+    // 半透明底：对话框表面是光感材质，实色块会把它盖成一块平板。
+    .backgroundColor(ThemeRuntime.softFillColor(this.appDarkMode))
     .alignItems(VerticalAlign.Center)
     .accessibilityText(`${title}，${hint}`)
     .onClick(() => {
