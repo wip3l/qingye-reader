@@ -79,6 +79,9 @@ struct SearchBookDetailPage {
   @State sourceCustomButtonLabel: string = '书源功能';
   private customButtonSource: BookSource | null = null;
   private customButtonRunning: boolean = false;
+  /** 当前书源能打开作者主页（回调脚本处理作者点击）：点作者名的确认框换成“搜索这位作者 / 作者主页”两项。 */
+  @State sourceHasAuthorHome: boolean = false;
+  private authorHomeSource: BookSource | null = null;
   @State name: string = '';
   @State author: string = '';
   @State kind: string = '';
@@ -926,17 +929,24 @@ struct SearchBookDetailPage {
     })
   }
 
-  /** 书源换了（进页面、换源）就重新看它有没有自定义按钮。 */
+  /** 书源换了（进页面、换源）就重新看它有没有自定义按钮、能不能打开作者主页。 */
   refreshSourceCustomButton(): void {
     const origin = this.origin;
     this.customButtonSource = null;
     this.sourceHasCustomButton = false;
+    this.authorHomeSource = null;
+    this.sourceHasAuthorHome = false;
     if (!origin) return;
     const db = AppDatabase.getInstance();
     db.initWithContext(getContext(this))
       .then(() => db.getBookSource(origin))
       .then((source: BookSource | null): void => {
-        if (origin !== this.origin || !SourceEventCallback.hasCustomButton(source)) return;
+        if (origin !== this.origin || !source) return;
+        if (SourceEventCallback.handles(source, SourceEventCallback.CLICK_AUTHOR)) {
+          this.authorHomeSource = source;
+          this.sourceHasAuthorHome = true;
+        }
+        if (!SourceEventCallback.hasCustomButton(source)) return;
         this.customButtonSource = source;
         this.sourceCustomButtonLabel = SourceEventCallback.customButtonLabel(source) || '书源功能';
         this.sourceHasCustomButton = true;
@@ -944,24 +954,34 @@ struct SearchBookDetailPage {
       .catch((): void => undefined);
   }
 
-  async openSourceCustomButton(): Promise<void> {
-    const source = this.customButtonSource;
+  openSourceCustomButton(): Promise<void> {
+    return this.runSourceEvent(this.customButtonSource, SourceEventCallback.CLICK_CUSTOM_BUTTON,
+      this.sourceCustomButtonLabel);
+  }
+
+  /** 作者主页：交给书源的事件回调，书源要求打开网页时用应用内网页打开。 */
+  openAuthorHome(): Promise<void> {
+    this.closeAuthorSearchDialog();
+    return this.runSourceEvent(this.authorHomeSource, SourceEventCallback.CLICK_AUTHOR, '作者主页');
+  }
+
+  /** 把一次点击交给书源的事件回调；label 是这件事的名字，用作网页标题和失败提示。 */
+  private async runSourceEvent(source: BookSource | null, event: string, label: string): Promise<void> {
     if (!source || this.customButtonRunning) return;
     this.customButtonRunning = true;
     try {
-      const result = await SourceEventCallback.dispatch(source, SourceEventCallback.CLICK_CUSTOM_BUTTON,
-        this.buildCurrentBook(), null);
+      const result = await SourceEventCallback.dispatch(source, event, this.buildCurrentBook(), null);
       if (/^https?:\/\//i.test(result.requestedUrl)) {
         await router.pushUrl({
           url: 'pages/VerifyWeb',
-          params: { url: result.requestedUrl, title: this.sourceCustomButtonLabel, readerCommentMode: 'true' }
+          params: { url: result.requestedUrl, title: label, readerCommentMode: 'true' }
         });
         return;
       }
       if (result.toastMessage) {
         HdsFeedback.showToast(result.toastMessage);
       } else if (result.error) {
-        HdsFeedback.showToast(`${this.sourceCustomButtonLabel}打开失败：${result.error.split('\n')[0]}`);
+        HdsFeedback.showToast(`${label}打开失败：${result.error.split('\n')[0]}`);
       } else if (!result.handled) {
         HdsFeedback.showToast('书源没有处理这次点击');
       }
@@ -2352,6 +2372,78 @@ struct SearchBookDetailPage {
 
   @Builder
   authorSearchDialogContent() {
+    if (this.sourceHasAuthorHome) {
+      // 书源能打开作者主页：两件事并列，标题直接是作者名。
+      Column({ space: AppSpacing.MD }) {
+        Text(this.author)
+          .fontSize(AppFontSize.SUBTITLE)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.primaryTextColor())
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .margin({ bottom: AppSpacing.XS })
+        this.authorChoiceRow($r('sys.symbol.magnifyingglass'), '搜索这位作者', '用作者名在书源里搜',
+          () => this.confirmAuthorSearch())
+        this.authorChoiceRow($r('sys.symbol.person'), '作者主页',
+          `由${this.authorHomeSource?.bookSourceName || '书源'}提供`, () => { this.openAuthorHome(); })
+        Text('取消')
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontColor(this.secondaryTextColor())
+          .textAlign(TextAlign.Center)
+          .width('100%')
+          .height(40)
+          .onClick(() => {
+            this.closeAuthorSearchDialog();
+          })
+      }
+      .padding({ left: AppSpacing.XXXL, right: AppSpacing.XXXL, top: AppSpacing.XXXL, bottom: AppSpacing.LG })
+    } else {
+      this.authorSearchConfirmContent()
+    }
+  }
+
+  /** 作者名确认框里的一项：圆底图标、名称、一句说明。 */
+  @Builder
+  authorChoiceRow(icon: Resource, title: string, hint: string, action: () => void) {
+    Row({ space: AppSpacing.LG }) {
+      SymbolGlyph(icon)
+        .fontSize(18)
+        .fontColor([this.accentColor()])
+        .width(36)
+        .height(36)
+        .borderRadius(18)
+        .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+      Column({ space: 2 }) {
+        Text(title)
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryTextColor())
+        Text(hint)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.secondaryTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(14)
+        .fontColor([this.subTextColor()])
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.MD, bottom: AppSpacing.MD })
+    .borderRadius(ThemeRuntime.mediumRadius())
+    .backgroundColor(this.inputColor())
+    .alignItems(VerticalAlign.Center)
+    .accessibilityText(`${title}，${hint}`)
+    .onClick(() => {
+      action();
+    })
+  }
+
+  @Builder
+  authorSearchConfirmContent() {
     Column({ space: AppSpacing.LG }) {
       Text('作者检索')
         .fontSize(AppFontSize.SUBTITLE)
