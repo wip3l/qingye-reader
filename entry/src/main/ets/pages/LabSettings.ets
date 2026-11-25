@@ -10,9 +10,10 @@ import { SettingNavRow, SettingRow, SettingSwitchRow } from '../components/commo
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { NetworkSettingsStore } from '../utils/NetworkSettingsStore';
+import { WindowGrayscaleStore } from '../utils/WindowGrayscaleStore';
 
 /**
- * 我的 › 实验室：兼容与诊断（只对网页解析的内容有意义，开关关闭时不显示）和浏览器看书。
+ * 我的 › 实验室：显示（墨水屏灰阶）、兼容与诊断（只对网页解析的内容有意义，开关关闭时不显示）和浏览器看书。
  * 网页解析的开关在“我的 › 在线阅读”。
  */
 @Entry
@@ -24,6 +25,8 @@ struct LabSettingsPage {
   @StorageLink('readerImageConcurrency') readerImageConcurrency: number = 4;
   @State savingNetwork: boolean = false;
   @State savingImageConcurrency: boolean = false;
+  @StorageProp('labWindowGrayscale') windowGrayscale: boolean = false;
+  @State savingGrayscale: boolean = false;
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageLink('lanReaderEnabled') lanReaderEnabled: boolean = false;
@@ -62,6 +65,22 @@ struct LabSettingsPage {
       .fontColor(this.subTextColor())
       .width('100%')
       .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG })
+
+    this.sectionTitle('显示')
+    Column() {
+      SettingSwitchRow({
+        title: '墨水屏灰阶',
+        description: '整个应用（含图片和弹窗）转为灰阶，日间与夜间都生效',
+        isOn: this.windowGrayscale,
+        showDivider: false,
+        onChange: (value: boolean) => { this.saveGrayscale(value); }
+      })
+    }
+    .width('calc(100% - 24vp)')
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .clip(true)
+    .backgroundColor(this.cardColor())
 
     if (this.webParseEnabled) {
       this.sectionTitle('兼容与诊断')
@@ -155,6 +174,20 @@ struct LabSettingsPage {
       HdsFeedback.showToast('网络设置保存失败，请重试');
     } finally {
       this.savingNetwork = false;
+    }
+  }
+
+  private async saveGrayscale(value: boolean): Promise<void> {
+    // 开关重建或失败回弹时也会回调；保存中或与当前值相同就不再设置。
+    if (this.savingGrayscale || value === this.windowGrayscale) return;
+    this.savingGrayscale = true;
+    try {
+      await WindowGrayscaleStore.save(this.getUIContext().getHostContext()!, value);
+    } catch (error) {
+      HdsFeedback.showToast(WindowGrayscaleStore.isUnsupported(error as Object) ?
+        '当前设备不支持灰阶显示' : '灰阶设置失败，请重试');
+    } finally {
+      this.savingGrayscale = false;
     }
   }
 

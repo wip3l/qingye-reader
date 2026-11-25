@@ -67,6 +67,7 @@ import { ReadStatsSettingsStore } from '../utils/ReadStatsSettingsStore';
 import { CloudAutoSync } from '../account/CloudAutoSync';
 import { ReaderCacheBudget } from '../core/book/ReaderCacheBudget';
 import { NetworkSettingsStore } from '../utils/NetworkSettingsStore';
+import { WindowGrayscaleStore } from '../utils/WindowGrayscaleStore';
 import { AudioOfflineSettingsStore } from '../utils/AudioOfflineSettingsStore';
 import { AudioBookSettingsStore } from '../utils/AudioBookSettingsStore';
 import { PlaybackLoudnessGain } from '../utils/PlaybackLoudnessGain';
@@ -110,6 +111,9 @@ export default class EntryAbility extends UIAbility {
     CrashReportStore.start(this.context);
     this.networkBootstrapPromise = NetworkSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复网络设置失败:', error);
+    });
+    WindowGrayscaleStore.load(this.context).catch((error: Error) => {
+      console.warn('恢复墨水屏灰阶设置失败:', error);
     });
     AudioOfflineSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复离线音频设置失败:', error);
@@ -498,6 +502,11 @@ export default class EntryAbility extends UIAbility {
       }
       hilog.info(0x0000, 'testTag', 'StartupTrace %{public}s content loaded %{public}d',
         initialPage, Date.now());
+      try {
+        WindowGrayscaleStore.attach(windowStage.getMainWindowSync());
+      } catch (error) {
+        console.warn('墨水屏灰阶取主窗口失败:', error);
+      }
       this.syncStartupWindow(windowStage);
       this.scheduleDeferredStartupInitialization();
     });
@@ -554,6 +563,7 @@ export default class EntryAbility extends UIAbility {
 
   onWindowStageDestroy(): void {
     releaseSystemBarListeners();
+    WindowGrayscaleStore.detach();
     this.mainWindowStage = null;
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onWindowStageDestroy');
   }
@@ -561,6 +571,7 @@ export default class EntryAbility extends UIAbility {
   onForeground(): void {
     ReaderCacheBudget.scheduleStartupTrim();
     ComicColorizer.setAppForeground(true);
+    WindowGrayscaleStore.reapply();
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onForeground');
     readStatsTracker.setAppForeground(true);
     AppStorage.setOrCreate<number>('appLifecycleForegroundRevision', Date.now());
