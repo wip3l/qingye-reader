@@ -26,9 +26,12 @@ export class AudioPrefetch {
     AppStorage.setOrCreate(AudioPrefetch.REVISION_KEY, Date.now());
   }
 
-  /** 第 currentIndex 章开始播放了。没开边听边下时什么也不做。 */
+  /**
+   * 第 currentIndex 章开始播放了。没开边听边下时也要走一轮：AI 字幕会按自动下载取当前章音频，
+   * 以前开过边听边下也会留下自动下载的章节，听过的都得在这里删掉，只是不再往后预下载。
+   */
   schedule(book: Book, currentIndex: number): void {
-    if (AudioOfflineStore.prefetchCount() <= 0 || !book.bookUrl || !book.origin || book.origin === 'local') return;
+    if (!book.bookUrl || !book.origin || book.origin === 'local') return;
     const generation = ++this.generation;
     this.engine?.cancelPendingRequests();
     this.start(book.bookUrl, currentIndex, generation).catch((error: Error) => {
@@ -60,6 +63,7 @@ export class AudioPrefetch {
   private async run(bookUrl: string, currentIndex: number, generation: number): Promise<void> {
     const cancelled = (): boolean => generation !== this.generation;
     if (await AudioOfflineStore.evictListened(bookUrl, currentIndex) > 0) AudioPrefetch.notifyChanged();
+    if (AudioOfflineStore.prefetchCount() <= 0) return;
     // 开启边听边下后，移动网络也自动下载；仅 Wi-Fi 设置用于手动批量下载。
     if (!AudioOfflineStore.networkAllows(true)) return;
     const count = AudioOfflineStore.prefetchCount();
