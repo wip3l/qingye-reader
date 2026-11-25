@@ -38,6 +38,7 @@ import { LocalTtsSpeakers } from '../utils/localtts/LocalTtsSpeakers';
 import { saveDocuments, selectDocuments, writeTextFile } from '../platform/Files';
 import { DialogStyle } from '../theme/DialogStyle';
 import { ThemedDialog } from '../utils/ThemedDialog';
+import { TtsVoiceSectionFoldStore } from '../utils/TtsVoiceSectionFoldStore';
 
 class ManagedTtsVoiceEntry {
   key: string = '';
@@ -47,6 +48,14 @@ class ManagedTtsVoiceEntry {
   protectedVoice: boolean = false;
   systemVoice: TtsVoiceOption = TtsVoiceCatalog.defaultVoice();
   cloudVoice: TtsVoiceInfo = new TtsVoiceInfo();
+}
+
+/** 分区收起时那张摘要卡要显示的内容。 */
+class VoiceSectionSummary {
+  count: number = 0;
+  enabled: number = 0;
+  current: string = '';
+  names: string[] = [];
 }
 
 class TtsBatchVoiceEntry {
@@ -116,6 +125,8 @@ struct CustomTtsVoiceManagerPage {
   @State searchText: string = '';
   @State selectionMode: boolean = false;
   @State selectedVoiceIds: string[] = [];
+  /** 收起的分区键，见 TtsVoiceSectionFoldStore；搜索时一律当作展开。 */
+  @State foldedVoiceSections: string[] = [];
   /** 正在消散的自定义音色 id，见 ListDissolve。 */
   @State dissolvingVoiceIds: string[] = [];
   @State deleteParticleBursts: DeleteParticleBurst[] = [];
@@ -172,6 +183,9 @@ struct CustomTtsVoiceManagerPage {
     this.syncBars();
     this.pageAlive = true;
     this.restorePersistentVoiceEditDraft();
+    TtsVoiceSectionFoldStore.load(getContext(this)).then((folded: string[]) => {
+      this.foldedVoiceSections = folded;
+    });
   }
 
   onPageShow(): void {
@@ -255,32 +269,43 @@ struct CustomTtsVoiceManagerPage {
           }.width('100%').padding({ top: PageScaffold.BAR_HEIGHT + this.statusBarHeight })
         }
         if (!this.selectionMode && !this.searchText) {
-          ListItem() { this.voiceSectionTitle('离线音色') }
-          ForEach(this.localModels(), (model: LocalTtsModel) => {
-            if (!this.localInstalled(model) && !model.imported) {
-              ListItem() { this.localVoiceRow(model) }
-            } else if (deviceInfo.sdkApiVersion >= 26) {
-              HdsListItem({ customItemBuilder: (): void => { this.localVoiceRow(model); },
-                swipeActionOptions: this.localSwipeActions(model) })
-            } else {
-              ListItem() { this.localVoiceRow(model) }
-                .swipeAction({ end: { builder: (): void => { this.localFallbackSwipeActions(model); } },
-                  edgeEffect: SwipeEdgeEffect.Spring })
-            }
-          }, (model: LocalTtsModel): string => `${model.id}:${model.name}:${this.localTtsInstalledIds}:` +
-            `${this.localTtsDownloadingId}:${this.ttsLocalVoiceId}:${this.localEnabled(model)}`)
-          ListItem() { this.localImportRow() }
+          ListItem() { this.voiceSectionHeader(TtsVoiceSectionFoldStore.LOCAL, '离线音色') }
+          if (this.sectionFolded(TtsVoiceSectionFoldStore.LOCAL)) {
+            ListItem() { this.voiceSectionStack(TtsVoiceSectionFoldStore.LOCAL, '离线音色') }
+          } else {
+            ForEach(this.localModels(), (model: LocalTtsModel) => {
+              if (!this.localInstalled(model) && !model.imported) {
+                ListItem() { this.localVoiceRow(model) }
+              } else if (deviceInfo.sdkApiVersion >= 26) {
+                HdsListItem({ customItemBuilder: (): void => { this.localVoiceRow(model); },
+                  swipeActionOptions: this.localSwipeActions(model) })
+              } else {
+                ListItem() { this.localVoiceRow(model) }
+                  .swipeAction({ end: { builder: (): void => { this.localFallbackSwipeActions(model); } },
+                    edgeEffect: SwipeEdgeEffect.Spring })
+              }
+            }, (model: LocalTtsModel): string => `${model.id}:${model.name}:${this.localTtsInstalledIds}:` +
+              `${this.localTtsDownloadingId}:${this.ttsLocalVoiceId}:${this.localEnabled(model)}`)
+            ListItem() { this.localImportRow() }
+          }
         } else if (this.selectionMode && this.batchLocalModels(true).length > 0) {
           // 多选只列已下载/已导入的离线音色；没下载的不能启用、禁用或删除。
-          ListItem() { this.voiceSectionTitle('离线音色') }
-          ForEach(this.batchLocalModels(true), (model: LocalTtsModel) => {
-            ListItem() { this.localVoiceRow(model) }
-          }, (model: LocalTtsModel): string => `sel:${model.id}:${this.localEnabled(model)}`)
+          ListItem() { this.voiceSectionHeader(TtsVoiceSectionFoldStore.LOCAL, '离线音色') }
+          if (this.sectionFolded(TtsVoiceSectionFoldStore.LOCAL)) {
+            ListItem() { this.voiceSectionStack(TtsVoiceSectionFoldStore.LOCAL, '离线音色') }
+          } else {
+            ForEach(this.batchLocalModels(true), (model: LocalTtsModel) => {
+              ListItem() { this.localVoiceRow(model) }
+            }, (model: LocalTtsModel): string => `sel:${model.id}:${this.localEnabled(model)}`)
+          }
         }
         if (this.nativeVoices(false).length > 0) {
-          ListItem() { this.voiceSectionTitle('系统音色') }
+          ListItem() { this.voiceSectionHeader(TtsVoiceSectionFoldStore.SYSTEM, '系统音色') }
+          if (this.sectionFolded(TtsVoiceSectionFoldStore.SYSTEM)) {
+            ListItem() { this.voiceSectionStack(TtsVoiceSectionFoldStore.SYSTEM, '系统音色') }
+          }
         }
-        ForEach(this.nativeVoices(false), (entry: ManagedTtsVoiceEntry) => {
+        ForEach(this.unfoldedNativeVoices(false), (entry: ManagedTtsVoiceEntry) => {
           if (entry.protectedVoice) {
             ListItem() { this.nativeVoiceRow(entry) }
           } else if (deviceInfo.sdkApiVersion >= 26) {
@@ -293,9 +318,12 @@ struct CustomTtsVoiceManagerPage {
           }
         }, (entry: ManagedTtsVoiceEntry): string => `${entry.key}:${this.nativeEnabled(entry)}:${this.selectionMode}`)
         if (this.nativeVoices(true).length > 0 || this.loadingCatalog || this.catalogError) {
-          ListItem() { this.voiceSectionTitle('云端音色') }
+          ListItem() { this.voiceSectionHeader(TtsVoiceSectionFoldStore.CLOUD, '云端音色') }
+          if (this.sectionFolded(TtsVoiceSectionFoldStore.CLOUD)) {
+            ListItem() { this.voiceSectionStack(TtsVoiceSectionFoldStore.CLOUD, '云端音色') }
+          }
         }
-        if (this.loadingCatalog || this.catalogError) {
+        if (!this.sectionFolded(TtsVoiceSectionFoldStore.CLOUD) && (this.loadingCatalog || this.catalogError)) {
           ListItem() {
             Row({ space: AppSpacing.MD }) {
               if (this.loadingCatalog) { LoadingProgress().width(20).height(20).color(this.accentColor()) }
@@ -307,7 +335,7 @@ struct CustomTtsVoiceManagerPage {
             }.width('100%').padding(AppSpacing.XL)
           }
         }
-        ForEach(this.nativeVoices(true), (entry: ManagedTtsVoiceEntry) => {
+        ForEach(this.unfoldedNativeVoices(true), (entry: ManagedTtsVoiceEntry) => {
           if (deviceInfo.sdkApiVersion >= 26) {
             HdsListItem({ customItemBuilder: (): void => { this.nativeVoiceRow(entry); },
               swipeActionOptions: this.nativeSwipeActions(entry) })
@@ -317,8 +345,11 @@ struct CustomTtsVoiceManagerPage {
                 end: { builder: (): void => { this.nativeSwipeButton(entry); } }, edgeEffect: SwipeEdgeEffect.Spring })
           }
         }, (entry: ManagedTtsVoiceEntry): string => `${entry.key}:${this.nativeEnabled(entry)}:${this.selectionMode}`)
-        ListItem() { this.voiceSectionTitle('自定义音色') }
-        ForEach(this.filteredVoices(), (voice: HttpTTS) => {
+        ListItem() { this.voiceSectionHeader(TtsVoiceSectionFoldStore.CUSTOM, '自定义音色') }
+        if (this.sectionFolded(TtsVoiceSectionFoldStore.CUSTOM)) {
+          ListItem() { this.voiceSectionStack(TtsVoiceSectionFoldStore.CUSTOM, '自定义音色') }
+        }
+        ForEach(this.unfoldedCustomVoices(), (voice: HttpTTS) => {
           if (deviceInfo.sdkApiVersion >= 26) {
             HdsListItem({ customItemBuilder: (): void => { this.voiceListItem(voice); },
               swipeActionOptions: this.voiceSwipeActions(voice) })
@@ -328,7 +359,7 @@ struct CustomTtsVoiceManagerPage {
                 end: { builder: (): void => { this.voiceFallbackSwipeActions(voice); } }, edgeEffect: SwipeEdgeEffect.Spring })
           }
         }, (voice: HttpTTS): string => this.voiceKey(voice))
-        if (this.filteredVoices().length === 0) {
+        if (this.filteredVoices().length === 0 && !this.sectionFolded(TtsVoiceSectionFoldStore.CUSTOM)) {
           ListItem() {
             Text(this.searchText ? '未找到匹配的自定义音色' : '点击右下角“+”添加自定义音色')
               .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%').padding(AppSpacing.XL)
@@ -781,10 +812,204 @@ struct CustomTtsVoiceManagerPage {
     }, this.appDarkMode, this.accentColor());
   }
 
+  /** 分区标题：名称、数量、（多选时）整组勾选、折叠箭头；点整行收起或展开。搜索时不能折叠，也不显示箭头。 */
   @Builder
-  voiceSectionTitle(title: string) {
-    Text(title).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor())
-      .width('100%').padding({ top: AppSpacing.MD })
+  voiceSectionHeader(key: string, title: string) {
+    Row({ space: AppSpacing.SM }) {
+      Text(title).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor())
+      Text(`${this.sectionSummary(key).count}`)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .textAlign(TextAlign.Center)
+        .height(20)
+        .constraintSize({ minWidth: 22 })
+        .padding({ left: AppSpacing.SM, right: AppSpacing.SM })
+        .borderRadius(10)
+        .backgroundColor(this.inputColor())
+      Blank()
+      if (this.selectionMode && this.sectionSelectionKeys(key).length > 0) {
+        Text(this.sectionAllSelected(key) ? '取消全选' : '全选')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.accentColor())
+          .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.SM, bottom: AppSpacing.SM })
+          .accessibilityText(`${this.sectionAllSelected(key) ? '取消全选' : '全选'}${title}`)
+          .onClick(() => { this.toggleSectionSelection(key); })
+      }
+      if (!this.searchText.trim()) {
+        Stack() {
+          SymbolGlyph($r('sys.symbol.chevron_down')).fontSize(14).fontColor([this.subTextColor()])
+        }
+        .width(28)
+        .height(28)
+        .borderRadius(14)
+        .backgroundColor(this.inputColor())
+        .rotate({ angle: this.sectionFolded(key) ? -90 : 0 })
+      }
+    }
+    .width('100%')
+    .constraintSize({ minHeight: 36 })
+    .padding({ top: AppSpacing.MD })
+    .onClick(() => { this.toggleSection(key); })
+    .accessibilityText(this.searchText.trim() ? title :
+      `${title}，${this.sectionSummary(key).count} 个，${this.sectionFolded(key) ? '已收起，点按展开' : '已展开，点按收起'}`)
+  }
+
+  /** 收起后的分区：一张摘要卡，下面露出两层边，像合起来的一叠卡片；点按展开。 */
+  @Builder
+  voiceSectionStack(key: string, title: string) {
+    Stack({ alignContent: Alignment.Bottom }) {
+      Column() {
+        Row().width('100%').height(24).borderRadius(ThemeRuntime.cardRadius())
+          .backgroundColor(this.cardColor()).opacity(0.45)
+      }.width('100%').padding({ left: 17, right: 17 })
+      Column() {
+        Row().width('100%').height(24).borderRadius(ThemeRuntime.cardRadius())
+          .backgroundColor(this.cardColor()).opacity(0.75)
+      }.width('100%').padding({ left: AppSpacing.MD, right: AppSpacing.MD }).margin({ bottom: 5 })
+      Column({ space: AppSpacing.SM }) {
+        if (this.sectionSummary(key).current) {
+          Row({ space: AppSpacing.SM }) {
+            Row().width(6).height(6).borderRadius(3).backgroundColor(this.accentColor())
+            Text(`正在使用 ${this.sectionSummary(key).current}`)
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.accentColor())
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+          }.width('100%')
+        } else {
+          Text(this.sectionStackCaption(key))
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        if (this.sectionSummary(key).names.length > 0) {
+          Row({ space: AppSpacing.SM }) {
+            ForEach(this.sectionSummary(key).names.slice(0, 4), (name: string) => {
+              Text(name)
+                .fontSize(AppFontSize.CAPTION)
+                .fontColor(this.subTextColor())
+                .maxLines(1)
+                .flexShrink(0)
+                .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: 3, bottom: 3 })
+                .borderRadius(8)
+                .backgroundColor(this.inputColor())
+            }, (name: string, index: number): string => `${index}:${name}`)
+          }
+          .width('100%')
+          .clip(true)
+        }
+      }
+      .width('100%')
+      .constraintSize({ minHeight: 64 })
+      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+      .alignItems(HorizontalAlign.Start)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor(this.cardColor())
+      .borderRadius(ThemeRuntime.cardRadius())
+      .margin({ bottom: 11 })
+    }
+    .width('100%')
+    .onClick(() => { this.toggleSection(key); })
+    .accessibilityText(`${title}已收起，${this.sectionSummary(key).current ?
+      `正在使用 ${this.sectionSummary(key).current}` : this.sectionStackCaption(key)}，点按展开`)
+  }
+
+  sectionFolded(key: string): boolean {
+    return !this.searchText.trim() && this.foldedVoiceSections.includes(key);
+  }
+
+  toggleSection(key: string): void {
+    if (this.searchText.trim()) return;
+    const next = TtsVoiceSectionFoldStore.toggle(this.foldedVoiceSections, key);
+    this.getUIContext().animateTo({ duration: 240, curve: Curve.FastOutSlowIn }, () => {
+      this.foldedVoiceSections = next;
+    });
+    TtsVoiceSectionFoldStore.save(getContext(this), next);
+  }
+
+  unfoldedNativeVoices(cloud: boolean): ManagedTtsVoiceEntry[] {
+    if (this.sectionFolded(cloud ? TtsVoiceSectionFoldStore.CLOUD : TtsVoiceSectionFoldStore.SYSTEM)) return [];
+    return this.nativeVoices(cloud);
+  }
+
+  unfoldedCustomVoices(): HttpTTS[] {
+    if (this.sectionFolded(TtsVoiceSectionFoldStore.CUSTOM)) return [];
+    return this.filteredVoices();
+  }
+
+  /** 分区里列出的音色（与展开时显示的一致）的数量、启用数、正在使用的那个和前几个名字。 */
+  sectionSummary(key: string): VoiceSectionSummary {
+    const summary = new VoiceSectionSummary();
+    if (key === TtsVoiceSectionFoldStore.LOCAL) {
+      const models = this.selectionMode ? this.batchLocalModels(true) : this.localModels();
+      for (const model of models) {
+        const installed = this.localInstalled(model);
+        summary.count++;
+        if (installed && this.localEnabled(model)) {
+          summary.enabled++;
+          if (!summary.current && this.ttsLocalVoiceId === model.id) summary.current = model.name;
+        }
+        summary.names.push(model.pack && !installed ? model.packTitle : model.name);
+      }
+    } else if (key === TtsVoiceSectionFoldStore.CUSTOM) {
+      for (const voice of this.filteredVoices()) {
+        summary.count++;
+        if (voice.enabled) {
+          summary.enabled++;
+          if (!summary.current && this.isCurrentVoice(voice)) summary.current = voice.name || '未命名音色';
+        }
+        summary.names.push(voice.name || '未命名音色');
+      }
+    } else {
+      for (const entry of this.nativeVoices(key === TtsVoiceSectionFoldStore.CLOUD)) {
+        summary.count++;
+        if (this.nativeEnabled(entry)) summary.enabled++;
+        if (!summary.current && this.nativeSelected(entry)) summary.current = entry.title;
+        summary.names.push(entry.title);
+      }
+    }
+    return summary;
+  }
+
+  sectionStackCaption(key: string): string {
+    const summary = this.sectionSummary(key);
+    if (summary.count > 0) return `${summary.count} 个音色 · ${summary.enabled} 个已启用`;
+    if (key === TtsVoiceSectionFoldStore.CLOUD) {
+      if (this.loadingCatalog) return '正在加载音色';
+      if (this.catalogError) return '加载失败，展开后可重试';
+    }
+    return key === TtsVoiceSectionFoldStore.CUSTOM ? '还没有自定义音色' : '暂无音色';
+  }
+
+  batchKindSection(kind: string): string {
+    if (kind === '离线音色') return TtsVoiceSectionFoldStore.LOCAL;
+    if (kind === '系统音色') return TtsVoiceSectionFoldStore.SYSTEM;
+    if (kind === '云端音色') return TtsVoiceSectionFoldStore.CLOUD;
+    return TtsVoiceSectionFoldStore.CUSTOM;
+  }
+
+  sectionSelectionKeys(key: string): string[] {
+    return this.batchVoices(true)
+      .filter((entry: TtsBatchVoiceEntry): boolean => this.batchKindSection(entry.kind) === key)
+      .map((entry: TtsBatchVoiceEntry): string => entry.key);
+  }
+
+  sectionAllSelected(key: string): boolean {
+    const keys = this.sectionSelectionKeys(key);
+    return keys.length > 0 && keys.every((item: string): boolean => this.selectedVoiceIds.includes(item));
+  }
+
+  toggleSectionSelection(key: string): void {
+    if (this.isBatchOperating) return;
+    const keys = this.sectionSelectionKeys(key);
+    if (this.sectionAllSelected(key)) {
+      this.selectedVoiceIds = this.selectedVoiceIds.filter((item: string): boolean => !keys.includes(item));
+    } else {
+      this.selectedVoiceIds = this.selectedVoiceIds.concat(
+        keys.filter((item: string): boolean => !this.selectedVoiceIds.includes(item)));
+    }
   }
 
   nativeVoices(cloud: boolean, filtered: boolean = true): ManagedTtsVoiceEntry[] {
@@ -1728,6 +1953,8 @@ struct CustomTtsVoiceManagerPage {
 
   voiceAtPoint(globalX: number, globalY: number): string | null {
     for (const voice of this.batchVoices(true)) {
+      // 收起的分区里的卡片不在屏幕上，但上次记下的位置还在，不能拿来命中。
+      if (this.sectionFolded(this.batchKindSection(voice.kind))) continue;
       const area = this.voiceSelectionAreas.get(voice.key);
       if (area && globalX >= area[0] && globalX <= area[2] &&
         globalY >= area[1] && globalY <= area[3]) return voice.key;
