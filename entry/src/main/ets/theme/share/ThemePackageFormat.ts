@@ -800,6 +800,62 @@ export function shelfBackdropFor(list: ThemePackageShelfBackdrop[] | null | unde
   return item ? ((dark ? item.dark : item.light) || '') : '';
 }
 
+/**
+ * 书架页的背景怎么显示（包里写在 shelfBackdropDisplay）。没写或 mode 不是 full 时按原来的样子：
+ * 按 4 : 5 铺在顶部、向下淡成页面底色。mode 为 full 时书架页铺满整屏（通用和按布局的书架图都这样），
+ * 发现、我的页仍只衬在顶部。旧版本应用不认这一节，照旧铺在顶部，所以不用声明 requires。
+ * - fit：cover 裁切铺满（position 0~100 沿被裁的轴取景）、contain 完整显示（gap 为 blur 时空白处模糊垫底，
+ *   color 露出底色）、fill 拉伸铺满、tile 按原始大小平铺，同阅读背景的整图显示方式。
+ * - lightWash / darkWash：0~80，盖在图上的页面底色不透明度（百分比）；blur：0~20，整张背景的模糊半径。
+ */
+export class ThemePackageShelfBackdropDisplay {
+  mode: string = 'full';
+  fit: string = 'cover';
+  position: number = 50;
+  gap: string = 'blur';
+  lightWash: number = 30;
+  darkWash: number = 45;
+  blur: number = 0;
+}
+
+export const SHELF_BACKDROP_DISPLAY_FITS: string[] = ['cover', 'contain', 'fill', 'tile'];
+export const SHELF_BACKDROP_MAX_WASH: number = 80;
+export const SHELF_BACKDROP_MAX_BLUR: number = 20;
+
+function clampDisplayNumber(value: Object | undefined, max: number, fallback: number): number {
+  if (typeof value !== 'number' || !isFinite(value)) return fallback;
+  return Math.max(0, Math.min(max, Math.round(value)));
+}
+
+/** 整理成合法取值；不是全屏（含空）时返回 null，表示按原来的顶部淡出显示。 */
+export function normalizeShelfBackdropDisplay(value: ThemePackageShelfBackdropDisplay | Record<string, Object> | null |
+  undefined): ThemePackageShelfBackdropDisplay | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Object as Record<string, Object>;
+  if (record['mode'] !== 'full') return null;
+  const display = new ThemePackageShelfBackdropDisplay();
+  const fit = typeof record['fit'] === 'string' ? record['fit'] as string : '';
+  display.fit = SHELF_BACKDROP_DISPLAY_FITS.includes(fit) ? fit : 'cover';
+  display.position = clampDisplayNumber(record['position'], 100, 50);
+  display.gap = record['gap'] === 'color' ? 'color' : 'blur';
+  display.lightWash = clampDisplayNumber(record['lightWash'], SHELF_BACKDROP_MAX_WASH, 30);
+  display.darkWash = clampDisplayNumber(record['darkWash'], SHELF_BACKDROP_MAX_WASH, 45);
+  display.blur = clampDisplayNumber(record['blur'], SHELF_BACKDROP_MAX_BLUR, 0);
+  return display;
+}
+
+function encodeShelfBackdropDisplay(display: ThemePackageShelfBackdropDisplay): Record<string, Object> {
+  const record: Record<string, Object> = {};
+  record['mode'] = 'full';
+  record['fit'] = display.fit;
+  record['position'] = display.position;
+  record['gap'] = display.gap;
+  record['lightWash'] = display.lightWash;
+  record['darkWash'] = display.darkWash;
+  record['blur'] = display.blur;
+  return record;
+}
+
 export class ThemePackageStartup {
   image: string = '';
   title: string = '';
@@ -986,6 +1042,8 @@ export class ThemePackageParts {
   homeBackdropDarkCrop: ThemeImageCrop | null = null;
   // 按书架布局分别给的背景，每种布局最多一条；本机旧记录里没有。
   shelfBackdrops: ThemePackageShelfBackdrop[] = [];
+  // 书架页背景铺满整屏的设置；null 表示按原来的顶部淡出。本机旧记录里没有。
+  shelfBackdropDisplay: ThemePackageShelfBackdropDisplay | null = null;
   logo: string = '';
   preview: string = '';
   radius: Record<string, number> | null = null;
@@ -2077,6 +2135,13 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
       parts.shelfBackdrops.push(item);
     }
   }
+  const shelfBackdropDisplay = record['shelfBackdropDisplay'];
+  if (shelfBackdropDisplay !== undefined && shelfBackdropDisplay !== null) {
+    if (typeof shelfBackdropDisplay !== 'object' || Array.isArray(shelfBackdropDisplay)) {
+      throw new Error('主题包的 parts.shelfBackdropDisplay 要是对象');
+    }
+    parts.shelfBackdropDisplay = normalizeShelfBackdropDisplay(shelfBackdropDisplay as Record<string, Object>);
+  }
   const radius = objectField(record, 'radius');
   if (radius) {
     const result: Record<string, number> = {};
@@ -2260,6 +2325,8 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
     shelfBackdrop[layout] = entry;
   }
   if (Object.keys(shelfBackdrop).length > 0) record['shelfBackdrop'] = shelfBackdrop;
+  const shelfDisplay = normalizeShelfBackdropDisplay(parts.shelfBackdropDisplay);
+  if (shelfDisplay) record['shelfBackdropDisplay'] = encodeShelfBackdropDisplay(shelfDisplay);
   if (parts.logo) record['logo'] = parts.logo;
   if (parts.preview) record['preview'] = parts.preview;
   if (parts.radius) record['radius'] = parts.radius;
@@ -2429,6 +2496,8 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
     else item.darkCrop = null;
     return item;
   });
+  // 本机旧记录里没有。
+  copy.shelfBackdropDisplay = normalizeShelfBackdropDisplay(copy.shelfBackdropDisplay);
   copy.logo = swap(copy.logo);
   copy.preview = swap(copy.preview);
   copy.appFont = swap(copy.appFont);
@@ -2507,6 +2576,9 @@ export function describeParts(parts: ThemePackageParts): string[] {
     if (item.light || item.dark) shelfLayouts.push(SHELF_BACKDROP_LAYOUT_NAMES[SHELF_BACKDROP_LAYOUTS.indexOf(item.layout)] || '');
   }
   if (shelfLayouts.length > 0) items.push(`书架背景（${shelfLayouts.join('、')}布局）`);
+  if (parts.shelfBackdropDisplay && (parts.homeBackdropLight || parts.homeBackdropDark || shelfLayouts.length > 0)) {
+    items.push('书架背景全屏');
+  }
   if (parts.logo) items.push('主题标识');
   if (parts.radius) items.push('圆角');
   if (parts.appFont || parts.appFontFamily) items.push('界面字体');

@@ -190,6 +190,11 @@ pre.json { font-family: var(--f-mono); font-size: 11.5px; background: var(--sunk
 .hbg { position: absolute; left: 0; top: 0; width: 100%; overflow: hidden; }
 .hbg img { position: absolute; left: 0; top: 0; width: 100%; aspect-ratio: 4 / 5; object-fit: cover; display: block; }
 .hbg i { position: absolute; inset: 0; }
+.hbg-full { height: 100%; }
+.hbg-full img { aspect-ratio: auto; height: 100%; }
+.hbg-full img.hbg-gap { object-fit: cover; filter: blur(18px); transform: scale(1.15); }
+.hbg-full .hbg-tile { position: absolute; inset: 0; background-repeat: repeat; background-size: 50% auto; }
+.hbg-full i.hbg-scrim { bottom: auto; height: 200px; }
 .home-body { position: relative; z-index: 1; }
 .home .hd { display: flex; align-items: center; justify-content: space-between; padding: 6px 18px 10px; min-height: 46px; }
 .home .hd b { font-size: 24px; }

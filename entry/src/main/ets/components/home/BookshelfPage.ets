@@ -68,6 +68,7 @@ import { ThemeBookCoverSettings } from '../../utils/ThemeBookCoverSettings';
 import { CoverDimSettings } from '../../utils/CoverDimSettings';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { HexColor } from '../../utils/HexColor';
+import { ShelfBackdropLook, ShelfBackdropStore } from '../../utils/ShelfBackdropStore';
 import { LocalBookService } from '../../core/book/LocalBookService';
 import { BookChangeSourceDialog } from '../../components/BookChangeSourceDialog';
 import { SystemDialogSession } from '../../utils/SystemDialogSession';
@@ -647,6 +648,8 @@ export struct BookshelfPage {
   @State shelfTitleRulesRevision: number = 0;
   @StorageProp('readerReplaceRulesUpdateTime') @Watch('onShelfTitleRulesChanged') shelfTitleRulesUpdateTime: number = 0;
   @StorageLink('bookshelfLayoutMode') bookshelfLayoutMode: string = 'companion';
+  /** 书架设置 › 书架背景改动后加一（ShelfBackdropStore）。 */
+  @StorageProp('shelfBackdropRevision') shelfBackdropRevision: number = 0;
   @StorageLink('bookshelfLastReadLeafMode') bookshelfLastReadLeafMode: string = 'adaptive';
   @StorageLink('bookshelfLastReadPinMode') @Watch('onLastReadPinModeChanged') bookshelfLastReadPinMode: string = 'large';
   @StorageLink('bookshelfLastReadPinCount') @Watch('onLastReadPinModeChanged') bookshelfLastReadPinCount: number = 1;
@@ -2813,7 +2816,7 @@ export struct BookshelfPage {
   @Builder
   shelfBackgroundLayer() {
     Column() {
-      HomeThemeBackdrop({ shelfLayout: this.bookshelfLayoutMode })
+      HomeThemeBackdrop({ shelfLayout: this.bookshelfLayoutMode, forShelf: true })
         .position({ x: 0, y: 0 })
     }
     .width('100%')
@@ -2948,7 +2951,7 @@ export struct BookshelfPage {
                     }
                     .layoutWeight(1)
                     .alignItems(HorizontalAlign.Start)
-                    .backgroundColor(this.glassCardColor())
+                    .backgroundColor(this.shelfListCardColor())
                     .borderRadius(ThemeRuntime.mediumRadius())
                     .clip(true)
                     .border({ width: ThemeRuntime.glassBorderWidth(), color: this.glassBorderColor() })
@@ -3022,7 +3025,23 @@ export struct BookshelfPage {
           .onRefreshing(() => {
             if (pageKey === this.shelfPageKey()) this.onShelfPullRefresh();
           })
+          // 长按书与书之间的空白处：书、文件夹、问候语各自的长按在子组件上，先于这里响应。
+          .gesture(LongPressGesture({ repeat: false }).onAction(() => this.showShelfBlankMenu()))
         }
+  }
+
+  /** 书架空白处长按：换书架背景、进书架设置。 */
+  async showShelfBlankMenu(): Promise<void> {
+    if (this.isBookMultiSelect || this.tileGroupAnimating) return;
+    try {
+      const result = await this.getUIContext().getPromptAction().showActionMenu({
+        title: '书架',
+        buttons: [{ text: '更换书架背景', color: this.primaryTextColor() },
+          { text: '书架设置', color: this.primaryTextColor() }]
+      });
+      router.pushUrl({ url: result.index === 0 ? 'pages/ShelfBackdropSettings' : 'pages/BookshelfSettings' });
+    } catch (_) {
+    }
   }
 
   @Builder
@@ -6495,6 +6514,7 @@ export struct BookshelfPage {
           .height(36)
           .fontWeight(FontWeight.Medium)
           .fontColor(this.primaryTextColor())
+          .textShadow(this.shelfTextHalo())
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .wordBreak(WordBreak.BREAK_WORD)
@@ -6511,6 +6531,7 @@ export struct BookshelfPage {
         Text(this.bookshelfShowProgressBar ? this.getReadProgressPercentText(book) : this.getShelfProgressText(book))
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
+          .textShadow(this.shelfTextHalo())
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
@@ -7575,6 +7596,7 @@ export struct BookshelfPage {
           .height(36)
           .fontWeight(FontWeight.Medium)
           .fontColor(this.primaryTextColor())
+          .textShadow(this.shelfTextHalo())
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .wordBreak(WordBreak.BREAK_WORD)
@@ -7591,6 +7613,7 @@ export struct BookshelfPage {
         Text(this.bookshelfShowProgressBar ? this.getReadProgressPercentText(book) : this.getShelfProgressText(book))
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
+          .textShadow(this.shelfTextHalo())
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
@@ -13592,12 +13615,43 @@ export struct BookshelfPage {
   }
 
   shelfSurfaceColor(): string {
-    return ThemeRuntime.homeSurfaceColor(this.appDarkMode, this.bookshelfLayoutMode);
+    return this.shelfCustomBackdropLook() ? '#00000000' :
+      ThemeRuntime.homeSurfaceColor(this.appDarkMode, this.bookshelfLayoutMode);
   }
 
-  /** 书架页（含分组页）当前有没有主题背景：主题可以按书架布局单独配图，所以要带上当前布局问。 */
+  /**
+   * 书架页（含分组页）当前有没有背景图：书架设置里的自定义背景，或主题背景（主题可以按书架布局单独配图，
+   * 所以要带上当前布局问）。
+   */
   shelfHasThemeBackdrop(): boolean {
-    return !!ThemeRuntime.homeBackdrop(this.appDarkMode, this.bookshelfLayoutMode);
+    return !!this.shelfCustomBackdropLook() || !!ThemeRuntime.homeBackdrop(this.appDarkMode, this.bookshelfLayoutMode);
+  }
+
+  /**
+   * 书架设置里的自定义背景，或主题包设了全屏的书架背景（见 ShelfBackdropStore.resolve）；
+   * 读 shelfBackdropRevision、themeRevision 让设置或主题改动后跟着刷新。
+   */
+  shelfCustomBackdropLook(): ShelfBackdropLook | null {
+    if (this.shelfBackdropRevision < 0 || this.themeRevision < 0) return null;
+    return ShelfBackdropStore.resolve(this.appDarkMode, this.bookshelfLayoutMode);
+  }
+
+  /** 自定义背景铺满全屏时，直接压在图上的书名加一圈页面底色的光晕，免得被画面吃掉。 */
+  shelfTextHalo(): ShadowOptions {
+    const look = this.shelfCustomBackdropLook();
+    if (!look || look.display !== ShelfBackdropStore.DISPLAY_FULL) {
+      return { radius: 0, color: Color.Transparent, offsetX: 0, offsetY: 0 };
+    }
+    return { radius: 6, color: HexColor.withOpacity(this.pageColor(), 0.95), offsetX: 0, offsetY: 0 };
+  }
+
+  /** 紧凑、宽松布局的卡片：自定义背景全屏时稍微透一点，看得到背景。 */
+  shelfListCardColor(): string {
+    const look = this.shelfCustomBackdropLook();
+    if (look && look.display === ShelfBackdropStore.DISPLAY_FULL) {
+      return HexColor.withOpacity(this.glassCardColor(), 0.86);
+    }
+    return this.glassCardColor();
   }
 
   cardColor(): string {

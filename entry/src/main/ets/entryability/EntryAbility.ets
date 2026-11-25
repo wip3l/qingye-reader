@@ -10,6 +10,7 @@ import { ReaderNavIndicatorStore } from '../utils/ReaderNavIndicatorStore';
 import { FootprintSettingsStore } from '../utils/FootprintSettingsStore';
 import { ReaderBackgroundDisplayStore } from '../utils/ReaderBackgroundDisplay';
 import { HomeBackdropSettingsStore } from '../utils/HomeBackdropSettingsStore';
+import { ShelfBackdropStore } from '../utils/ShelfBackdropStore';
 import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 import { HomeTabBarSettingsStore } from '../utils/HomeTabBarSettingsStore';
 import { AbilityConstant, UIAbility, Want, Configuration, ConfigurationConstant } from '@kit.AbilityKit';
@@ -323,9 +324,15 @@ export default class EntryAbility extends UIAbility {
     this.footprintBootstrapPromise = FootprintSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复足迹页设置失败:', error);
     });
-    this.homeBackdropBootstrapPromise = HomeBackdropSettingsStore.load(this.context).catch((error: Error) => {
-      console.warn('恢复首页背景设置失败:', error);
-    });
+    // 书架背景和首页背景一起在进首页前恢复，免得书架先画主题背景再换成自定义的。
+    this.homeBackdropBootstrapPromise = Promise.all([
+      HomeBackdropSettingsStore.load(this.context).catch((error: Error) => {
+        console.warn('恢复首页背景设置失败:', error);
+      }),
+      ShelfBackdropStore.load(this.context).catch((error: Error) => {
+        console.warn('恢复书架背景设置失败:', error);
+      })
+    ]).then((): void => {});
     AnimatedImagePolicy.load(this.context).catch((error: Error) => {
       console.warn('恢复动图设置失败:', error);
     });

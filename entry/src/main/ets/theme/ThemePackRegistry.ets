@@ -8,6 +8,7 @@ import {
   normalizeOrnamentInset,
   normalizeOrnamentScale,
   shelfBackdropFor,
+  normalizeShelfBackdropDisplay,
   ThemeImageCrop,
   ThemePackageBubbleSlice,
   BubbleFrameBreak,
@@ -25,6 +26,7 @@ import {
   ThemePackageCredits,
   ThemePackageParts,
   ThemePackageShelfBackdrop,
+  ThemePackageShelfBackdropDisplay,
   ThemePackageVariantParts,
   NAVIGATION_ICON_KEYS,
   bookFolderOff,
@@ -218,6 +220,8 @@ export class InstalledThemePack {
   homeBackdropDark: string = '';
   // 按书架布局分别给的背景，素材和区域都已换成本机地址。
   shelfBackdrops: ThemePackageShelfBackdrop[] = [];
+  // 书架页背景铺满整屏的设置；null 表示顶部淡出。
+  shelfBackdropDisplay: ThemePackageShelfBackdropDisplay | null = null;
   // 包里没有通用首页背景时接着用的内置主题（见 ThemePackRecord）。
   homeBackdropFallbackLight: string = '';
   homeBackdropFallbackDark: string = '';
@@ -614,6 +618,7 @@ export class ThemePackRegistry {
         ThemePackRegistry.resolveCrop(item.darkCrop, uri) : null;
       if (resolved.light || resolved.dark) installed.shelfBackdrops.push(resolved);
     }
+    installed.shelfBackdropDisplay = normalizeShelfBackdropDisplay(parts.shelfBackdropDisplay);
     installed.homeBackdropFallbackLight = record.homeBackdropFallbackLight || '';
     installed.homeBackdropFallbackDark = record.homeBackdropFallbackDark || '';
     installed.logo = uri(parts.logo);

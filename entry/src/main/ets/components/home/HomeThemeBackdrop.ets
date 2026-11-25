@@ -5,6 +5,8 @@ import { AnimatedImagePolicy } from '../../utils/AnimatedImagePolicy';
 import { ThemeImageSlots } from '../../theme/ThemePackRegistry';
 import { ThemeImageCrop } from '../../theme/share/ThemePackageFormat';
 import { ThemeCroppedImage } from '../theme/ThemeCroppedImage';
+import { ShelfBackdropLook, ShelfBackdropStore } from '../../utils/ShelfBackdropStore';
+import { ShelfCustomBackdrop } from './ShelfCustomBackdrop';
 
 /**
  * 首页页签顶部的主题背景图：放在页面根部最底层，不随列表滚动，向下淡成页面底色。
@@ -21,6 +23,9 @@ export struct HomeThemeBackdrop {
   @Prop strength: number = 1;
   /** 书架页传当前书架布局：主题按布局单独配了背景时用那一张；其他页签不传，用通用背景。 */
   @Prop shelfLayout: string = '';
+  /** 书架页（含冷启动骨架）传 true：书架设置里选了自定义背景时画那张，盖过主题背景。 */
+  @Prop forShelf: boolean = false;
+  @StorageProp('shelfBackdropRevision') shelfBackdropRevision: number = 0;
 
   /** 读 themeRevision：自定义方案之间切换时主题 ID 都是 custom，只有它会变，背景图才跟着换。 */
   themeBackdrop(): ResourceStr | null {
@@ -50,8 +55,31 @@ export struct HomeThemeBackdrop {
       this.shelfLayout);
   }
 
+  /**
+   * 书架的自定义背景，或主题包设了全屏的书架背景（见 ShelfBackdropStore.resolve）；
+   * 读 shelfBackdropRevision、themeRevision 让设置或主题改动后跟着刷新。
+   */
+  shelfLook(): ShelfBackdropLook | null {
+    if (!this.forShelf || this.shelfBackdropRevision < 0 || this.themeRevision < 0) return null;
+    return ShelfBackdropStore.resolve(this.appDarkMode, this.shelfLayout);
+  }
+
+  shelfLookFull(): boolean {
+    const look = this.shelfLook();
+    return !!look && look.display === ShelfBackdropStore.DISPLAY_FULL;
+  }
+
   build() {
-    if (this.themeBackdrop()) {
+    if (this.shelfLookFull()) {
+      ShelfCustomBackdrop({ look: this.shelfLook() as ShelfBackdropLook,
+        pageColor: ThemeRuntime.pageColor(this.appDarkMode), dark: this.appDarkMode })
+        .width('100%')
+        .height('100%')
+    } else if (this.shelfLook()) {
+      ShelfCustomBackdrop({ look: this.shelfLook() as ShelfBackdropLook,
+        pageColor: ThemeRuntime.pageColor(this.appDarkMode), dark: this.appDarkMode })
+        .width('100%')
+    } else if (this.themeBackdrop()) {
       if (this.visibleHeight > 0) {
         Stack({ alignContent: Alignment.Top }) {
           this.layers()

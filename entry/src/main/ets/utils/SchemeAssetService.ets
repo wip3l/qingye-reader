@@ -36,7 +36,9 @@ import {
   ThemePackageTtsPanel,
   ThemePackagePartReader,
   ThemePackageVariantParts,
-  tidyImageCrops
+  tidyImageCrops,
+  normalizeShelfBackdropDisplay,
+  ThemePackageShelfBackdropDisplay
 } from '../theme/share/ThemePackageFormat';
 import {
   chapterHeadFor,
@@ -991,6 +993,19 @@ export class SchemeAssetService {
         record.parts.homeBackdropLightCrop = null;
       }
     });
+  }
+
+  /** 书架背景的显示方式：null 是顶部淡出，否则书架页铺满整屏（整个方案一份，四种布局共用）。 */
+  static async setShelfBackdropDisplay(context: Context, schemeId: string,
+    display: ThemePackageShelfBackdropDisplay | null): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      record.parts.shelfBackdropDisplay = normalizeShelfBackdropDisplay(display);
+    });
+  }
+
+  static shelfBackdropDisplay(packageId: string): ThemePackageShelfBackdropDisplay | null {
+    const pack = packageId ? ThemePackRegistry.getByPackageId(packageId) : null;
+    return pack ? normalizeShelfBackdropDisplay(pack.record.parts.shelfBackdropDisplay) : null;
   }
 
   /** 把某种书架布局这个模式的专属背景（连同显示区域）也给其余三种布局用。 */

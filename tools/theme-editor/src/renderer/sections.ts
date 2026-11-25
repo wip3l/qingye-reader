@@ -58,6 +58,7 @@ export interface Section {
 }
 
 const mode = (m: Mode, path: string): any => getPath(`${m}.${path}`);
+const shelfFull = (): boolean => getPath('shelfBackdropDisplay.mode') === 'full';
 // 浅色或深色任一套有端饰或边框，强调就用包内气泡（同应用 bubbleFor）。
 const packBubble = (): boolean => !!(getPath('bubble.cap') || getPath('bubble.frame') || getPath('bubbleDark.cap') ||
   getPath('bubbleDark.frame'));
@@ -313,7 +314,23 @@ export const SECTIONS: Section[] = [
         k: `shelfBackdrop.${key}.{m}`, label, type: 'asset', kinds: ['image'], target: [1080, 1350],
         spec: '空着时沿用通用背景',
         hint: key === 'compact' ? '只在书架页、用这种布局时显示；发现、我的页始终用通用那张。旧版本应用只认通用那张' : undefined
-      }))
+      })),
+      { g: '书架显示' },
+      { k: 'shelfBackdropDisplay.mode', label: '显示方式', type: 'select', options: [['', '顶部淡出'], ['full', '全屏']],
+        hint: '全屏时书架页铺满整屏，通用和按布局的书架图都这样显示；发现、我的页仍只衬顶部。全屏建议用竖图（约 9 : 20）。旧版本应用照旧铺在顶部' },
+      { k: 'shelfBackdropDisplay.fit', label: '图片显示', type: 'select', when: shelfFull,
+        options: [['cover', '裁切铺满'], ['contain', '完整显示'], ['fill', '拉伸铺满'], ['tile', '平铺']] },
+      { k: 'shelfBackdropDisplay.position', label: '取景', type: 'range', min: 0, max: 100, fallback: 50, resetLabel: '居中',
+        when: () => shelfFull() && !['contain', 'fill', 'tile'].includes(getPath('shelfBackdropDisplay.fit')),
+        hint: '沿被裁掉的那条轴取景：图比屏幕瘦是上→下，比屏幕胖是左→右' },
+      { k: 'shelfBackdropDisplay.gap', label: '空白处', type: 'select', options: [['blur', '模糊延展'], ['color', '主题底色']],
+        when: () => shelfFull() && getPath('shelfBackdropDisplay.fit') === 'contain' },
+      { k: 'shelfBackdropDisplay.lightWash', label: '淡化', type: 'range', min: 0, max: 80, fallback: 30, resetLabel: '默认',
+        when: (m: Mode) => shelfFull() && m === 'light', hint: '盖一层页面底色（百分比），书名更清楚；浅色、深色分开调' },
+      { k: 'shelfBackdropDisplay.darkWash', label: '淡化', type: 'range', min: 0, max: 80, fallback: 45, resetLabel: '默认',
+        when: (m: Mode) => shelfFull() && m === 'dark', hint: '盖一层页面底色（百分比），书名更清楚；浅色、深色分开调' },
+      { k: 'shelfBackdropDisplay.blur', label: '模糊', type: 'range', min: 0, max: 20, fallback: 0, resetLabel: '不模糊',
+        when: shelfFull }
     ]
   },
   {

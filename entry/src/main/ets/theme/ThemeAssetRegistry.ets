@@ -1,6 +1,6 @@
 import { ThemeIds } from './ThemeModels';
 import { InstalledThemePack, InstalledThemePackReader, ThemePackRegistry } from './ThemePackRegistry';
-import { ThemeImageCrop } from './share/ThemePackageFormat';
+import { ThemeImageCrop, ThemePackageShelfBackdropDisplay } from './share/ThemePackageFormat';
 import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 import { ThemeAccessPolicy } from '../account/ThemeAccessPolicy';
 
@@ -587,6 +587,13 @@ export class ThemeAssetRegistry {
    * 主题包只取对应模式那一张，深浅色不互相借用：浅色图放进深色模式会是一大块亮斑。
    * 主题包还可以按书架布局分别给图（parts.shelfBackdrop）；内置主题四种布局共用一张。
    */
+  /** 主题包设的书架背景全屏显示方式；内置主题、没设或设成顶部淡出时为 null。 */
+  static shelfBackdropDisplay(themeId: string): ThemePackageShelfBackdropDisplay | null {
+    if (!ThemePackRegistry.isPackId(themeId)) return null;
+    const pack = ThemePackRegistry.get(themeId);
+    return pack ? pack.shelfBackdropDisplay : null;
+  }
+
   static homeBackdrop(themeId: string, darkMode: boolean = false, shelfLayout: string = ''): ResourceStr | null {
     if (ThemePackRegistry.isPackId(themeId)) {
       const pack = ThemePackRegistry.get(themeId);

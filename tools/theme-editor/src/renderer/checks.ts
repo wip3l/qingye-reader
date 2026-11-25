@@ -33,6 +33,12 @@ export function sizeWarning(field: Field, asset: { kind: string; width: number; 
   if (field.icon && field.target && asset.width < field.target[0] * 0.75) {
     return `小于 ${field.target[0]} × ${field.target[1]}，高分屏上会发虚`;
   }
+  // 书架设成全屏时背景图该是竖图：发现、我的页顶部照旧按 4:5 居中裁，不再提醒比例；裁切铺满时太矮的图会被裁掉左右。
+  if (field.k && /^(homeBackdrop|shelfBackdrop)\./.test(field.k) && getPath('shelfBackdropDisplay.mode') === 'full') {
+    const fit = getPath('shelfBackdropDisplay.fit');
+    if ((!fit || fit === 'cover') && asset.height / asset.width < 1.6) return '书架全屏时左右会裁掉一大半，建议用约 9:20 的竖图';
+    return '';
+  }
   if (field.target && Math.abs(asset.width / asset.height - field.target[0] / field.target[1]) > 0.02) {
     return `比例不是 ${field.target[0]}:${field.target[1]}，会被裁切`;
   }

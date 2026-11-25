@@ -54,8 +54,14 @@ import {
   ThemePackageCommentBubble,
   ThemePackageLimits,
   bookFolderOff,
-  bookShelfFrameOff
+  bookShelfFrameOff,
+  SHELF_BACKDROP_MAX_BLUR,
+  SHELF_BACKDROP_MAX_WASH,
+  ThemePackageShelfBackdropDisplay
 } from '../theme/share/ThemePackageFormat';
+import { ReaderSettingTabStrip } from '../components/reader/ReaderSettingGroups';
+import { ReaderBackgroundDisplayControl } from '../components/reader/ReaderBackgroundDisplayControl';
+import { ReaderBackgroundDisplay } from '../utils/ReaderBackgroundDisplay';
 import {
   CHAPTER_HEAD_NONE,
   CHAPTER_HEAD_PLACEMENT_NAMES,
@@ -349,6 +355,8 @@ struct ThemeColorSettingsPage {
   @State checksExpanded: boolean = false;
   // 素材尺寸类建议要读图片，异步算好放这里；颜色类建议随状态即时算。
   @State assetIssues: ThemeEditorIssue[] = [];
+  /** 书架显示（全屏）拖动滑条途中的值，松手写进素材包后清空。 */
+  @State shelfDisplayDraft: ThemePackageShelfBackdropDisplay | null = null;
   @State previewShelfLayout: string = 'companion';
   @State showShelfLayoutMenu: boolean = false;
   private schemeId: string = '';
@@ -5153,9 +5161,165 @@ struct ThemeColorSettingsPage {
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
         .width('100%')
+      if (this.ownBackdropInUse()) {
+        this.shelfDisplayBlock()
+      }
     }
     .width('100%')
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+  }
+
+  /** “首页背景”来源指着方案自己的素材包，且包里有通用或按布局的背景图（任一模式）。 */
+  ownBackdropInUse(): boolean {
+    const own = this.ownThemeId();
+    const pack = this.ownPack();
+    if (!own || !pack || this.currentSources().homeBackdropThemeId !== own) return false;
+    return !!(pack.homeBackdrop(false) || pack.homeBackdrop(true) || pack.hasShelfBackdrop(false) ||
+      pack.hasShelfBackdrop(true));
+  }
+
+  /** 当前的书架显示设置；null 是顶部淡出。读 assetRevision 让写进素材包后跟着刷新。 */
+  shelfDisplay(): ThemePackageShelfBackdropDisplay | null {
+    if (this.shelfDisplayDraft) return this.shelfDisplayDraft;
+    if (this.assetRevision < 0) return null;
+    return SchemeAssetService.shelfBackdropDisplay(this.ownPackageId);
+  }
+
+  shelfDisplayFit(): string {
+    const display = this.shelfDisplay();
+    return display ? display.fit : ReaderBackgroundDisplay.FIT_COVER;
+  }
+
+  shelfDisplayPosition(): number {
+    const display = this.shelfDisplay();
+    return display ? display.position : 50;
+  }
+
+  shelfDisplayGap(): string {
+    const display = this.shelfDisplay();
+    return display ? display.gap : ReaderBackgroundDisplay.GAP_BLUR;
+  }
+
+  shelfDisplayWash(): number {
+    const display = this.shelfDisplay();
+    if (!display) return 0;
+    return this.selectedMode === 'dark' ? display.darkWash : display.lightWash;
+  }
+
+  shelfDisplayBlur(): number {
+    const display = this.shelfDisplay();
+    return display ? display.blur : 0;
+  }
+
+  /** 改一份副本；commit 为 false 时只更新滑条显示，为 true 时写进素材包。 */
+  changeShelfDisplay(change: (display: ThemePackageShelfBackdropDisplay) => void, commit: boolean): void {
+    const current = this.shelfDisplay();
+    if (!current) return;
+    const next = new ThemePackageShelfBackdropDisplay();
+    next.fit = current.fit;
+    next.position = current.position;
+    next.gap = current.gap;
+    next.lightWash = current.lightWash;
+    next.darkWash = current.darkWash;
+    next.blur = current.blur;
+    change(next);
+    this.shelfDisplayDraft = next;
+    if (commit) this.saveShelfDisplay(next);
+  }
+
+  async saveShelfDisplay(display: ThemePackageShelfBackdropDisplay | null): Promise<void> {
+    this.shelfDisplayDraft = display;
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setShelfBackdropDisplay(getContext(this), this.schemeId, display), '', false, false, '');
+    this.shelfDisplayDraft = null;
+  }
+
+  /** 取景滑杆判断哪条轴被裁时用的图：当前模式的通用背景（本机路径）。 */
+  shelfDisplayImageUri(): string {
+    const image = this.homeBackdropImage();
+    return typeof image === 'string' ? image : '';
+  }
+
+  @Builder
+  shelfDisplayBlock() {
+    Column({ space: AppSpacing.SM }) {
+      Text('书架显示')
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.primaryTextColor())
+        .margin({ top: AppSpacing.SM })
+      ReaderSettingTabStrip({
+        labels: ['顶部淡出', '全屏'],
+        selected: this.shelfDisplay() ? 1 : 0,
+        dense: true,
+        dark: this.appDarkMode,
+        textColor: this.primaryTextColor(),
+        subTextColor: this.subTextColor(),
+        onSelect: (index: number): void => {
+          if ((index === 1) === !!this.shelfDisplay()) return;
+          this.saveShelfDisplay(index === 1 ? new ThemePackageShelfBackdropDisplay() : null);
+        }
+      })
+      Text(this.shelfDisplay() ? '书架页铺满整屏，四种布局的书架图都这样显示；发现、我的页仍只衬顶部。全屏建议传竖图（约 9 : 20）' :
+        '按 4 : 5 铺在顶部，往下淡成底色')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .width('100%')
+      if (this.shelfDisplay()) {
+        ReaderBackgroundDisplayControl({
+          fit: this.shelfDisplayFit(),
+          cropPosition: this.shelfDisplayPosition(),
+          gap: this.shelfDisplayGap(),
+          imageUri: this.shelfDisplayImageUri(),
+          dark: this.appDarkMode,
+          textColor: this.primaryTextColor(),
+          subTextColor: this.subTextColor(),
+          accentColor: ThemeRuntime.accentColor(this.appDarkMode),
+          onChange: (value: ReaderBackgroundDisplay, commit: boolean): void => {
+            this.changeShelfDisplay((display: ThemePackageShelfBackdropDisplay): void => {
+              display.fit = value.fit;
+              display.position = value.position;
+              display.gap = value.gap;
+            }, commit);
+          }
+        })
+        this.shelfDisplaySlider(`淡化 · ${this.modeLabel()}`, this.shelfDisplayWash(), SHELF_BACKDROP_MAX_WASH, '%',
+          'wash')
+        this.shelfDisplaySlider('模糊', this.shelfDisplayBlur(), SHELF_BACKDROP_MAX_BLUR, '', 'blur')
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  shelfDisplaySlider(title: string, value: number, max: number, unit: string, field: string) {
+    Column({ space: AppSpacing.XS }) {
+      Row() {
+        Text(title)
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.primaryTextColor())
+          .layoutWeight(1)
+        Text(`${value}${unit}`)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+      }
+      .width('100%')
+      Slider({ value: value, min: 0, max: max, step: 1, style: SliderStyle.OutSet })
+        .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+        .width('100%')
+        .selectedColor(ThemeRuntime.accentColor(this.appDarkMode))
+        .accessibilityText(title)
+        .onChange((next: number, mode: SliderChangeMode) => {
+          const dark = this.selectedMode === 'dark';
+          this.changeShelfDisplay((display: ThemePackageShelfBackdropDisplay): void => {
+            const rounded = Math.round(next);
+            if (field === 'blur') display.blur = rounded;
+            else if (dark) display.darkWash = rounded;
+            else display.lightWash = rounded;
+          }, mode === SliderChangeMode.End || mode === SliderChangeMode.Click);
+        })
+    }
+    .width('100%')
   }
 
   shelfLayoutName(layout: string): string {
@@ -5714,6 +5878,26 @@ struct ThemeColorSettingsPage {
         const name = this.shelfLayoutName(item.layout);
         await check(item.light, `浅色${name}布局书架背景`, 1080, 1350, 'shelf', 'homeBackdrop');
         await check(item.dark, `深色${name}布局书架背景`, 1080, 1350, 'shelf', 'homeBackdrop');
+      }
+      // 书架设成全屏裁切铺满时，4 : 5 一类的图会被裁掉左右一大半。
+      const display = parts.shelfBackdropDisplay;
+      if (display && display.fit === ReaderBackgroundDisplay.FIT_COVER) {
+        const backdrops: string[][] = [[parts.homeBackdropLight, '浅色首页背景'], [parts.homeBackdropDark, '深色首页背景']];
+        for (const item of parts.shelfBackdrops || []) {
+          const name = this.shelfLayoutName(item.layout);
+          backdrops.push([item.light, `浅色${name}布局书架背景`], [item.dark, `深色${name}布局书架背景`]);
+        }
+        for (const backdrop of backdrops) {
+          if (!backdrop[0]) continue;
+          const size = await ThemeColorSettingsPage.imageSize(`${pack.dir}/${backdrop[0]}`);
+          if (size.length < 2 || size[0] <= 0 || size[1] / size[0] >= 1.6) continue;
+          const issue = new ThemeEditorIssue();
+          issue.text = `${backdrop[1]}是 ${size[0]} × ${size[1]}`;
+          issue.detail = '书架设成全屏后左右会裁掉一大半，建议传约 9 : 20 的竖图';
+          issue.section = 'shelf';
+          issue.group = 'homeBackdrop';
+          issues.push(issue);
+        }
       }
       if (parts.ttsPanelLight) await check(parts.ttsPanelLight.artwork, '浅色面板插画', 720, 520, 'other', 'ttsPanel');
       if (parts.ttsPanelDark) await check(parts.ttsPanelDark.artwork, '深色面板插画', 720, 520, 'other', 'ttsPanel');

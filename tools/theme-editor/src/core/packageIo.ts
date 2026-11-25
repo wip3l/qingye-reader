@@ -14,7 +14,8 @@ import {
   QYTHEME_ASSET_PREFIX, ThemePackageAsset, ThemePackageAssetKinds, ThemePackageFeatures, ThemePackageLimits,
   ThemePackageManifest, ThemePackageTheme, IMAGE_SETTING_KEYS, assetPathExtension, checkSvgSource, decodeManifest,
   bubbleDarkDifference, bubbleFor, commentBubbleIsEmpty, titleBubbleDarkDifference, titleBubbleFor, decodeTheme, encodeBubble, encodeParts, findAssetByPath, isValidPackageId, kindForExtension, mapPartsAssetRefs, maxAssetsFor, maxBytesForKind,
-  packThemeId, partsUseBitmapCapOrShelfFrame, partsUseBubbleFrameFeature, replaceOwnPackIdWithSelf, sniffAssetExtension, tooManyAssetsMessage
+  packThemeId, partsUseBitmapCapOrShelfFrame, partsUseBubbleFrameFeature, replaceOwnPackIdWithSelf, sniffAssetExtension, tooManyAssetsMessage,
+  normalizeShelfBackdropDisplay
 } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 import { ZipEntryInfo, ZipEntryInspector, ZipInspectLimits } from '../../../../entry/src/main/ets/theme/share/ZipEntryInspector.ts';
 
@@ -626,6 +627,10 @@ export function normalizedParts(parts: Json): Json {
       }
     }
   }
+  // 书架背景显示方式：只有全屏才写，取值按应用的规则整理（下拉存的是字符串，滑条清空后是空串）。
+  const shelfDisplay = normalizeShelfBackdropDisplay(copy.shelfBackdropDisplay);
+  if (shelfDisplay) copy.shelfBackdropDisplay = { ...shelfDisplay };
+  else delete copy.shelfBackdropDisplay;
   const backdrop = copy.homeBackdrop;
   if (backdrop && typeof backdrop === 'object') {
     for (const mode of ['light', 'dark']) {

@@ -15,7 +15,8 @@ import {
   partsAssetRefs,
   sniffAssetExtension,
   ThemePackageAssetKinds,
-  ThemePackageParts
+  ThemePackageParts,
+  normalizeShelfBackdropDisplay
 } from '../theme/share/ThemePackageFormat';
 import { copyFile } from '../platform/Files';
 
@@ -318,6 +319,7 @@ export class ThemePackStore {
     parts.homeBackdropLightCrop = source.homeBackdropLightCrop || null;
     parts.homeBackdropDarkCrop = source.homeBackdropDarkCrop || null;
     parts.shelfBackdrops = Array.isArray(source.shelfBackdrops) ? source.shelfBackdrops : [];
+    parts.shelfBackdropDisplay = normalizeShelfBackdropDisplay(source.shelfBackdropDisplay);
     parts.logo = source.logo || '';
     parts.preview = source.preview || '';
     parts.radius = source.radius || null;

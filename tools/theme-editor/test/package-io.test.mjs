@@ -264,6 +264,32 @@ test('shelf layouts can each carry their own backdrop next to the shared one', a
   assert.equal(files.has('assets/sc.jpg'), false);
 });
 
+test('a full-screen shelf backdrop setting round-trips and is dropped when set back to the top', async () => {
+  const entries = handWritten();
+  const theme = JSON.parse(strFromU8(entries['night-garden/theme.json']));
+  theme.parts.shelfBackdropDisplay = { mode: 'full', fit: 'contain', position: 30, gap: 'color', lightWash: 20, darkWash: 60, blur: 4 };
+  entries['night-garden/theme.json'] = json(theme);
+  const { project, problems } = await io.loadProject(io.readZip(zipSync(entries)));
+  assert.deepEqual(problems, []);
+
+  let files = await io.exportFiles(project);
+  let parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.deepEqual(parts.shelfBackdropDisplay,
+    { mode: 'full', fit: 'contain', position: 30, gap: 'color', lightWash: 20, darkWash: 60, blur: 4 });
+
+  // 编辑器下拉存的是字符串、滑条清空后是空串：导出时按应用的规则补成缺省值。
+  project.parts.shelfBackdropDisplay = { mode: 'full', fit: '', position: '', gap: '', lightWash: 95, darkWash: '' };
+  files = await io.exportFiles(project);
+  parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.deepEqual(parts.shelfBackdropDisplay,
+    { mode: 'full', fit: 'cover', position: 50, gap: 'blur', lightWash: 80, darkWash: 45, blur: 0 });
+
+  project.parts.shelfBackdropDisplay.mode = '';
+  files = await io.exportFiles(project);
+  parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.equal(parts.shelfBackdropDisplay, undefined, 'top is the default and is not written');
+});
+
 test('a display area outside its image is rejected like the app would', async () => {
   const entries = handWritten();
   const theme = JSON.parse(strFromU8(entries['night-garden/theme.json']));

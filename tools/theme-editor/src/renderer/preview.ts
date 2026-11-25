@@ -6,7 +6,7 @@ import { cssColor, luminance, withAlpha } from './colors.ts';
 import { NAV_TABS, EXTRA_NAV_TABS } from './sections.ts';
 import { frameAspect, frameSettingsOf, frameSpanStyle, tintedUrl } from './frameStretch.ts';
 import { commentImageSettingsOf, imageBubble } from './commentStretch.ts';
-import { bookShelfFrameFor, commentBubbleHasImage } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
+import { bookShelfFrameFor, commentBubbleHasImage, normalizeShelfBackdropDisplay } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 
 export const PHONE_W = 360;
 /** 预览正文的行高倍数，同 styles.css 的 .reader .content。 */
@@ -144,6 +144,26 @@ function homeBackdrop(mode: Mode, e: Effective, visibleHeight: number, strength:
   const parts = assetUrl(shelf[mode]) ? shelf : project().parts.homeBackdrop || {};
   const url = assetUrl(parts[mode]);
   if (!url) return null;
+  // 书架设成全屏（ShelfCustomBackdrop）：铺满画面，显示方式同阅读背景，再盖淡化层和顶部一段渐变。
+  const full = shelfLayout ? normalizeShelfBackdropDisplay(project().parts.shelfBackdropDisplay) : null;
+  if (full) {
+    const wash = mode === 'dark' ? full.darkWash : full.lightWash;
+    const mix = (percent: number): string => `color-mix(in srgb, ${e.c.pageColor} ${percent}%, transparent)`;
+    const blur = full.blur ? `filter:blur(${full.blur}px);transform:scale(${1 + full.blur * 0.012});` : '';
+    const layers: HTMLElement[] = [];
+    if (full.fit === 'tile') {
+      layers.push(h('b', { class: 'hbg-tile', style: `background-image:url("${url}");${blur}` }));
+    } else {
+      if (full.fit === 'contain' && full.gap === 'blur') {
+        layers.push(h('img', { src: url, alt: '', class: 'hbg-gap' }));
+      }
+      const fit = full.fit === 'contain' ? 'contain' : full.fit === 'fill' ? 'fill' : 'cover';
+      layers.push(h('img', { src: url, alt: '', style: `object-fit:${fit};object-position:${full.position}% ${full.position}%;${blur}` }));
+    }
+    layers.push(h('i', { style: `background:${mix(wash)}` }));
+    layers.push(h('i', { class: 'hbg-scrim', style: `background:linear-gradient(${mix(55)}, ${mix(20)} 60%, transparent)` }));
+    return h('div', { class: 'hbg hbg-full', 'data-sec': 'homeBackdrop', style: `background:${e.c.pageColor}` }, ...layers);
+  }
   const crop = cropStyle(parts[`${mode}Crop`], parts[mode]);
   const stops = mode === 'dark' ? [[0.25, 0], [0.55, 38], [0.9, 70], [1, 100]] : [[0.1, 0], [0.3, 38], [0.85, 72], [1, 100]];
   const gradient = stops.map(([a, at]) => `color-mix(in srgb, ${e.c.pageColor} ${Math.round(a * 100)}%, transparent) ${at}%`).join(', ');

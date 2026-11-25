@@ -29,6 +29,7 @@
     "pages/MimoBooks",
     "pages/CustomTtsVoiceManager",
     "pages/BookshelfSettings",
+    "pages/ShelfBackdropSettings",
     "pages/BookshelfCoverBadgeSettings",
     "pages/CoverSettings",
     "pages/LocalBookSettings",

@@ -24,6 +24,7 @@ import { BookshelfSortHelper } from '../utils/BookshelfSortHelper';
 import { NewBookGroup } from '../utils/NewBookGroup';
 import { NewBookGroupStore } from '../utils/NewBookGroupStore';
 import { PlatformInfo } from '../platform/PlatformInfo';
+import { ShelfBackdropStore } from '../utils/ShelfBackdropStore';
 
 @Entry
 @Component
@@ -63,6 +64,7 @@ struct BookshelfSettingsPage {
   @StorageProp('shelfTodayReadMs') shelfTodayReadMs: number = 0;
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
+  @StorageProp('shelfBackdropRevision') shelfBackdropRevision: number = 0;
   @StorageLink('appLightButtonColor') appLightButtonColor: string = '#007DFF';
   @StorageLink('appDarkButtonColor') appDarkButtonColor: string = '#3F8CFF';
 
@@ -127,6 +129,16 @@ struct BookshelfSettingsPage {
         this.bookshelfLayoutMode = index === 3 ? 'companion' : (index === 2 ? 'tile' : (index === 1 ? 'loose' : 'compact'));
         this.onDisplaySettingChanged();
       })
+    this.itemDivider()
+    SettingNavRow({
+      title: '书架背景',
+      description: '默认跟随主题；可单独上传一张，铺在顶部或全屏',
+      value: this.shelfBackdropSummary(),
+      showDivider: false,
+      onTap: () => {
+        router.pushUrl({ url: 'pages/ShelfBackdropSettings' });
+      }
+    })
     if (this.bookshelfLayoutMode === 'tile') {
       this.itemDivider()
       this.selectItem('上次阅读置顶', '最近阅读的书排在最前的样式',
@@ -849,6 +861,14 @@ struct BookshelfSettingsPage {
       return options[index].value;
     }
     return '';
+  }
+
+  /** 书架背景那一行右侧的状态；读 shelfBackdropRevision 让从背景页回来后跟着变。 */
+  shelfBackdropSummary(): string {
+    if (this.shelfBackdropRevision < 0) return '';
+    const config = ShelfBackdropStore.current();
+    if (config.source !== ShelfBackdropStore.SOURCE_CUSTOM || !config.lightImage) return '跟随主题';
+    return config.display === ShelfBackdropStore.DISPLAY_FULL ? '自定义 · 全屏' : '自定义 · 顶部';
   }
 
   pageColor(): string {

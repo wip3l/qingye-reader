@@ -11,6 +11,8 @@ import { TtsPanelThemeBackground } from '../TtsPanelThemeBackground';
 import { BookCover } from '../book/BookCover';
 import { HomeTabBarSettingsStore } from '../../utils/HomeTabBarSettingsStore';
 import { BookTileLayout } from '../../utils/BookTileLayout';
+import { ShelfBackdropLook, ShelfBackdropStore } from '../../utils/ShelfBackdropStore';
+import { ShelfCustomBackdrop } from '../home/ShelfCustomBackdrop';
 
 /** 实景预览里的示例书：固定内容，不读用户书架，没拥有的主题也能看。 */
 class SceneBook {
@@ -63,6 +65,8 @@ export struct ThemeDetailScene {
   @Prop ttsThemeId: string = '';
   /** 空串表示不铺首页背景。 */
   @Prop homeBackdropThemeId: string = '';
+  /** 书架设置 › 书架背景的实景预览传入；image 非空时代替首页背景画在书架画面底下。 */
+  @Prop customBackdrop: ShelfBackdropLook = new ShelfBackdropLook();
   /** 全屏预览时让出状态栏和底部小白条。 */
   @Prop topInset: number = 0;
   @Prop bottomInset: number = 0;
@@ -113,7 +117,24 @@ export struct ThemeDetailScene {
   @Builder
   shelfScene() {
     Stack({ alignContent: Alignment.Bottom }) {
-      if (this.homeBackdrop()) {
+      if (this.themeFullLook()) {
+        ShelfCustomBackdrop({ look: this.themeFullLook() as ShelfBackdropLook, pageColor: this.variant().colors.pageColor,
+          dark: this.previewDark })
+          .width('100%')
+          .height('100%')
+          .position({ x: 0, y: 0 })
+      } else if (this.customBackdrop.image && this.customBackdrop.display === ShelfBackdropStore.DISPLAY_FULL) {
+        ShelfCustomBackdrop({ look: this.customBackdrop, pageColor: this.variant().colors.pageColor,
+          dark: this.previewDark })
+          .width('100%')
+          .height('100%')
+          .position({ x: 0, y: 0 })
+      } else if (this.customBackdrop.image) {
+        ShelfCustomBackdrop({ look: this.customBackdrop, pageColor: this.variant().colors.pageColor,
+          dark: this.previewDark })
+          .width('100%')
+          .position({ x: 0, y: 0 })
+      } else if (this.homeBackdrop()) {
         this.backdropLayer()
       }
       Column() {
@@ -151,6 +172,15 @@ export struct ThemeDetailScene {
     }
     .width('100%')
     .height('100%')
+  }
+
+  /** 没有自定义背景、主题包把书架背景设成全屏时，按主题的设置铺满整个书架画面。 */
+  themeFullLook(): ShelfBackdropLook | null {
+    if (this.customBackdrop.image || !this.homeBackdropThemeId) return null;
+    const display = ThemeAssetRegistry.shelfBackdropDisplay(this.homeBackdropThemeId);
+    const image = display ? this.homeBackdrop() : null;
+    return display && typeof image === 'string' && image ?
+      ShelfBackdropStore.themeLook(display, image, this.previewDark) : null;
   }
 
   /** 首页背景：贴顶铺满宽度，和首页一样向下淡成页面底色。 */

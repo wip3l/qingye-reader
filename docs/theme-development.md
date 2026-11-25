@@ -237,6 +237,13 @@ BuiltinThemeRegistry.register(theme);
 
 主题包还可以按书架布局分别配图（`parts.shelfBackdrop.<布局>`，布局取值同 `bookshelfLayoutMode`）。书架页的 `HomeThemeBackdrop` 带着 `shelfLayout` 取图，`ThemeRuntime.homeBackdrop(darkMode, shelfLayout)` → `ThemeAssetRegistry.homeBackdrop()` 先找这种布局的专属图，没有再用通用那张；书架上判断“有没有背景”（`shelfSurfaceColor()`、顶栏磨砂的显隐）也要带上布局。冷启动骨架 `FastBookshelfShell`、分组页和分组开合时垫的背景层用同一张。其他页签不传布局，始终用通用那张。内置主题四种布局共用一张。应用内编辑器在“首页背景”下有四个布局格子（`SchemeAssetService.setHomeBackdrop` / `clearHomeBackdrop` 的 `shelfLayout` 参数、`copyShelfBackdropToOtherLayouts()`）；上传时“首页背景”来源还是内置主题的话记在 `ThemePackRecord.homeBackdropFallbackLight / Dark`（只在本机），包里没有通用那张时通用背景接着用它，移除全部背景后来源也退回它。
 
+书架页的背景还可以铺满整屏，有两个来源，都由 `ShelfBackdropStore.resolve(darkMode, shelfLayout)` 汇总成 `ShelfBackdropLook`，交给 `components/home/ShelfCustomBackdrop` 画（全屏时用 `ReaderThemeBackground` 按阅读背景的四种整图显示方式铺图，再盖淡化层和顶部渐变）：
+
+- 书架设置 › 书架背景（`pages/ShelfBackdropSettings`）里用户自己上传的图：设置存 Preferences `shelf_backdrop`，图片复制到 `filesDir/shelf_backdrops/`，只在本机，不跟主题走，优先于主题。浅色、深色各一张，深色没传时用浅色那张；淡化、模糊按模式分开记。
+- 主题包的 `parts.shelfBackdropDisplay`（见主题包格式）：跟随主题时主题设了全屏，书架用主题的书架图（按布局）加主题的显示设置。`ThemeAssetRegistry.shelfBackdropDisplay(themeId)` 读安装后的 `InstalledThemePack.shelfBackdropDisplay`；应用内编辑器在“首页背景”分组末尾的“书架显示”里设（`SchemeAssetService.setShelfBackdropDisplay`），只在“首页背景”来源是方案自己的素材包且包里有背景图时出现。
+
+`HomeThemeBackdrop` 的 `forShelf`（书架与冷启动骨架传 true）、书架的 `shelfSurfaceColor()` / `shelfHasThemeBackdrop()` 和主题详情实景 `ThemeDetailScene`（`customBackdrop` 参数与主题全屏）都走这条路径。全屏时平铺、陪伴布局的书名加底色光晕（`shelfTextHalo()`），紧凑、宽松布局的卡片略透（`shelfListCardColor()`）。
+
 ### 主题封面与书架边框
 
 1. 添加封面、边框和文件夹插画资源。封面底图是完整插画，不叠加书名或作者。

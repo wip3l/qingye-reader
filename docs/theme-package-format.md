@@ -100,6 +100,12 @@ my-theme/
 | `homeBackdrop` | `light` / `dark` | 书架、发现和我的页顶部的背景图（位图）。只写一种模式时，另一种模式不显示背景。旧版本应用会忽略这一节。 |
 | `shelfBackdrop` | `companion` / `tile` / `loose` / `compact` | 可选：按书架布局（陪伴、平铺、宽松、紧凑）分别给的背景，每种布局下写 `light` / `dark`（及可选的 `lightCrop` / `darkCrop`）。只在书架页、用这种布局时显示，没写的布局或模式用 `homeBackdrop` 那张；发现、我的等页签始终用 `homeBackdrop`。浅色、深色互不借用。旧版本应用会忽略这一节。 |
 | | `lightCrop` / `darkCrop` | 可选的显示区域，对应同一模式的背景图。 |
+| `shelfBackdropDisplay` | `mode` | 可选：书架页背景的显示方式。`full` 时书架页铺满整屏（`homeBackdrop` 和 `shelfBackdrop` 的图都这样显示），发现、我的页仍只衬在顶部；不写或其他值按原来的顶部淡出。整个包一份，四种布局共用。旧版本应用会忽略这一节，照旧铺在顶部。 |
+| | `fit` | `cover`（默认，裁切铺满）、`contain`（完整显示）、`fill`（拉伸铺满）、`tile`（按原始大小平铺），同阅读背景的整图显示方式。 |
+| | `position` | 0–100，默认 50。只对 `cover` 有效：沿被裁掉的那条轴取景（图比屏幕瘦是上→下，比屏幕胖是左→右）。 |
+| | `gap` | 只对 `contain` 有效：`blur`（默认，空白处用这张图模糊垫底）或 `color`（露出页面底色）。 |
+| | `lightWash` / `darkWash` | 0–80，默认 30 / 45：盖在图上的页面底色不透明度（百分比），让书名压得住画面。 |
+| | `blur` | 0–20，默认 0：整张背景的模糊半径。 |
 | `logo` | | 主题标识，SVG 或位图，显示在方案卡片的角标处。 |
 | `preview` | | 预览图位图，显示在主题页的方案卡片上；省略时卡片显示启动封面。 |
 | `radius` | `small`、`medium`、`large`、`card`、`button`、`bubble` | 圆角，0 到 48。 |
@@ -283,7 +289,7 @@ my-theme/
 | 书架边框 `shelfFrame`、`shelfFrameDark` | SVG 或位图 | SVG 用 `viewBox="0 0 450 660"`，位图取 450 × 660 透明底；与封面同比例，中心透明，只画外框和角花；按原色显示。 |
 | 文件夹插画 `shelfFolder` | 位图 | 450 × 660。 |
 | 启动封面 `image` | 位图 | 841 × 1870 竖屏，底部约 1/5 会叠加文案，不放主体。 |
-| 首页背景 `homeBackdrop`、书架背景 `shelfBackdrop` | 位图 | 1080 × 1350（4:5），贴顶铺满宽度，比例不同时居中裁成 4:5。画面放在上部约四成，应用会叠渐变向下淡成页面底色；不要放文字，深色图的亮部要克制。 |
+| 首页背景 `homeBackdrop`、书架背景 `shelfBackdrop` | 位图 | 1080 × 1350（4:5），贴顶铺满宽度，比例不同时居中裁成 4:5。画面放在上部约四成，应用会叠渐变向下淡成页面底色；不要放文字，深色图的亮部要克制。`shelfBackdropDisplay.mode` 为 `full` 时改用约 9 : 20 的竖图（如 1080 × 2400）：书架页整张铺满，发现、我的页顶部仍按 4:5 居中裁。 |
 | 段评气泡图 `commentBubble.image` | SVG 或位图 | 整只气泡（含尾巴）的透明底横图，位图高 96–160 px 为宜；尾巴画在下方，文字区和拉伸线见上文“气泡图与角标图”。 |
 | 段评角标图 `commentBubble.ornamentImage` | SVG 或位图 | 正方形透明底小图，显示约为气泡高的 0.62 倍。 |
 | 标题气泡 `titleBubble.frame` / `cap` | SVG 或位图 | 同强调气泡的端饰与边框，按标题字号缩放；边框文字带对齐标题行。 |
@@ -306,6 +312,7 @@ my-theme/
 
 - 比当前应用新的 `formatVersion`，或 `requires` 里有应用不认识的能力，导入时提示更新应用。
 - 没写的部件按 `baseTheme` 显示，所以只带配色的小包也能完整使用。
+- 没有 `shelfBackdropDisplay` 的主题包书架背景按顶部淡出显示；带着它的包在旧版本应用上也照旧铺在顶部，竖图会被居中裁成 4:5。
 - 没有 `shelfBackdrop` 的主题包（此前制作的都是这样）四种书架布局都用 `homeBackdrop`。只写 `shelfBackdrop`、不写 `homeBackdrop` 也可以，但旧版本应用上就没有背景，所以通用那张建议始终保留。
 - 只有 `covers`、`shelfFrame`、`shelfFolder` 的主题包（此前制作的都是这样）照常使用，浅色、深色显示同一套封面、同一张书架边框和文件夹插画。只写了 `coversDark`、`shelfFrameDark` 或 `shelfFolderDark` 时浅色模式也用它；应用和桌面编辑器导出这种包时会把它写成 `covers`、`shelfFrame`、`shelfFolder`。
 - 没有 `bubbleDark` 的主题包两种模式用同一套端饰和边框。只写了 `bubbleDark` 时浅色也用它，导出时写成 `bubble`；`bubbleDark` 里和 `bubble` 相同的项导出时不重复写。
