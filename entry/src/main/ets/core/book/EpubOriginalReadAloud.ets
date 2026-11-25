@@ -517,6 +517,15 @@ export class EpubOriginalReadAloud {
     return await this.host.openChapter(index);
   }
 
+  /**
+   * 引擎里还握着这一章的语音（在念或暂停着）。朗读设为不跟随翻页时，页面据此决定翻页后先不打断，
+   * 而不是调 userMoved 从新位置重开。
+   */
+  holdsSpeechIn(chapter: number): boolean {
+    return this.active() && this.speaking && this.moveTimer < 0 && !this.switching &&
+      this.chapter >= 0 && this.chapter === chapter;
+  }
+
   private cancelMoveRestart(): void {
     if (this.moveTimer >= 0) {
       clearTimeout(this.moveTimer);

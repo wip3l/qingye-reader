@@ -169,6 +169,8 @@ import { LocalTtsModel, LocalTtsModels } from '../utils/localtts/LocalTtsModels'
 import { LocalTtsSelection } from '../utils/localtts/LocalTtsSelection';
 import { ReaderCustomThemeEditor } from '../components/reader/ReaderCustomThemeEditor';
 import { ReaderTtsCapsule } from '../components/reader/ReaderTtsControls';
+import { ReaderTtsHoldCapsule } from '../components/reader/ReaderTtsHoldCapsule';
+import { TtsTurnFollow } from '../utils/TtsTurnFollow';
 import { ReaderAutoScrollCapsule, ReaderAutoScrollSpeedPanel } from '../components/reader/ReaderAutoScrollControls';
 import { ReaderAutoScrollClock } from '../core/reader/ReaderAutoScrollClock';
 import {
@@ -812,6 +814,19 @@ struct ReadBookPage {
   private mirroredTtsManualTurnSerial: number = 0;
   private ttsProgressSaveTimerId: number = -1;
   private ttsAutoTurningPage: boolean = false;
+  /**
+   * 朗读设为“不跟随”或“停留 3 秒后”时，用户在同一章内翻离了朗读正在读的那一页。此时朗读照常往下读，
+   * 但不再带着翻页、不把页面拉回；底部显示“回到朗读处 | 从本页听”胶囊。读到用户这一页或用户翻回来即收起。
+   */
+  @State ttsViewDetached: boolean = false;
+  /** “停留 3 秒后”的计时，胶囊据此画外圈；每次重新计时换一个值，0 表示没在计时。 */
+  @State ttsDetachCountdownKey: number = 0;
+  private ttsDetachCountdownSerial: number = 0;
+  private ttsDetachCountdownTimerId: number = -1;
+  /** 按不跟随处理的手动翻页正在进行：这期间到来的朗读句子只更新高亮，不触发朗读自动翻页。 */
+  private ttsHoldingTurn: boolean = false;
+  /** 滚动阅读里朗读最后一次自动滚动的时间，用来分辨滚动停下是用户滑的还是朗读跟随滚的。 */
+  private ttsContinuousAutoScrolledAt: number = 0;
   private ttsPageTurnSerial: number = 0;
   private ttsPendingTargetPageIndex: number = -1;
   private ttsPendingHighlightChunk: TtsChunk | null = null;
@@ -1260,6 +1275,7 @@ struct ReadBookPage {
   @StorageLink('ttsStyle') ttsStyle: string = '';
   @StorageLink('ttsLanguage') ttsLanguage: string = 'zh-CN';
   @StorageLink('ttsSpeed') ttsSpeed: number = 1;
+  @StorageProp('ttsTurnFollow') ttsTurnFollow: string = TtsTurnFollow.NOW;
   @StorageLink('ttsInstalledVoiceKeys') ttsInstalledVoiceKeys: string = '';
   @StorageLink('ttsCustomVoiceId') ttsCustomVoiceId: string = '';
   @StorageLink('ttsCustomVoices') @Watch('onTtsCustomVoicesChanged') ttsCustomVoices: string = '';
@@ -1596,11 +1612,15 @@ struct ReadBookPage {
 
   onGlobalTtsRevisionChanged(): void {
     if (!this.isMirroringActiveTtsForCurrentBook()) {
+      // 后台朗读结束了：不跟随翻页的胶囊随之收起（本页自己在读时由本页管）。
+      if (this.ttsViewDetached && !this.isTtsSpeaking && this.ttsReader?.isSpeaking() !== true) {
+        this.clearTtsViewDetached();
+      }
       return;
     }
     // The hidden owner can still publish the outgoing sentence while this mirror is animating a
     // manual turn. Applying it here would snap the visible page back before the target is committed.
-    if (this.mirroredTtsManualTurnPending) return;
+    if (this.mirroredTtsManualTurnPending || this.ttsHoldingTurn) return;
     this.syncMirroredTtsFocus().catch((error: Error) => {
       console.warn('同步后台朗读正文焦点失败:', error);
     });
@@ -2909,6 +2929,7 @@ struct ReadBookPage {
       })
       .onScrollStop(() => {
         this.captureReaderContinuousAnchor();
+        if (this.isReaderNovelContinuousScrollModeActive()) this.checkReaderContinuousTtsDetach();
         if (!this.readerComicScrollRestoring && this.readerPageVisible) this.scheduleReaderComicProgressSave();
       })
       .onReachEnd(() => {
@@ -4377,6 +4398,10 @@ struct ReadBookPage {
 
       if (this.shouldShowReaderContentSearchCapsule()) {
         this.readerContentSearchCapsule()
+      }
+
+      if (this.shouldShowTtsHoldCapsule()) {
+        this.readerTtsHoldCapsule()
       }
 
       Column().width(1).height(1).position({ x: 0, y: 0 }).hitTestBehavior(HitTestMode.None)
@@ -6374,6 +6399,50 @@ struct ReadBookPage {
         x: ((this.pageViewWidth > 0 ? this.pageViewWidth : 360) - ReaderContentSearchCapsule.WIDTH) / 2,
         y: (this.pageViewHeight > 0 ? this.pageViewHeight : 720) - this.navBarHeight -
           ReaderContentSearchCapsule.HEIGHT - 36
+      })
+      .transition(this.ttsMiniPlayerTransition())
+  }
+
+  shouldShowTtsHoldCapsule(): boolean {
+    return this.ttsViewDetached && !this.showMenu && !this.showToc && !this.showSettings &&
+      !this.showTtsQuickPlayer && !this.showGlobalTtsQuickPlayer && this.readerInitialPageReady &&
+      !this.isReaderComicModeActive() && !this.shouldBlockReaderInteraction() &&
+      (this.isTtsSpeaking || this.isMirroringActiveTtsForCurrentBook());
+  }
+
+  /** 朗读胶囊的上沿：压在页脚正中（左右的进度、时间照常露出）；没有页脚时停在手势条上方。 */
+  readerTtsHoldCapsuleTop(): number {
+    const viewportHeight = this.pageViewHeight > 0 ? this.pageViewHeight : 720;
+    const height = ReaderTtsHoldCapsule.HEIGHT;
+    if (!this.readerFooterEnabled) return viewportHeight - this.navBarHeight - height - 12;
+    const config = this.getReaderInfoBarConfig();
+    let footerHeight = config.footerFontSize;
+    try {
+      footerHeight = px2vp(Math.max(1, fp2px(config.footerFontSize)));
+    } catch (_) {
+      footerHeight = config.footerFontSize;
+    }
+    footerHeight += config.footerExtraHeight();
+    const footerCenter = this.getReaderBottomInfoBarBottomInset() + footerHeight / 2;
+    return Math.min(viewportHeight - footerCenter - height / 2, viewportHeight - height - 4);
+  }
+
+  @Builder
+  readerTtsHoldCapsule() {
+    ReaderTtsHoldCapsule({
+      countdownKey: this.ttsDetachCountdownKey,
+      countdownMs: TtsTurnFollow.DELAY_MS,
+      darkMode: this.isReaderThemeDark(),
+      fallbackColor: this.readerPanelColor(),
+      textColor: this.readerPanelTextColor(),
+      dividerColor: this.readerPanelBorderColor(),
+      onBack: () => { this.returnToTtsSpokenPage(); },
+      onListenHere: () => { this.listenTtsFromVisiblePage(); }
+    })
+      .position({ x: 0, y: 0 })
+      .translate({
+        x: ((this.pageViewWidth > 0 ? this.pageViewWidth : 360) - ReaderTtsHoldCapsule.WIDTH) / 2,
+        y: this.readerTtsHoldCapsuleTop()
       })
       .transition(this.ttsMiniPlayerTransition())
   }
@@ -11792,6 +11861,12 @@ struct ReadBookPage {
       this.clearReaderJumpUndo();
       this.showReaderSourceCard = false;
     }
+    // 菜单开着时朗读胶囊收起，“停留 3 秒后”也不计时；关上菜单后重新计时。
+    if (this.showMenu) {
+      this.cancelTtsDetachCountdown();
+    } else if (this.ttsViewDetached) {
+      this.restartTtsDetachCountdown();
+    }
     this.applyReaderNavIndicator();
     this.restoreReaderKeyboardFocus();
   }
@@ -15570,6 +15645,7 @@ struct ReadBookPage {
           this.isTtsPaused = false;
           if (await this.ttsEngine().resume()) {
             this.isTtsSpeaking = true;
+            if (this.ttsViewDetached) this.restartTtsDetachCountdown();
             this.updateTtsFloatingSession();
             await this.ttsMediaSession().updatePlaybackState(avSession.PlaybackState.PLAYBACK_STATE_PLAY);
             HdsFeedback.showToast('继续朗读');
@@ -15578,6 +15654,7 @@ struct ReadBookPage {
           }
         } else {
           this.isTtsPaused = true;
+          this.cancelTtsDetachCountdown();
           if (await this.ttsReader?.pause()) {
             this.updateTtsFloatingSession();
             await this.ttsMediaSession().updatePlaybackState(avSession.PlaybackState.PLAYBACK_STATE_PAUSE);
@@ -15602,7 +15679,10 @@ struct ReadBookPage {
 
   async startTtsReadingFromCurrentPosition(showToast: boolean,
     manualPageTurnResume: boolean = false, manualPageTurnResumeSerial: number = -1,
-    readingStartOffset: number = -1, preserveExistingFocus: boolean = false): Promise<void> {
+    readingStartOffset: number = -1, preserveExistingFocus: boolean = false,
+    keepViewDetached: boolean = false): Promise<void> {
+    // 只有章末补读沿用不跟随状态；其余开读都从用户眼前（或指定）的位置读起。
+    if (!keepViewDetached) this.clearTtsViewDetached();
     this.pauseReaderAutoScroll('朗读中，已暂停');
     if (!manualPageTurnResume) {
       this.cancelManualPageTurnTtsResume();
@@ -15824,6 +15904,8 @@ struct ReadBookPage {
   settleReaderOnSpokenPosition(): void {
     if (!this.book || this.contentPages.length === 0 || this.usesReaderContinuousV2() ||
       this.isReaderComicModeActive()) return;
+    // 不跟随翻页时用户正在别处看：停止朗读不把页面带回朗读处。
+    if (this.ttsViewDetached) return;
     if (!this.isTtsSpeaking && !this.isTtsPaused && this.ttsReader?.isSpeaking() !== true) return;
     const sourceLength = (this.pagedContentText || this.getPagedSourceText()).length;
     const spoken = this.readerV2TtsSourceStart >= 0 ? this.readerV2TtsSourceStart :
@@ -15863,6 +15945,7 @@ struct ReadBookPage {
   }
 
   stopTtsReading(userCancelled: boolean = true): void {
+    this.clearTtsViewDetached();
     this.releaseTtsCache?.();
     this.releaseTtsCache = null;
     this.cancelManualPageTurnTtsResume();
@@ -15901,6 +15984,7 @@ struct ReadBookPage {
   }
 
   stopTtsReaderForChapterSwitch(): void {
+    this.clearTtsViewDetached();
     this.cancelManualPageTurnTtsResume();
     this.flushTtsReadPosition();
     this.ttsAutoContinue = false;
@@ -15943,7 +16027,152 @@ struct ReadBookPage {
       serial === this.ttsManualPageTurnResumeSerial;
   }
 
+  /**
+   * 这次手动翻页是否按“不跟随/停留 3 秒后”处理：朗读不打断，只在落定后判断是否翻离了朗读页。
+   * 只管同一章内的翻页。朗读只能读正在显示的那一章，跨章翻页仍按原来的做法从新页读起；
+   * 暂停后翻过页、引擎里已没有暂停着的语音时也沿用原来的做法。
+   */
+  shouldHoldTtsOnManualTurn(direction: number, mirroring: boolean): boolean {
+    if (TtsTurnFollow.normalize(this.ttsTurnFollow) === TtsTurnFollow.NOW || this.usesReaderContinuousV2() ||
+      this.getLocalPageTurnTargetPageIndex(direction) < 0) return false;
+    if (mirroring) {
+      return !this.mirroredTtsManualTurnPending && this.activeMirroredTtsChapterIndex() === this.currentChapterIndex;
+    }
+    if (this.ttsManualPageTurnResumePending || this.ttsChapterSwitching) return false;
+    if (!this.isTtsSpeaking && this.ttsReader?.isSpeaking() !== true) return false;
+    if (this.isTtsPaused && this.ttsReader?.isSpeaking() !== true) return false;
+    return this.ttsFocusChapterIndex < 0 || this.ttsFocusChapterIndex === this.currentChapterIndex;
+  }
+
+  isTtsHoldPaused(): boolean {
+    return this.isMirroringActiveTtsForCurrentBook() ? this.globalTtsPaused :
+      (this.isTtsPaused || this.ttsReader?.isPaused() === true);
+  }
+
+  /** 朗读（本页或后台镜像）正在读的句子在本章的哪一页（双页时取左页）；不在这一章或拿不到时 -1。 */
+  ttsSpokenPageIndex(): number {
+    let offset = -1;
+    if (this.isMirroringActiveTtsForCurrentBook()) {
+      if (this.activeMirroredTtsChapterIndex() !== this.currentChapterIndex ||
+        !Number.isFinite(this.globalTtsOffsetStart)) return -1;
+      offset = Math.round(this.globalTtsOffsetStart);
+    } else {
+      if (!this.isTtsSpeaking && this.ttsReader?.isSpeaking() !== true) return -1;
+      if (this.ttsFocusChapterIndex >= 0 && this.ttsFocusChapterIndex !== this.currentChapterIndex) return -1;
+      offset = this.readerV2TtsSourceStart >= 0 ? this.readerV2TtsSourceStart : this.ttsTextStartOffset;
+    }
+    if (offset < 0 || this.contentPages.length === 0) return -1;
+    const pageIndex = this.findPageIndexByOffset(offset);
+    if (pageIndex < 0 || pageIndex >= this.contentPages.length) return -1;
+    return this.normalizeReaderSpreadPageIndex(pageIndex);
+  }
+
+  /** 翻页落定（或朗读位置变化）后重新判断是否翻离了朗读页；restartCountdown 时“停留 3 秒后”重新计时。 */
+  refreshTtsViewDetached(restartCountdown: boolean): void {
+    const spokenPageIndex = this.ttsSpokenPageIndex();
+    if (spokenPageIndex < 0 || spokenPageIndex === this.currentPageIndex) {
+      const wasDetached = this.ttsViewDetached;
+      this.clearTtsViewDetached();
+      if (wasDetached && spokenPageIndex >= 0) this.scheduleCurrentTtsFocusRepublishAfterPageTurn();
+      return;
+    }
+    if (!this.ttsViewDetached) this.ttsViewDetached = true;
+    if (restartCountdown) this.restartTtsDetachCountdown();
+  }
+
+  clearTtsViewDetached(): void {
+    this.cancelTtsDetachCountdown();
+    if (this.ttsViewDetached) this.ttsViewDetached = false;
+  }
+
+  restartTtsDetachCountdown(): void {
+    this.cancelTtsDetachCountdown();
+    if (TtsTurnFollow.normalize(this.ttsTurnFollow) !== TtsTurnFollow.DELAY || !this.ttsViewDetached ||
+      this.showMenu || this.isTtsHoldPaused()) return;
+    this.ttsDetachCountdownSerial++;
+    this.ttsDetachCountdownKey = this.ttsDetachCountdownSerial;
+    this.ttsDetachCountdownTimerId = setTimeout(() => {
+      this.ttsDetachCountdownTimerId = -1;
+      this.ttsDetachCountdownKey = 0;
+      // 正在翻页时不动：那次翻页落定会重新计时。
+      if (!this.ttsViewDetached || this.showMenu || this.isTtsHoldPaused() || this.isPageTurning ||
+        this.pageTurnQueue.hasPending() || !this.readerPageVisible) return;
+      this.listenTtsFromVisiblePage();
+    }, TtsTurnFollow.DELAY_MS);
+  }
+
+  cancelTtsDetachCountdown(): void {
+    if (this.ttsDetachCountdownTimerId >= 0) {
+      clearTimeout(this.ttsDetachCountdownTimerId);
+      this.ttsDetachCountdownTimerId = -1;
+    }
+    if (this.ttsDetachCountdownKey !== 0) this.ttsDetachCountdownKey = 0;
+  }
+
+  /** 胶囊“从本页听”与 3 秒计时走完：朗读改从当前这一页（滚动阅读为屏幕最上面那行）读起，暂停着也直接开播。 */
+  listenTtsFromVisiblePage(): void {
+    this.clearTtsViewDetached();
+    if (this.isMirroringActiveTtsForCurrentBook()) {
+      this.prepareMirroredTtsManualPageTurn();
+      const chapterIndex = this.currentChapterIndex;
+      const pageIndex = this.currentPageIndex;
+      const sourceOffset = this.usesReaderContinuousV2() ? this.readerContinuousV2FirstVisibleSourceOffset() :
+        this.getPageStartOffset(pageIndex);
+      ReaderTtsFloatingSession.jumpToPosition(chapterIndex, pageIndex, sourceOffset)
+        .catch((error: Error) => {
+          console.warn('从本页听：提交后台朗读位置失败:', error);
+        })
+        .finally(() => {
+          this.mirroredTtsManualTurnPending = false;
+          this.syncMirroredTtsFocus()
+            .then(() => this.scheduleCurrentTtsFocusRepublishAfterPageTurn())
+            .catch(() => {});
+        });
+      return;
+    }
+    if (this.usesReaderContinuousV2()) {
+      // 先让旧会话失效再停：停止触发的完成回调不能把朗读带去下一章。
+      this.ttsAutoContinue = false;
+      this.ttsReadToken++;
+      this.invalidateTtsFocusSession();
+      this.ttsReader?.stop();
+      this.startTtsReadingFromCurrentPosition(false).catch((error: Error) => {
+        console.warn('从本页听失败:', error);
+      });
+      return;
+    }
+    this.prepareTtsForManualPageTurn();
+    this.scheduleTtsResumeAfterManualPageTurn();
+  }
+
+  /** 胶囊“回到朗读处”：页面回到朗读正在读的那一页，恢复跟随翻页。 */
+  returnToTtsSpokenPage(): void {
+    if (this.isPageTurning || this.pageTurnQueue.hasPending()) return;
+    this.clearTtsViewDetached();
+    if (this.isMirroringActiveTtsForCurrentBook()) {
+      this.syncMirroredTtsFocus()
+        .then(() => this.scheduleCurrentTtsFocusRepublishAfterPageTurn())
+        .catch(() => {});
+      return;
+    }
+    if (this.usesReaderContinuousV2()) {
+      this.followReaderContinuousTtsFocus(true);
+      return;
+    }
+    const target = this.ttsSpokenPageIndex();
+    if (target >= 0 && target !== this.currentPageIndex) {
+      this.finishPageTurnAnimation();
+      this.currentPageIndex = target;
+      this.syncCurrentPageText();
+      this.saveReadingProgress().catch((error: Error) => {
+        console.warn('回到朗读处保存进度失败:', error);
+      });
+    }
+    this.scheduleCurrentTtsFocusRepublishAfterPageTurn();
+  }
+
   prepareTtsForManualPageTurn(): void {
+    this.clearTtsViewDetached();
     this.deferManualPageTurnTtsResume();
     if (!this.ttsManualPageTurnResumePending) {
       this.ttsManualPageTurnResumePending = true;
@@ -15973,6 +16202,7 @@ struct ReadBookPage {
    * 下一次“继续”走 startTtsReadingFromCurrentPosition 从当前页读起。与快速跳转保持暂停的做法一致。
    */
   holdPausedTtsForManualPageTurn(): void {
+    this.clearTtsViewDetached();
     this.quickJumpPausedSpeechOffset = -1;
     if (this.ttsReader?.isSpeaking() !== true) return;
     this.stopTtsReaderForChapterSwitch();
@@ -16071,7 +16301,7 @@ struct ReadBookPage {
         console.warn(`[TTS] completion before chapter tail: chapter=${this.currentChapterIndex},` +
           `resume=${resumeOffset},expected=${this.ttsReadingExpectedSourceEnd},` +
           `retry=${this.ttsChapterCompletionRetryCount}`);
-        await this.startTtsReadingFromCurrentPosition(false, false, -1, resumeOffset, false);
+        await this.startTtsReadingFromCurrentPosition(false, false, -1, resumeOffset, false, true);
         return;
       }
       console.warn(`[TTS] chapter tail still not confirmed after retries: chapter=${this.currentChapterIndex},` +
@@ -16165,6 +16395,8 @@ struct ReadBookPage {
           `target=${targetChapterIndex},actual=${this.currentChapterIndex},loaded=${loaded}`);
         return false;
       }
+      // 朗读只能读正在显示的那一章：换章时页面跟着到下一章章首，不跟随翻页的状态随之结束。
+      this.clearTtsViewDetached();
       this.currentPageIndex = 0;
       this.pendingRestorePageIndex = -1;
       this.syncCurrentPageText();
@@ -16183,6 +16415,7 @@ struct ReadBookPage {
     // Keep only an existing owned session; never replace a newer reader's controls.
     const keepSession = preserveControls && ReaderTtsFloatingSession.isOwner(this.ttsFloatingSessionOwnerId);
     if (preserveControls) this.ttsReadToken++;
+    this.clearTtsViewDetached();
     this.cancelManualPageTurnTtsResume();
     this.flushTtsReadPosition();
     this.clearTtsSleepTimer();
@@ -16779,6 +17012,14 @@ ${leading}` : leading;
       this.followReaderContinuousTtsFocus(firstFocusInSession);
       return;
     }
+    if (this.ttsViewDetached || this.ttsHoldingTurn) {
+      // 不跟随翻页：只更新朗读位置与高亮，不带着翻页；读到用户正在看的这一页时恢复跟随。
+      if (!this.ttsHoldingTurn && spreadPageIndex === this.currentPageIndex) {
+        this.clearTtsViewDetached();
+        this.scheduleCurrentTtsFocusRepublishAfterPageTurn();
+      }
+      return;
+    }
     if (spreadPageIndex !== this.currentPageIndex) {
       this.animateTtsToPage(spreadPageIndex, chunk);
       return;
@@ -16836,6 +17077,12 @@ ${leading}` : leading;
       return;
     }
     this.ttsLastFocusPageIndex = pageIndex;
+    if (this.ttsViewDetached && !this.usesReaderContinuousV2()) {
+      // 不跟随翻页时回到前台：页面留在用户翻到的地方，只更新高亮。
+      this.updateTtsChunkHighlight(this.ttsLastFocusChunk, pageIndex);
+      this.refreshTtsViewDetached(false);
+      return;
+    }
     this.ttsPendingTargetPageIndex = -1;
     this.ttsPendingHighlightChunk = null;
     this.ttsAutoTurningPage = false;
@@ -16969,6 +17216,13 @@ ${leading}` : leading;
       this.scheduleCurrentTtsFocusRepublishAfterPageTurn();
       return;
     }
+    if (this.ttsViewDetached) {
+      // 不跟随翻页：分页补完后页码会变，只更新高亮并重新判断，不把页面拉回朗读处。
+      this.ttsLastFocusPageIndex = pageIndex;
+      this.updateTtsChunkHighlight(chunk, pageIndex, false);
+      this.refreshTtsViewDetached(false);
+      return;
+    }
     if (targetPageIndex !== this.currentPageIndex) {
       this.finishPageTurnAnimation();
       this.currentPageIndex = targetPageIndex;
@@ -17095,6 +17349,8 @@ ${leading}` : leading;
       return;
     }
     if (chapterIndex !== this.currentChapterIndex) {
+      // 后台朗读换章了：页面只能跟着换，不跟随翻页的状态随之结束（与本页朗读换章一致）。
+      this.clearTtsViewDetached();
       const loaded = await this.loadContent(true, chapterIndex);
       if (serial !== this.mirroredTtsFocusSyncSerial) return;
       if (!loaded || this.currentChapterIndex !== chapterIndex) {
@@ -17132,13 +17388,19 @@ ${leading}` : leading;
       this.followReaderContinuousTtsFocus(false);
       return;
     }
-    if (targetPageIndex !== this.currentPageIndex) {
+    if (this.ttsViewDetached && targetPageIndex !== this.currentPageIndex) {
+      // 不跟随翻页：只记下后台朗读的高亮，不把页面拉回朗读处。
+    } else if (targetPageIndex !== this.currentPageIndex) {
       this.finishPageTurnAnimation();
       this.currentPageIndex = targetPageIndex;
       this.syncCurrentPageText();
-    } else if (this.displayPageChapterIndex !== this.currentChapterIndex ||
-      this.displayPageIndex !== this.currentPageIndex || !this.displayPageText) {
-      this.syncCurrentPageText();
+    } else {
+      // 后台朗读读到了用户正在看的这一页，恢复跟随。
+      this.clearTtsViewDetached();
+      if (this.displayPageChapterIndex !== this.currentChapterIndex ||
+        this.displayPageIndex !== this.currentPageIndex || !this.displayPageText) {
+        this.syncCurrentPageText();
+      }
     }
     this.ttsDisplayText = pageText;
     this.ttsHighlightStart = Math.max(0, Math.min(absoluteStart - pageStart, pageText.length));
@@ -22641,6 +22903,12 @@ ${leading}` : leading;
     if (!this.usesReaderContinuousV2() || this.readerV2TtsSourceStart < 0 || this.contentPages.length === 0 ||
       this.readerTextSelectionActive || this.readerComicScrollRestoring || this.pendingRestorePageIndex >= 0 ||
       this.readerComicChapterSwitching) return;
+    if (!force && this.ttsViewDetached) {
+      // 朗读不跟随：用户滑走后不拉回；朗读句子整句回到屏幕里（用户滑回来或读到了）时恢复跟随。
+      const range = this.readerContinuousTtsFocusWindowRange();
+      if (range.length === 4 && range[0] >= range[2] && range[1] <= range[3]) this.clearTtsViewDetached();
+      return;
+    }
     if (!force && Date.now() - this.readerContinuousPointerAt < READER_CONTINUOUS_TTS_FOLLOW_GRACE_MS) return;
     const index = this.findPageIndexByOffset(this.readerV2TtsSourceStart);
     if (index < 0 || index >= this.contentPages.length) return;
@@ -22666,9 +22934,52 @@ ${leading}` : leading;
     try {
       this.readerComicScroller.scrollToIndex(this.readerContinuousListIndex(index), true, ScrollAlign.START,
         { extraOffset: LengthMetrics.vp(px2vp(focusTopPx - viewportHeightPx * 0.22)) });
+      this.ttsContinuousAutoScrolledAt = Date.now();
     } catch (error) {
       console.warn('[ReaderContinuous] 跟随朗读焦点滚动失败:', error);
     }
+  }
+
+  /** 滚动阅读里朗读句子在窗口中的上下沿与可视区上下沿 [top, bottom, viewTop, viewBottom]；量不到时为空。 */
+  readerContinuousTtsFocusWindowRange(): number[] {
+    if (!this.usesReaderContinuousV2() || this.readerV2TtsSourceStart < 0 || this.contentPages.length === 0) return [];
+    const index = this.findPageIndexByOffset(this.readerV2TtsSourceStart);
+    if (index < 0 || index >= this.contentPages.length) return [];
+    const rects = this.readerContinuousV2TtsRects(index, this.contentPages[index] || '', 0);
+    const viewport = this.readerContinuousV2ViewportPx();
+    if (rects.length === 0 || viewport.length < 2) return [];
+    try {
+      const rect = this.getUIContext().getComponentUtils().getRectangleById(this.readerContinuousV2ItemId(index));
+      if (rect.size.height <= 0) return [];
+      const last = rects[rects.length - 1];
+      return [rect.windowOffset.y + rects[0].topPx, rect.windowOffset.y + last.topPx + last.heightPx,
+        viewport[0], viewport[1]];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /**
+   * 滚动阅读停下时：朗读设为不跟随/停留 3 秒后，且是用户自己把正在读的句子整句滑出了屏幕，就不再拉回，
+   * 改出“回到朗读处 | 从本页听”胶囊。朗读自己滚动停下的不算。
+   */
+  checkReaderContinuousTtsDetach(): void {
+    if (this.ttsViewDetached || TtsTurnFollow.normalize(this.ttsTurnFollow) === TtsTurnFollow.NOW ||
+      !this.shouldRenderTtsFocus() || this.readerTextSelectionActive) return;
+    if (this.readerContinuousPointerAt <= this.ttsContinuousAutoScrolledAt ||
+      Date.now() - this.readerContinuousPointerAt > 6000) return;
+    const range = this.readerContinuousTtsFocusWindowRange();
+    if (range.length === 4) {
+      if (range[1] > range[2] && range[0] < range[3]) return;
+    } else {
+      // 量不到多半是那一块已滑出缓存区被回收；只有确实不在可见序号范围内才算滑走了。
+      const index = this.readerV2TtsSourceStart >= 0 ? this.findPageIndexByOffset(this.readerV2TtsSourceStart) : -1;
+      if (index < 0 || index >= this.contentPages.length) return;
+      const listIndex = this.readerContinuousListIndex(index);
+      if (listIndex >= this.readerContinuousLastListStart && listIndex <= this.readerContinuousLastListEnd) return;
+    }
+    this.ttsViewDetached = true;
+    this.restartTtsDetachCountdown();
   }
 
   // Whether the native selection host belongs to this chunk. hostVersion is the reactive trigger: the
@@ -24450,14 +24761,20 @@ ${leading}` : leading;
       this.pageTurnQueue.reset();
     }
     const turnRequestStartedAt = Date.now();
-    const resumeMirroredTtsAfterTurn = this.isMirroringActiveTtsForCurrentBook();
+    const mirroringTts = this.isMirroringActiveTtsForCurrentBook();
+    // 朗读设为不跟随/停留 3 秒后：同一章内翻页不打断朗读（暂停着也不挪位置），落定后再看是否翻离了朗读页。
+    const holdTtsAfterTurn = this.shouldHoldTtsOnManualTurn(direction, mirroringTts);
+    const resumeMirroredTtsAfterTurn = !holdTtsAfterTurn && mirroringTts;
     // 朗读已暂停时翻页不续播：保持暂停，等用户点继续再从翻到的这一页读起。
-    const holdPausedTtsAfterTurn = !resumeMirroredTtsAfterTurn && !this.ttsManualPageTurnResumePending &&
-      (this.isTtsPaused || this.ttsReader?.isPaused() === true);
-    const resumeTtsAfterTurn = !holdPausedTtsAfterTurn && (this.ttsManualPageTurnResumePending ||
-      this.isTtsSpeaking || this.ttsReader?.isSpeaking() === true);
+    const holdPausedTtsAfterTurn = !holdTtsAfterTurn && !resumeMirroredTtsAfterTurn &&
+      !this.ttsManualPageTurnResumePending && (this.isTtsPaused || this.ttsReader?.isPaused() === true);
+    const resumeTtsAfterTurn = !holdTtsAfterTurn && !holdPausedTtsAfterTurn &&
+      (this.ttsManualPageTurnResumePending || this.isTtsSpeaking || this.ttsReader?.isSpeaking() === true);
     let ttsPrepareElapsed = 0;
-    if (resumeMirroredTtsAfterTurn) {
+    if (holdTtsAfterTurn) {
+      this.cancelTtsDetachCountdown();
+      this.ttsHoldingTurn = true;
+    } else if (resumeMirroredTtsAfterTurn) {
       this.prepareMirroredTtsManualPageTurn();
     } else if (holdPausedTtsAfterTurn) {
       this.holdPausedTtsForManualPageTurn();
@@ -24496,6 +24813,7 @@ ${leading}` : leading;
         this.isPageTurning = false;
         this.readerRapidPageTurn = false;
       }
+      if (holdTtsAfterTurn) this.ttsHoldingTurn = false;
     }
     this.deferReaderPaginationForInteraction(220);
     if (resumeTtsAfterTurn) {
@@ -24505,7 +24823,10 @@ ${leading}` : leading;
         `page=${this.currentPageIndex},queued=${this.pageTurnQueue.pendingCount()}`);
     }
     this.runQueuedPageTurnLater();
-    if (resumeMirroredTtsAfterTurn) {
+    if (holdTtsAfterTurn) {
+      // 排队中的下一次翻页落定时会再判断一次，这里不急着计时。
+      if (!this.pageTurnQueue.hasPending()) this.refreshTtsViewDetached(true);
+    } else if (resumeMirroredTtsAfterTurn) {
       this.scheduleMirroredTtsResumeAfterManualPageTurn();
     } else if (holdPausedTtsAfterTurn) {
       this.settlePausedTtsOnVisiblePage();
@@ -24515,6 +24836,7 @@ ${leading}` : leading;
   }
 
   prepareMirroredTtsManualPageTurn(): void {
+    this.clearTtsViewDetached();
     if (this.mirroredTtsManualTurnTimerId >= 0) {
       clearTimeout(this.mirroredTtsManualTurnTimerId);
       this.mirroredTtsManualTurnTimerId = -1;

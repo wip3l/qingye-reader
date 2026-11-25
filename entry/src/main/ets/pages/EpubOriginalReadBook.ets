@@ -96,6 +96,8 @@ import { ReaderAnnotationShare } from '../utils/ReaderAnnotationShare';
 import lazy { motion } from '@kit.MultimodalAwarenessKit';
 import deviceInfo from '@ohos.deviceInfo';
 import { systemBarContentColor } from '../platform/SystemInsets';
+import { TtsTurnFollow } from '../utils/TtsTurnFollow';
+import { ReaderTtsHoldCapsule } from '../components/reader/ReaderTtsHoldCapsule';
 
 /** 本书的文件排版设置与位置（书籍变量）。 */
 const SCROLL_KEY = 'epubOriginalScroll';
@@ -568,6 +570,17 @@ struct EpubOriginalReadBookPage {
   private ttsFocusSerial: number = 0;
   /** 朗读自己发起的翻页，提交时不当成用户翻页。 */
   private ttsTurnAt: number = 0;
+  @StorageProp('ttsTurnFollow') ttsTurnFollow: string = TtsTurnFollow.NOW;
+  /** 朗读设为不跟随/停留 3 秒后，用户在同一章内翻离了朗读那一页：朗读不再带着翻页，底部出胶囊。 */
+  @State ttsViewDetached: boolean = false;
+  /** “停留 3 秒后”的计时，胶囊据此画外圈；0 表示没在计时。 */
+  @State ttsDetachCountdownKey: number = 0;
+  private ttsDetachCountdownSerial: number = 0;
+  private ttsDetachCountdownTimer: number = -1;
+  /** 按不跟随处理的翻页正在进行：这期间朗读的高亮不触发自动翻页。 */
+  private ttsHoldingTurn: boolean = false;
+  /** 朗读正在念的那句所在页；没有时 -1。 */
+  private ttsSpokenPage: number = -1;
   private ttsChapterWaiter: EpubTtsChapterWaiter | null = null;
   // ---- 书里的音频（EpubAudioPlayer）：网页里点卡片开始 / 暂停，菜单里有一枚音乐胶囊 ----
   @State musicState: string = '';
@@ -992,7 +1005,7 @@ struct EpubOriginalReadBookPage {
     } else {
       ReaderHaptics.pageTurned(ReaderInputKind.NOVEL, false);
       this.run(`__legado.screen(${direction > 0 ? 1 : -1})`);
-      this.readAloud?.userMoved();
+      this.ttsUserMoved();
     }
   }
 
@@ -1332,7 +1345,7 @@ struct EpubOriginalReadBookPage {
     if (!this.alive) return;
     if (chapter === this.chapterIndex) {
       if (target.kind === 'spot') this.run(`__legado.goSpot(${JSON.stringify(target.snippet)}, ${target.fraction})`);
-      this.readAloud?.userMoved();
+      this.ttsUserMoved();
       return;
     }
     this.showChapter(chapter, target, 'fade');
@@ -1499,7 +1512,7 @@ struct EpubOriginalReadBookPage {
     if (chapter === this.chapterIndex) {
       if (target.kind === 'spot') this.run(`__legado.goSpot(${JSON.stringify(target.snippet)}, ${target.fraction})`);
       else this.run('__legado.goPage(0, false)');
-      this.readAloud?.userMoved();
+      this.ttsUserMoved();
       return;
     }
     this.showChapter(chapter, target, 'fade');
@@ -1706,7 +1719,7 @@ struct EpubOriginalReadBookPage {
       if (page === this.pageIndex) return;
       this.rememberQuickJumpOrigin();
       this.run(`__legado.goPage(${page}, false)`);
-      this.readAloud?.userMoved();
+      this.ttsUserMoved();
       return;
     } else {
       chapter = Math.max(0, Math.min(count - 1, Math.round(value)));
@@ -1720,7 +1733,7 @@ struct EpubOriginalReadBookPage {
     }
     if (chapter === this.chapterIndex && ratio >= 0) {
       this.run(`__legado.goSpot('', ${ratio})`);
-      this.readAloud?.userMoved();
+      this.ttsUserMoved();
     } else {
       this.showChapter(chapter, target, 'fade');
     }
@@ -1753,7 +1766,7 @@ struct EpubOriginalReadBookPage {
     if (chapter === this.chapterIndex) {
       if (spot.snippet) this.run(`__legado.goSpot(${JSON.stringify(spot.snippet)}, ${spot.fraction})`);
       else this.run(`__legado.goPage(${this.quickJumpUndoPage}, false)`);
-      this.readAloud?.userMoved();
+      this.ttsUserMoved();
       return;
     }
     const target = new EpubOriginalTarget();
@@ -2386,7 +2399,7 @@ struct EpubOriginalReadBookPage {
       // 朗读等的就是这一章：交回朗读接着念；否则是用户换了章、改了版式，朗读从新位置重开。
       const waiter = this.ttsChapterWaiter;
       if (waiter && waiter.index === slot.chapter) this.resolveTtsChapter(true);
-      else this.readAloud?.userMoved();
+      else this.ttsUserMoved();
     };
     if (transition === 'cut') {
       // 截图翻页跨章：翻页层的截图盖着，直接换槽位，动画由翻页层播。
@@ -2649,14 +2662,28 @@ struct EpubOriginalReadBookPage {
     this.scheduleSave();
     if (this.ttsTurnAt > 0 && Date.now() - this.ttsTurnAt < 3000) {
       this.ttsTurnAt = 0;
+    } else if (this.shouldHoldTtsOnTurn()) {
+      // 朗读不跟随：同一章内翻页不打断朗读（暂停着也不挪位置），只看是否翻离了朗读那一页。
+      this.refreshTtsViewDetached(true);
     } else {
-      this.readAloud?.userMoved();
+      this.ttsUserMoved();
     }
   }
 
   private onTurnActiveChanged(active: boolean): void {
     this.turnActive = active;
-    if (active) return;
+    if (active) {
+      if (!(this.ttsTurnAt > 0 && Date.now() - this.ttsTurnAt < 3000) && this.shouldHoldTtsOnTurn()) {
+        this.ttsHoldingTurn = true;
+        this.cancelTtsDetachCountdown();
+      }
+      return;
+    }
+    if (this.ttsHoldingTurn) {
+      this.ttsHoldingTurn = false;
+      // 翻页没翻成（拖了又放回）时也要重新判断，计时接着走。
+      this.refreshTtsViewDetached(true);
+    }
     this.schedulePreload();
     this.schedulePrewarm();
   }
@@ -3056,7 +3083,7 @@ struct EpubOriginalReadBookPage {
       } else {
         ReaderHaptics.pageTurned(ReaderInputKind.NOVEL, false);
         this.run(`__legado.screen(${direction})`);
-        this.readAloud?.userMoved();
+        this.ttsUserMoved();
       }
     }
   }
@@ -3203,7 +3230,7 @@ struct EpubOriginalReadBookPage {
       }
       if (index === this.chapterIndex && fragment) {
         this.run(`__legado.goAnchor(${JSON.stringify(fragment)})`);
-        this.readAloud?.userMoved();
+        this.ttsUserMoved();
         return;
       }
       const target = new EpubOriginalTarget();
@@ -3512,6 +3539,12 @@ struct EpubOriginalReadBookPage {
   /** 与 PDF 阅读页一样：正文时隐藏状态栏，菜单出现时一起出来；布局始终全屏，安全区高度不随显隐变化。 */
   onMenuVisibleChange(): void {
     if (!this.menuVisible) this.quickJumpUndoChapter = -1;
+    // 菜单开着时朗读胶囊收起，“停留 3 秒后”也不计时；关上菜单后重新计时。
+    if (this.menuVisible) {
+      this.cancelTtsDetachCountdown();
+    } else if (this.ttsViewDetached) {
+      this.restartTtsDetachCountdown();
+    }
     this.applySystemBars();
   }
 
@@ -3904,8 +3937,14 @@ struct EpubOriginalReadBookPage {
   private onTtsStateChanged(): void {
     const tts = this.readAloud;
     const active = !!tts && tts.active();
+    const wasPaused = this.ttsPaused;
     this.ttsActive = active;
     this.ttsPaused = !!tts && (tts.paused || !tts.speaking);
+    if (!active) {
+      this.clearTtsViewDetached();
+    } else if (this.ttsViewDetached && wasPaused !== this.ttsPaused) {
+      if (this.ttsPaused) this.cancelTtsDetachCountdown(); else this.restartTtsDetachCountdown();
+    }
     if (!active) {
       this.showTtsCatalog = false;
       if (this.showTtsPanel) this.closeTtsPanel();
@@ -4018,7 +4057,10 @@ struct EpubOriginalReadBookPage {
         } catch (_) {
           page = -1;
         }
-        if (Number.isFinite(page)) this.ttsFollowPage(page, serial, 0);
+        if (Number.isFinite(page)) {
+          this.ttsSpokenPage = page;
+          this.ttsFollowPage(page, serial, 0);
+        }
       }).catch((error: Error): void => console.warn('[EpubOriginal] tts mark failed:', error));
     } catch (error) {
       console.warn('[EpubOriginal] tts mark failed:', error);
@@ -4026,6 +4068,11 @@ struct EpubOriginalReadBookPage {
   }
 
   private ttsFollowPage(page: number, serial: number, attempt: number): void {
+    if (this.alive && serial === this.ttsFocusSerial && (this.ttsViewDetached || this.ttsHoldingTurn)) {
+      // 不跟随翻页：只高亮不翻页；念到用户正在看的这一页时恢复跟随。
+      if (!this.ttsHoldingTurn && page === this.pageIndex) this.clearTtsViewDetached();
+      return;
+    }
     if (!this.alive || serial !== this.ttsFocusSerial || !this.paged || page < 0 || page === this.pageIndex) return;
     if (this.transitioning || this.pendingSlot >= 0 || this.turnActive || this.turnController.busy() || this.jumpBusy) {
       if (attempt < 12) {
@@ -4043,8 +4090,113 @@ struct EpubOriginalReadBookPage {
     this.run(`__legado.goPage(${page}, false)`);
   }
 
+  /** 用户自己翻页、跳转、改了版式：不跟随状态结束，朗读从新位置重开（暂停着就记下新位置）。 */
+  private ttsUserMoved(): void {
+    this.clearTtsViewDetached();
+    this.readAloud?.userMoved();
+  }
+
+  /** 这次翻页是否按“不跟随/停留 3 秒后”处理：只管翻页模式下同一章内、引擎还握着语音的情况。 */
+  private shouldHoldTtsOnTurn(): boolean {
+    const tts = this.readAloud;
+    return TtsTurnFollow.normalize(this.ttsTurnFollow) !== TtsTurnFollow.NOW && this.paged && !!tts &&
+      tts.holdsSpeechIn(this.chapterIndex);
+  }
+
+  private refreshTtsViewDetached(restartCountdown: boolean): void {
+    const tts = this.readAloud;
+    const away = !!tts && tts.holdsSpeechIn(this.chapterIndex) && this.ttsSpokenPage >= 0 &&
+      this.ttsSpokenPage !== this.pageIndex;
+    if (!away) {
+      this.clearTtsViewDetached();
+      return;
+    }
+    this.ttsViewDetached = true;
+    if (restartCountdown) this.restartTtsDetachCountdown();
+  }
+
+  private clearTtsViewDetached(): void {
+    this.cancelTtsDetachCountdown();
+    if (this.ttsViewDetached) this.ttsViewDetached = false;
+  }
+
+  private restartTtsDetachCountdown(): void {
+    this.cancelTtsDetachCountdown();
+    if (TtsTurnFollow.normalize(this.ttsTurnFollow) !== TtsTurnFollow.DELAY || !this.ttsViewDetached ||
+      this.menuVisible || this.ttsPaused) return;
+    this.ttsDetachCountdownSerial++;
+    this.ttsDetachCountdownKey = this.ttsDetachCountdownSerial;
+    this.ttsDetachCountdownTimer = setTimeout((): void => {
+      this.ttsDetachCountdownTimer = -1;
+      this.ttsDetachCountdownKey = 0;
+      if (!this.alive || !this.visible || !this.ttsViewDetached || this.menuVisible || this.ttsPaused ||
+        this.turnActive || this.transitioning) return;
+      this.ttsListenHere();
+    }, TtsTurnFollow.DELAY_MS);
+  }
+
+  private cancelTtsDetachCountdown(): void {
+    if (this.ttsDetachCountdownTimer >= 0) {
+      clearTimeout(this.ttsDetachCountdownTimer);
+      this.ttsDetachCountdownTimer = -1;
+    }
+    if (this.ttsDetachCountdownKey !== 0) this.ttsDetachCountdownKey = 0;
+  }
+
+  /** 胶囊“从本页听”与 3 秒计时走完：从当前这一页读起，暂停着也直接开播。 */
+  private ttsListenHere(): void {
+    this.clearTtsViewDetached();
+    const tts = this.readAloud;
+    if (!tts) return;
+    const wasPaused = tts.paused;
+    tts.userMoved();
+    if (wasPaused) {
+      tts.toggle().catch((error: Error): void => console.warn('[EpubOriginal] listen here failed:', error));
+    }
+  }
+
+  /** 胶囊“回到朗读处”：翻回朗读正在念的那一页，恢复跟随。 */
+  private ttsReturnToSpoken(): void {
+    if (this.turnActive || this.transitioning) return;
+    const page = this.ttsSpokenPage;
+    this.clearTtsViewDetached();
+    if (page >= 0 && page !== this.pageIndex) this.run(`__legado.goPage(${page}, false)`);
+  }
+
+  private shouldShowTtsHoldCapsule(): boolean {
+    return this.ttsViewDetached && this.ttsActive && this.ready && !this.menuVisible && !this.showTtsPanel &&
+      !this.annotationMode;
+  }
+
+  /** 胶囊压在页脚正中（左右的进度、时间照常露出）；没有页脚时停在手势条上方。 */
+  private ttsHoldCapsuleTop(): number {
+    const height = ReaderTtsHoldCapsule.HEIGHT;
+    if (!this.footerShown()) return this.viewHeight - this.navBarHeight - height - 12;
+    const footerHeight = this.footerLineHeight() + this.infoBarConfig().footerExtraHeight();
+    const footerCenter = this.footerBottomInset() + footerHeight / 2;
+    return Math.min(this.viewHeight - footerCenter - height / 2, this.viewHeight - height - 4);
+  }
+
+  @Builder
+  ttsHoldCapsule() {
+    ReaderTtsHoldCapsule({
+      countdownKey: this.ttsDetachCountdownKey,
+      countdownMs: TtsTurnFollow.DELAY_MS,
+      darkMode: this.darkMode,
+      fallbackColor: this.solidPanelColor(),
+      textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+      dividerColor: this.darkMode ? '#26FFFFFF' : '#14000000',
+      onBack: (): void => this.ttsReturnToSpoken(),
+      onListenHere: (): void => this.ttsListenHere()
+    })
+      .position({ x: (this.viewWidth - ReaderTtsHoldCapsule.WIDTH) / 2, y: this.ttsHoldCapsuleTop() })
+      .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ y: 8 }))
+        .animation({ duration: 180, curve: Curve.EaseOut }))
+  }
+
   private ttsClearFocus(): void {
     this.ttsFocusSerial++;
+    this.ttsSpokenPage = -1;
     for (const slot of this.slots) {
       if (!slot.attached) continue;
       try {
@@ -4460,6 +4612,10 @@ struct EpubOriginalReadBookPage {
         .hitTestBehavior(HitTestMode.None)
         .bindSheet($$this.showNoteSheet, this.noteSheetContent(),
           this.sheetOptions((): void => { this.showNoteSheet = false; }))
+
+      if (this.shouldShowTtsHoldCapsule()) {
+        this.ttsHoldCapsule()
+      }
 
       if (this.showTtsPanel) {
         this.ttsPlayerPanel()

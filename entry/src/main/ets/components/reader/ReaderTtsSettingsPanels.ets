@@ -11,6 +11,7 @@ import { ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
 import { PlaybackLoudnessGain } from '../../utils/PlaybackLoudnessGain';
 import { PlaybackSpeed } from '../../utils/PlaybackSpeed';
 import { LocalTtsModel, LocalTtsModels } from '../../utils/localtts/LocalTtsModels';
+import { TtsTurnFollow } from '../../utils/TtsTurnFollow';
 
 /**
  * 阅读设置面板里的"朗读"页：倍速、音量增益、音色入口、定时、开始/停止。
@@ -41,6 +42,7 @@ export struct ReaderTtsQuickSettingsPanel {
   // 音量增益是进程内的全局设置，直接读写，不经页面转发。
   @StorageProp('ttsLoudnessGain') ttsLoudnessGain: number = 0;
   @StorageProp('ttsLoudnessGainSupported') ttsLoudnessGainSupported: boolean = true;
+  @StorageProp('ttsTurnFollow') ttsTurnFollow: string = 'now';
   /** 拖动滑条时的显示值；-1 表示没在拖。 */
   @State gainDraft: number = -1;
 
@@ -219,6 +221,21 @@ export struct ReaderTtsQuickSettingsPanel {
       }
       .width('100%')
 
+      Row() {
+        Text('手动翻页后')
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontColor(this.textColor)
+          .layoutWeight(1)
+      }
+      .width('100%')
+
+      Row({ space: AppSpacing.MD }) {
+        ForEach(TtsTurnFollow.LABELS, (label: string, index: number) => {
+          this.turnFollowChip(label, TtsTurnFollow.valueAt(index))
+        }, (label: string) => label)
+      }
+      .width('100%')
+
       Button(this.speaking ? '停止朗读' : '开始朗读')
         .width('100%')
         .height(40)
@@ -273,6 +290,22 @@ export struct ReaderTtsQuickSettingsPanel {
       .accessibilityText(this.sleepTimerMinutes === minutes ?
         `关闭 ${minutes} 分钟朗读定时` : `设置 ${minutes} 分钟朗读定时`)
       .onClick(() => this.onSleepTimerChange(this.sleepTimerMinutes === minutes ? 0 : minutes))
+  }
+
+  @Builder
+  turnFollowChip(label: string, value: string) {
+    Text(label)
+      .fontSize(AppFontSize.BODY)
+      .fontColor(this.ttsTurnFollow === value ? '#FFFFFF' : this.textColor)
+      .textAlign(TextAlign.Center)
+      .maxLines(1)
+      .layoutWeight(1)
+      .height(32)
+      .borderRadius(16)
+      .backgroundColor(this.ttsTurnFollow === value ? this.accentColor : this.chipColor())
+      .accessibilityText(`手动翻页后朗读${label}`)
+      .accessibilitySelected(this.ttsTurnFollow === value)
+      .onClick(() => TtsTurnFollow.save(getContext(this), value))
   }
 }
 

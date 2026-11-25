@@ -29,6 +29,8 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow, SettingRow } from '../components/common/SettingRow';
+import { SettingSegment } from '../components/common/SettingSegment';
+import { TtsTurnFollow } from '../utils/TtsTurnFollow';
 import { LocalTtsModel, LocalTtsModels } from '../utils/localtts/LocalTtsModels';
 import { LocalTtsSelection } from '../utils/localtts/LocalTtsSelection';
 import { selectDocuments } from '../platform/Files';
@@ -50,6 +52,7 @@ struct TtsSettingsPage {
   @StorageLink('ttsStyle') ttsStyle: string = '';
   @StorageLink('ttsLanguage') ttsLanguage: string = 'zh-CN';
   @StorageLink('ttsSpeed') ttsSpeed: number = 1;
+  @StorageProp('ttsTurnFollow') ttsTurnFollow: string = 'now';
   @StorageLink('ttsInstalledVoiceKeys') ttsInstalledVoiceKeys: string = '';
   @StorageLink('ttsCustomVoiceId') @Watch('onCustomVoiceSelectionChanged') ttsCustomVoiceId: string = '';
   @StorageLink('ttsCustomVoices') @Watch('onCustomVoicesStorageChanged') ttsCustomVoices: string = '';
@@ -177,6 +180,18 @@ struct TtsSettingsPage {
         }.width('100%')
       }.width('100%').padding(AppSpacing.XL).backgroundColor(this.cardColor())
         .borderRadius(ThemeRuntime.cardRadius())
+
+      Column() {
+        SettingRow({ title: '手动翻页后，朗读', description: TtsTurnFollow.description(this.ttsTurnFollow),
+          showDivider: false })
+        SettingSegment({
+          labels: TtsTurnFollow.LABELS,
+          selected: TtsTurnFollow.indexOf(this.ttsTurnFollow),
+          onSelect: (index: number) => {
+            TtsTurnFollow.save(getContext(this), TtsTurnFollow.valueAt(index));
+          }
+        })
+      }.width('100%').backgroundColor(this.cardColor()).borderRadius(ThemeRuntime.cardRadius())
 
       if (this.mimoEnabled) {
         Text('MiMo 的倍速用于指导合成语速，实际节奏会随内容变化。用量计入你的小米账号，不消耗在线朗读字数包。')
