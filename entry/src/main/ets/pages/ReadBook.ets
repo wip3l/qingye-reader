@@ -3599,12 +3599,31 @@ struct ReadBookPage {
       this.showReaderActionMenu = false;
       this.showReaderSourceCard = !this.showReaderSourceCard;
     })
-    .bindPopup(this.showMenu && this.showReaderSourceCard && !this.showToc && !this.showSettings,
-      ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
-        this.readerSourceCard()
-      }, Placement.Bottom, this.appDarkMode, this.accentColor(), () => {
-        this.showReaderSourceCard = false;
-      }))
+  }
+
+  /**
+   * 书源信息卡挂在整行顶栏上而不是胶囊上：顶栏整屏宽、左右对称，Placement.Bottom 自然按屏幕左右居中，
+   * 宽度取底部面板的宽度，上下边线成一套。箭头按胶囊中心算（顶栏左内边距 18 + 返回键 40 + 胶囊左外边距），
+   * 仍指着胶囊。
+   */
+  readerSourceCardPopupOptions(): CustomPopupOptions {
+    const options = ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
+      this.readerSourceCard()
+    }, Placement.Bottom, this.appDarkMode, this.accentColor(), () => {
+      this.showReaderSourceCard = false;
+    });
+    const viewportWidth = this.pageViewWidth > 0 ? this.pageViewWidth : 360;
+    const cardLeft = (viewportWidth - this.readerSourceCardWidth()) / 2;
+    const capsuleCenter = 18 + 40 + AppSpacing.MD + this.readerTitleCapsuleWidth / 2;
+    if (this.readerTitleCapsuleWidth > 0) {
+      options.enableArrow = true;
+      options.arrowOffset = Math.max(0, capsuleCenter - cardLeft);
+    }
+    return options;
+  }
+
+  readerSourceCardWidth(): number {
+    return this.readerFloatingBarWidth();
   }
 
   /** 胶囊第二行（小说与漫画相同）：网络书“书源 · 章节”；本地书“本地 · 格式 · 章节”。 */
@@ -3691,8 +3710,8 @@ struct ReadBookPage {
         .width('100%')
       }
     }
-    .width(288)
-    .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+    .width(this.readerSourceCardWidth())
+    .padding({ left: 18, right: 18, top: 16, bottom: 16 })
   }
 
   @Builder
@@ -3702,6 +3721,7 @@ struct ReadBookPage {
         .fontSize(AppFontSize.CAPTION)
         .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
         .flexShrink(0)
+      // 链接、文件名放进浅底框里，和“本章”这类普通字段区分开，也看得出整段可以选中复制。
       Text(value)
         .fontSize(mono ? AppFontSize.MICRO + 1 : AppFontSize.CAPTION)
         .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
@@ -3710,6 +3730,9 @@ struct ReadBookPage {
         .wordBreak(mono ? WordBreak.BREAK_ALL : WordBreak.NORMAL)
         .copyOption(CopyOptions.LocalDevice)
         .layoutWeight(1)
+        .padding(mono ? { left: 9, right: 9, top: 7, bottom: 7 } : 0)
+        .borderRadius(mono ? 10 : 0)
+        .backgroundColor(mono ? ThemeRuntime.softFillColor(this.appDarkMode) : Color.Transparent)
     }
     .width('100%')
     .alignItems(VerticalAlign.Top)
@@ -4779,6 +4802,8 @@ struct ReadBookPage {
     .position({ x: 0, y: 0 })
     .alignItems(VerticalAlign.Center)
     .transition(ReaderChromeMotion.top(this.getTopControlSafePadding() + 66))
+    .bindPopup(this.showMenu && this.showReaderSourceCard && !this.showToc && !this.showSettings,
+      this.readerSourceCardPopupOptions())
   }
 
   @Builder
