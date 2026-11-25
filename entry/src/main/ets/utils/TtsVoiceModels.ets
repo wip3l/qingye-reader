@@ -16,8 +16,87 @@ export class TtsVoiceOption {
   downloadable: boolean = false;
 }
 
+export class TtsCustomVoiceImportResult {
+  voices: HttpTTS[] = [];
+  /** 导入的条目合并后的 id，按文件中首次出现的顺序。 */
+  importedIds: number[] = [];
+  added: number = 0;
+  updated: number = 0;
+}
+
 export class TtsCustomVoices {
   static parse(raw: string): HttpTTS[] {
+    return TtsCustomVoices.parseWith(raw, 0);
+  }
+
+  /** 导入用解析：没写 id（或 id 不是数字）的条目 id 记为 NaN，由 mergeImported 分配新 id。 */
+  static parseImport(raw: string): HttpTTS[] {
+    return TtsCustomVoices.parseWith(raw, NaN);
+  }
+
+  /**
+   * 把导入的音色合并进已有列表。
+   * 同一个音色的判定：名称和地址都相同，或 id 相同且地址相同（视为改名，只针对导入前已有的音色）；
+   * id 相同但地址不同的是两个音色，导入的那条换新 id。同一份文件重复导入，结果不变。
+   * 命中已有音色时用导入内容更新，但保留已有的 id（选中状态按 id 记）以及本机的启用状态和排序。
+   */
+  static mergeImported(existing: HttpTTS[], incoming: HttpTTS[]): TtsCustomVoiceImportResult {
+    const result = new TtsCustomVoiceImportResult();
+    const merged: HttpTTS[] = existing.slice();
+    const taken = new Set<number>();
+    for (const item of existing) taken.add(item.id);
+    for (const item of incoming) {
+      if (!Number.isNaN(item.id)) taken.add(item.id);
+    }
+    let nextId = Date.now();
+    const freshId = (): number => {
+      while (taken.has(nextId)) nextId++;
+      taken.add(nextId);
+      return nextId;
+    };
+    const addedIds = new Set<number>();
+    const updatedIds = new Set<number>();
+    // 本次导入已经写入的条目。按 id 改名只能改导入前就有的音色：否则文件里几条 id、地址相同而名称不同时，
+    // 后一条会把前一条改名吞掉，下次导入前一条又被当成新音色加回来，同一个文件越导越多。
+    const claimed = new Set<HttpTTS>();
+    for (const voice of incoming) {
+      const name = voice.name || '';
+      const url = voice.url || '';
+      let index = merged.findIndex((item: HttpTTS): boolean => (item.name || '') === name && (item.url || '') === url);
+      if (index < 0 && !Number.isNaN(voice.id)) {
+        index = merged.findIndex((item: HttpTTS): boolean =>
+          !claimed.has(item) && item.id === voice.id && (item.url || '') === url);
+      }
+      if (index >= 0) {
+        const previous = merged[index];
+        voice.id = previous.id;
+        voice.enabled = previous.enabled;
+        voice.customOrder = previous.customOrder;
+        merged[index] = voice;
+        if (!addedIds.has(voice.id)) updatedIds.add(voice.id);
+      } else {
+        if (Number.isNaN(voice.id) || merged.some((item: HttpTTS): boolean => item.id === voice.id)) {
+          voice.id = freshId();
+        }
+        merged.push(voice);
+        addedIds.add(voice.id);
+      }
+      claimed.add(voice);
+      if (!result.importedIds.includes(voice.id)) result.importedIds.push(voice.id);
+    }
+    result.voices = merged;
+    result.added = addedIds.size;
+    result.updated = updatedIds.size;
+    return result;
+  }
+
+  static importSummary(result: TtsCustomVoiceImportResult): string {
+    if (result.updated === 0) return `已导入 ${result.added} 个自定义音色`;
+    if (result.added === 0) return `已更新 ${result.updated} 个自定义音色`;
+    return `已导入 ${result.added} 个、更新 ${result.updated} 个自定义音色`;
+  }
+
+  private static parseWith(raw: string, missingId: number): HttpTTS[] {
     const value = (raw || '').trim();
     if (!value) {
       return [];
@@ -27,7 +106,7 @@ export class TtsCustomVoices {
       const items = Array.isArray(parsed) ? parsed as Object[] : [parsed];
       const result: HttpTTS[] = [];
       for (const item of items) {
-        const voice = TtsCustomVoices.parseVoice(item as Record<string, Object>);
+        const voice = TtsCustomVoices.parseVoice(item as Record<string, Object>, missingId);
         if (voice.name && voice.url) {
           result.push(voice);
         }
@@ -38,9 +117,9 @@ export class TtsCustomVoices {
     }
   }
 
-  private static parseVoice(item: Record<string, Object>): HttpTTS {
+  private static parseVoice(item: Record<string, Object>, missingId: number): HttpTTS {
     const voice = new HttpTTS();
-    voice.id = TtsCustomVoices.integer(item['id'], Date.now());
+    voice.id = TtsCustomVoices.integer(item['id'], missingId);
     voice.name = TtsCustomVoices.text(item['name']);
     voice.url = TtsCustomVoices.text(item['url']);
     voice.contentType = TtsCustomVoices.text(item['contentType']);
@@ -65,11 +144,16 @@ export class TtsCustomVoices {
     return value === undefined || value === null ? '' : String(value);
   }
 
+  // 空值要单独判断：Number('') 是 0 而不是 NaN，否则缺字段时永远用不上 fallback。
   private static integer(value: Object | undefined, fallback: number): number {
     if (typeof value === 'number') {
-      return Math.round(value);
+      return Number.isFinite(value) ? Math.round(value) : fallback;
     }
-    const parsed = Number(value === undefined || value === null ? '' : String(value));
-    return Number.isNaN(parsed) ? fallback : Math.round(parsed);
+    const text = value === undefined || value === null ? '' : String(value).trim();
+    if (!text) {
+      return fallback;
+    }
+    const parsed = Number(text);
+    return Number.isFinite(parsed) ? Math.round(parsed) : fallback;
   }
 }

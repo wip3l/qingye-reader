@@ -5,7 +5,7 @@ import { util } from '@kit.ArkTS';
 import { HttpTTS, HttpClient } from '@legado/sourceengine';
 import { syncSystemBars } from '../utils/SystemBars';
 import { SystemTtsReader } from '../utils/SystemTtsReader';
-import { TtsVoiceOption } from '../utils/TtsVoiceModels';
+import { TtsCustomVoices, TtsVoiceOption } from '../utils/TtsVoiceModels';
 import { TtsSettings, TtsSettingsStore } from '../utils/TtsSettingsStore';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { PageScaffold } from '../components/common/PageScaffold';
@@ -1559,38 +1559,15 @@ struct CustomTtsVoiceManagerPage {
   }
 
   importFromJson(content: string): void {
-    const incoming = SystemTtsReader.parseCustomVoices(content);
+    const incoming = TtsCustomVoices.parseImport(content);
     if (incoming.length === 0) {
       HdsFeedback.showToast('未识别到有效自定义音色');
       return;
     }
-    const merged = this.voices.slice();
-    let changed = 0;
-    for (const voice of incoming) {
-      this.ensureUniqueVoiceId(voice, merged);
-      const index = merged.findIndex((item: HttpTTS) => String(item.id) === String(voice.id) ||
-        ((item.name || '') === (voice.name || '') && (item.url || '') === (voice.url || '')));
-      if (index >= 0) {
-        merged[index] = voice;
-      } else {
-        merged.push(voice);
-      }
-      changed++;
-    }
-    this.voices = merged;
+    const result = TtsCustomVoices.mergeImported(this.voices, incoming);
+    this.voices = result.voices;
     this.saveSettings();
-    HdsFeedback.showToast(`已导入 ${changed} 个自定义音色`);
-  }
-
-  ensureUniqueVoiceId(voice: HttpTTS, existing: HttpTTS[]): void {
-    if (!existing.some((item: HttpTTS) => item.id === voice.id && (item.url || '') !== (voice.url || ''))) {
-      return;
-    }
-    let id = Date.now();
-    while (existing.some((item: HttpTTS) => item.id === id)) {
-      id++;
-    }
-    voice.id = id;
+    HdsFeedback.showToast(TtsCustomVoices.importSummary(result));
   }
 
   // 导出为与导入相同的 HttpTTS 数组 JSON，可直接用“从文件导入”或其他阅读应用导入。
