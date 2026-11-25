@@ -1,7 +1,7 @@
 // 编辑器窗口：部件树、检查器、实时预览、问题条，以及打开/保存/导出/草稿。
 import './styles.css';
 import {
-  exportFiles, exportZip, formatSize, loadProject, makeAsset, newProject, readZip, safeAssetPath, serializeDraft,
+  exportFiles, exportZip, formatSize, isAnimatedImage, loadProject, makeAsset, newProject, readZip, safeAssetPath, serializeDraft,
   deserializeDraft, usedAssetPaths, MAX_COVERS, type EditorAsset, type EditorProject, type FileMap
 } from '../core/packageIo.ts';
 import { $, assetUrl, getPath, h, mp, project, S, setPath, toast, type Mode } from './state.ts';
@@ -510,6 +510,9 @@ function renderSlot(f: Field, path: string, ref: string, id: string): HTMLElemen
     h('b', {}, asset ? ref.substring(7) : (ref ? `${ref.substring(7)}（缺失）` : '拖入文件，或点“上传”')),
     asset ? `${asset.width ? `${asset.width}×${asset.height} · ` : ''}${KIND_LABEL[asset.kind]} · ${formatSize(asset.bytes.length)}` : (f.spec || ''));
   if (warning) meta.append(h('span', { class: 'warnline' }, warning));
+  if (asset && asset.kind === 'image' && isAnimatedImage(asset.bytes, asset.ext)) {
+    meta.append(h('span', { class: 'animline' }, '动图：显示时居中铺满，不提供裁剪（裁了只剩第一帧）；应用里跟随“播放动图”开关'));
+  }
   // 气泡边框换图时拉伸线按新图重新给默认位置，随后弹出拉伸区域对话框。
   const assign = (newRef: string): void => {
     if (f.commentStretch) {

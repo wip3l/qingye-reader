@@ -298,7 +298,8 @@ export const SECTIONS: Section[] = [
     id: 'startup', group: '素材', name: '启动封面', screen: 'startup', modal: true,
     desc: '只做一种模式时，另一种模式沿用它。底部约 1/5 会叠文案，别放主体。', fields: [
       { g: '封面' },
-      { k: 'startup.{m}.image', label: '竖图', type: 'asset', kinds: ['image'], target: [841, 1870], spec: '841 × 1870 JPG / PNG' },
+      { k: 'startup.{m}.image', label: '竖图', type: 'asset', kinds: ['image'], target: [841, 1870], spec: '841 × 1870 JPG / PNG，也可以用 GIF / 动态 WebP',
+        hint: '动图在启动页播完一遍再进首页（最长 8 秒），不超过 25 MB；关掉“播放动图”时只显示第一帧' },
       { k: 'startup.{m}.title', label: '标题', type: 'text', max: 40, hint: '留空时启动页不显示标题' },
       { k: 'startup.{m}.subtitle', label: '副标题', type: 'text', max: 40 }
     ]

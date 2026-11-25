@@ -122,6 +122,50 @@ export function newProject(baseTheme: string): EditorProject {
   };
 }
 
+// ---- 动图识别（只读文件结构，不解码） ----
+
+/**
+ * GIF 有不止一帧、或 WebP 带动画标记时为 true。动图在画布上重画只剩第一帧，所以编辑器不给它们“裁剪”；
+ * 应用里显示时按“播放动图”开关决定播放还是只显示第一帧。
+ */
+export function isAnimatedImage(bytes: Uint8Array, ext: string): boolean {
+  const b = bytes;
+  try {
+    if (ext === 'webp') {
+      // VP8X 扩展头第一字节的第 2 位是动画标记。
+      return b.length >= 21 && String.fromCharCode(b[12], b[13], b[14], b[15]) === 'VP8X' && (b[20] & 0x02) !== 0;
+    }
+    if (ext !== 'gif' || b.length < 13) return false;
+    let i = 13;
+    if (b[10] & 0x80) i += 3 * (2 << (b[10] & 0x07));
+    const skipSubBlocks = (): void => {
+      while (i < b.length && b[i] !== 0) i += b[i] + 1;
+      i++;
+    };
+    let frames = 0;
+    while (i < b.length) {
+      const block = b[i];
+      if (block === 0x2C) {
+        frames++;
+        if (frames > 1) return true;
+        const packed = b[i + 9];
+        i += 10;
+        if (packed & 0x80) i += 3 * (2 << (packed & 0x07));
+        i++; // LZW 最小码长
+        skipSubBlocks();
+      } else if (block === 0x21) {
+        i += 2;
+        skipSubBlocks();
+      } else {
+        break;
+      }
+    }
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
 // ---- 图片尺寸（只读文件头，不解码） ----
 
 export function imageSize(bytes: Uint8Array, ext: string): { width: number; height: number } {

@@ -63,6 +63,23 @@ function handWritten() {
   };
 }
 
+test('animated GIF and WebP are told apart from still ones', () => {
+  // 最小 GIF：头 + 逻辑屏幕描述（无全局色表）+ 若干帧（图像描述 + LZW 码长 + 一个数据子块）+ 结尾。
+  const frame = [0x21, 0xF9, 4, 0, 10, 0, 0, 0, 0x2C, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 0x01, 0];
+  const gif = (frames) => new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0, 0, 0, 0,
+    ...Array.from({ length: frames }, () => frame).flat(), 0x3B]);
+  assert.equal(io.isAnimatedImage(gif(1), 'gif'), false);
+  assert.equal(io.isAnimatedImage(gif(3), 'gif'), true);
+  const webp = (flags) => {
+    const b = new Uint8Array(30);
+    b.set([0x52, 0x49, 0x46, 0x46, 22, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x58, 10, 0, 0, 0, flags]);
+    return b;
+  };
+  assert.equal(io.isAnimatedImage(webp(0x02), 'webp'), true);
+  assert.equal(io.isAnimatedImage(webp(0x10), 'webp'), false);
+  assert.equal(io.isAnimatedImage(jpg(10, 10), 'jpg'), false);
+});
+
 test('image sizes come from file headers', () => {
   assert.deepEqual(io.imageSize(png(450, 660), 'png'), { width: 450, height: 660 });
   assert.deepEqual(io.imageSize(jpg(841, 1870), 'jpg'), { width: 841, height: 1870 });

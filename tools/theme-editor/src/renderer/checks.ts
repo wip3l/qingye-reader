@@ -1,5 +1,5 @@
 // 编辑中的问题：先做编辑器自己的检查（能精确指到字段），没有错误时再把整包交给应用格式层严格校验。
-import { buildFiles, formatSize, MAX_ASSETS, usedAssetPaths, verifyFiles } from '../core/packageIo.ts';
+import { buildFiles, formatSize, isAnimatedImage, MAX_ASSETS, usedAssetPaths, verifyFiles } from '../core/packageIo.ts';
 import { getPath, mp, project, type Mode } from './state.ts';
 import { assetFields, SECTIONS, sectionOfPath, type Field } from './sections.ts';
 import { contrast, isColor, luminance } from './colors.ts';
@@ -20,8 +20,10 @@ const LABEL: Record<Mode, string> = { light: '浅色', dark: '深色' };
 const PACKAGE_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 
 /** 位图或 SVG 尺寸与部件规格不符时的提示；没有问题返回空串。 */
-export function sizeWarning(field: Field, asset: { kind: string; width: number; height: number }): string {
+export function sizeWarning(field: Field, asset: { kind: string; width: number; height: number; bytes?: Uint8Array; ext?: string }): string {
   if (!asset.width || !asset.height) return '';
+  // 动图不能裁（重画只剩第一帧），显示时居中铺满，比例不对也不提醒。
+  if (asset.bytes && asset.ext && isAnimatedImage(asset.bytes, asset.ext)) return '';
   if (asset.kind === 'vector') {
     if (field.viewBox && (asset.width !== field.viewBox[0] || asset.height !== field.viewBox[1])) {
       if (field.icon || field.square) return `viewBox 应为 0 0 ${field.viewBox[0]} ${field.viewBox[1]}`;

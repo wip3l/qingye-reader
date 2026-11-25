@@ -6,6 +6,7 @@ import { RecentReadShortcut } from '../utils/RecentReadShortcut';
 import { ReaderFontBootstrap } from '../utils/ReaderFontBootstrap';
 import { ReaderSystemFontHelper } from '../utils/ReaderSystemFontHelper';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
+import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
 import { LocalBookService } from '../core/book/LocalBookService';
 import { ThemeStartupCover } from '../components/ThemeStartupCover';
 import { ThemeIds, ThemeStartupTextStyle } from '../theme/ThemeModels';
@@ -51,9 +52,16 @@ struct StartupPage {
         !this.customStartupImage()) ?
       0 : 720;
     this.scheduleStartupJump(startupDelay);
-    if (startupDelay > 0 && this.customStartupImage()) {
-      this.extendForAnimatedCover(this.customStartupImage(), startupDelay, Date.now());
+    if (startupDelay > 0 && this.displayedStartupImage()) {
+      this.extendForAnimatedCover(this.displayedStartupImage(), startupDelay, Date.now());
     }
+  }
+
+  /** 启动页实际显示的图片文件：方案自定义的那张，或主题包自带的那张（内置主题是资源引用，不会是动图）。 */
+  displayedStartupImage(): string {
+    if (this.customStartupImage()) return this.customStartupImage();
+    const image = ThemeAssetRegistry.startupBackground(ThemeRuntime.startupThemeId(this.appDarkMode), this.appDarkMode);
+    return typeof image === 'string' ? image : '';
   }
 
   scheduleStartupJump(delay: number): void {

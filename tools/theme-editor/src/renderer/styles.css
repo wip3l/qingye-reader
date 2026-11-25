@@ -191,6 +191,7 @@ pre.json { font-family: var(--f-mono); font-size: 11.5px; background: var(--sunk
 .hbg img { position: absolute; left: 0; top: 0; width: 100%; aspect-ratio: 4 / 5; object-fit: cover; display: block; }
 .hbg i { position: absolute; inset: 0; }
 .hbg-full { height: 100%; }
+.animline { color: var(--accent); }
 .hbg-full img { aspect-ratio: auto; height: 100%; }
 .hbg-full img.hbg-gap { object-fit: cover; filter: blur(18px); transform: scale(1.15); }
 .hbg-full .hbg-tile { position: absolute; inset: 0; background-repeat: repeat; background-size: 50% auto; }

@@ -62,8 +62,7 @@ export struct ThemeStartupCover {
         }
       } else {
         // 使用参考主题封面视觉语言重新绘制的独立启动插画，不复用书籍封面本身。
-        Image(this.customImagePath ? this.customImage() :
-          ThemeAssetRegistry.startupBackground(this.resolvedThemeId(), this.darkMode))
+        Image(this.customImagePath ? this.customImage() : this.themeImage())
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Cover)
@@ -215,6 +214,13 @@ export struct ThemeStartupCover {
   customImage(): string {
     if (this.animatedImageRevision < 0) return this.customImagePath;
     return AnimatedImagePolicy.display(getContext(this), this.customImagePath);
+  }
+
+  /** 主题的启动图；主题包里的是本机文件，可能是动图，同样交给 AnimatedImagePolicy。 */
+  themeImage(): ResourceStr {
+    const image = ThemeAssetRegistry.startupBackground(this.resolvedThemeId(), this.darkMode);
+    if (typeof image !== 'string' || this.animatedImageRevision < 0) return image;
+    return AnimatedImagePolicy.display(getContext(this), image);
   }
 
   hasCoverText(): boolean {
