@@ -22167,7 +22167,7 @@ ${leading}` : leading;
       } else if (deviceInfo.sdkApiVersion >= 23) {
         Text('', { controller: this.readerV2NativeSelectionController(
           this.readerV2NativeSelectionKey(role, chapterIndex, pageIndex, page), page) })
-          .lineSpacing(LengthMetrics.vp(px2vp(this.toMeasureNonNegativePx(this.readerLineHeight))),
+          .lineSpacing(LengthMetrics.vp(px2vp(this.toMeasureNonNegativePx(this.readerLineHeight) + page.lineStretchPx)),
             { onlyBetweenLines: true })
           .halfLeading(false)
           .includeFontPadding(true)
@@ -22196,7 +22196,7 @@ ${leading}` : leading;
         // 系统自带的选中底色会和绘制的高亮叠在一起。
         Text('', { controller: this.readerV2NativeSelectionController(
           this.readerV2NativeSelectionKey(role, chapterIndex, pageIndex, page), page) })
-          .lineSpacing(LengthMetrics.vp(px2vp(this.toMeasureNonNegativePx(this.readerLineHeight))))
+          .lineSpacing(LengthMetrics.vp(px2vp(this.toMeasureNonNegativePx(this.readerLineHeight) + page.lineStretchPx)))
           .halfLeading(false)
           .textAlign(this.readerTextAlignValue())
           .wordBreak(WordBreak.BREAK_WORD)

@@ -32,6 +32,8 @@ class ReaderV2MeasuredBlock {
   /** Width the slice was laid out at and its left offset inside the column (drop-cap lines are narrower). */
   widthPx: number = 0;
   leadPx: number = 0;
+  /** 排这一段时正文行距上加的页底对齐份额；和当前这一遍不一样就要重排。 */
+  stretchPx: number = 0;
   private lines: Map<number, graphicsText.LineMetrics> = new Map<number, graphicsText.LineMetrics>();
 
   constructor(block: ReaderV2Block, paragraph: graphicsText.Paragraph) {
@@ -77,6 +79,24 @@ class ReaderV2DropCapPlan {
   /** 方框上边相对第一行行框顶边的偏移。 */
   boxTopPx: number = 0;
   reservePx: number = 0;
+}
+
+/** 排一页的中间结果：片段已放好，还没做页底对齐和收尾。 */
+class ReaderV2PageDraft {
+  page: ReaderV2PageLayout = new ReaderV2PageLayout();
+  hasContent: boolean = false;
+  titlePageBoundary: boolean = false;
+  /** 最后一块的底边。 */
+  y: number = 0;
+  /** Index of the first hit area each fragment contributed, so fragments can be moved with their areas. */
+  fragmentActionStarts: number[] = [];
+  /** 本页正文的行间数：段内相邻两行，加上按行距相接的两段之间。 */
+  lineGaps: number = 0;
+}
+
+class ReaderV2ParagraphJoin {
+  joinPx: number = 0;
+  sliceLeadPx: number = 0;
 }
 
 /** A page transaction suspends here until the system has laid out its next paragraph asynchronously. */
@@ -126,6 +146,8 @@ export class ReaderV2PaginationSession {
   dropCap: ReaderV2DropCapPlan | null = null;
   dropCapResolved: boolean = false;
   dropPart: number = 0;
+  /** 页底对齐：当前这一遍给正文每处行间加的距离，只在重排那一页时不为 0。 */
+  lineStretchPx: number = 0;
   private blockStyles: ReaderV2SpanStyleRange[] = [];
   private blockStylesIndex: number = -1;
 
@@ -303,7 +325,115 @@ export class ReaderV2Paginator {
           continue;
         }
       }
-      const page = new ReaderV2PageLayout();
+      const draft = ReaderV2Paginator.layoutPageAligned(session, column, columnIndex);
+      if (!draft.hasContent) break;
+      const page = draft.page;
+      const columnBottom = session.continuous ? Number.MAX_SAFE_INTEGER : column.bottom;
+      const y = draft.y;
+      ReaderV2Paginator.finalizePageSelection(page);
+      for (const fragment of page.fragments) {
+        page.contentBottomPx = Math.max(page.contentBottomPx, fragment.clipRect.bottom);
+      }
+      if (session.continuous && session.snapshot.titleSinglePage) {
+        page.contentBottomPx = Math.max(page.contentBottomPx, y);
+      }
+      const lastFragment = page.fragments[page.fragments.length - 1];
+      if (lastFragment.titleEnd && !session.snapshot.titleSinglePage && session.titleMarginBottomPx > 0) {
+        page.contentBottomPx = Math.min(columnBottom, Math.max(page.contentBottomPx,
+          lastFragment.paragraphY + lastFragment.paragraphHeight + session.titleMarginBottomPx));
+      }
+      // 单独成页的标题已在自己的排版里放好饰图（那里的字号可能缩过）。
+      if (page.decorations.length === 0) {
+        ReaderV2ChapterHeadLayout.place(page, session.snapshot, session.chapterHead, column);
+      }
+      ReaderV2Paginator.placeDropCap(page, session, column);
+      page.sourceStart = session.document.sourceOffsetForDisplay(page.displayStart);
+      page.sourceEnd = session.document.sourceOffsetForDisplay(page.displayEnd);
+      page.identity = `${session.document.identity}_${session.snapshot.identity}_${session.pageIndex}_` +
+        `${page.displayStart}_${page.displayEnd}`;
+      result.pages.push(page);
+      session.pageIndex++;
+      appended++;
+    }
+    result.complete = session.blockIndex >= session.document.blocks.length;
+    return appended;
+  }
+
+  /**
+   * 排一页并把末行对到版心底边。一页排满后底部通常剩不到一行的空白，每页剩的还不一样；把它平均加到本页
+   * 正文的每一处行间（段内的行与行、段与段），整页按加大后的行距重排一遍，断行和分页位置不变。
+   * 这样段间距 0 时段与段之间仍和段内一样。重排后对不上原来的分页位置（行高取整等）就退一步用整数像素，
+   * 再不行保留第一遍；余下的零头和不能重排的页（带首字装饰）加在段与段之间。
+   */
+  private static layoutPageAligned(session: ReaderV2PaginationSession, column: ReaderV2Rect,
+    columnIndex: number): ReaderV2PageDraft {
+    const startBlock = session.blockIndex;
+    const startLine = session.lineIndex;
+    const startPart = session.dropPart;
+    const startMeasured = session.measuredBlock;
+    let draft = ReaderV2Paginator.layoutPage(session, column, columnIndex);
+    if (!draft.hasContent || session.continuous || draft.titlePageBoundary ||
+      session.blockIndex >= session.document.blocks.length) {
+      return draft;
+    }
+    // 后面还有内容：这一页是因为下一行放不下才结束的。
+    const snapshot = session.snapshot;
+    const leftover = column.bottom - draft.y;
+    // 剩余超过两行说明这一页是被整页插图或放不下的大块提前结束的，不属于要对齐的情况。
+    if (leftover <= 0.5 || leftover > (snapshot.fontSizePx + snapshot.lineSpacingPx) * 2) return draft;
+    const paragraphGaps = ReaderV2Paginator.alignableGaps(draft.page);
+    const hasDropCap = draft.page.fragments.some((fragment: ReaderV2PageFragment): boolean =>
+      fragment.dropCapBoxPx > 0 || fragment.blockContinuation);
+    // 摊到段间每处不到一像素时看不出来，不值得重排。
+    if (draft.lineGaps > 0 && !hasDropCap && leftover > Math.max(2, paragraphGaps)) {
+      const endBlock = session.blockIndex;
+      const endLine = session.lineIndex;
+      const endPart = session.dropPart;
+      const endMeasured = session.measuredBlock;
+      const exact = (leftover - 0.5) / draft.lineGaps;
+      const candidates: number[] = [exact];
+      if (Math.floor(exact) >= 1 && Math.floor(exact) < exact) candidates.push(Math.floor(exact));
+      let aligned: ReaderV2PageDraft | null = null;
+      try {
+        for (const stretch of candidates) {
+          session.blockIndex = startBlock;
+          session.lineIndex = startLine;
+          session.dropPart = startPart;
+          session.measuredBlock = startMeasured;
+          session.lineStretchPx = stretch;
+          const retry = ReaderV2Paginator.layoutPage(session, column, columnIndex);
+          if (retry.hasContent && session.blockIndex === endBlock && session.lineIndex === endLine &&
+            session.dropPart === endPart && retry.y <= column.bottom + 0.01 &&
+            retry.page.displayEnd === draft.page.displayEnd) {
+            retry.page.lineStretchPx = stretch;
+            aligned = retry;
+            break;
+          }
+        }
+      } finally {
+        session.lineStretchPx = 0;
+      }
+      if (aligned) {
+        draft = aligned;
+        // 下一页按不加份额的行距重新量这一段。
+        if (session.measuredBlock && session.measuredBlock.stretchPx !== 0) session.measuredBlock = null;
+      } else {
+        session.blockIndex = endBlock;
+        session.lineIndex = endLine;
+        session.dropPart = endPart;
+        session.measuredBlock = endMeasured;
+      }
+    }
+    ReaderV2Paginator.alignPageBottom(draft.page, draft.fragmentActionStarts, column.bottom - draft.y, snapshot);
+    return draft;
+  }
+
+  /** 按当前光标排出一页的片段，不做页底对齐；session.lineStretchPx 是这一遍给正文行间加的距离。 */
+  private static layoutPage(session: ReaderV2PaginationSession, column: ReaderV2Rect,
+    columnIndex: number): ReaderV2PageDraft {
+    const draft = new ReaderV2PageDraft();
+    {
+      const page = draft.page;
       page.pageIndex = session.pageIndex;
       page.columnIndex = columnIndex;
       page.contentRect = new ReaderV2Rect(column.left, column.top, column.right, column.bottom);
@@ -317,7 +447,7 @@ export class ReaderV2Paginator {
       // Top of the drop-cap paragraph's first line when its wrapped lines were placed on this page.
       let dropLeadTop = Number.NaN;
       // Index of the first hit area each fragment contributed, so fragments can be moved with their areas.
-      const fragmentActionStarts: number[] = [];
+      const fragmentActionStarts = draft.fragmentActionStarts;
       // Paragraph hot-comment cards placed in the current page (or, while scrolling, the current screen height).
       let cardWindow = 0;
       let cardsInWindow = 0;
@@ -512,7 +642,8 @@ export class ReaderV2Paginator {
         }
 
         let current = session.measuredBlock;
-        if (!current || current.block !== session.document.blocks[session.blockIndex]) {
+        if (!current || current.block !== session.document.blocks[session.blockIndex] ||
+          current.stretchPx !== ReaderV2Paginator.blockStretch(current.block, session)) {
           current = ReaderV2Paginator.measureCurrent(session);
           session.measuredBlock = current;
         }
@@ -529,6 +660,7 @@ export class ReaderV2Paginator {
         const dropRest = !!drop && session.dropPart === 1;
         const startsNewBlock = session.lineIndex === 0 && !dropRest;
         let spacing = startsNewBlock ? ReaderV2Paginator.blockSpacingBefore(session, hasContent, previousWasImage) : 0;
+        let joinsText = startsNewBlock && ReaderV2Paginator.joinsBodyText(session, hasContent, previousWasImage);
         if (dropRest && session.lineIndex === 0 && !Number.isNaN(dropLeadTop) && drop) {
           // Keep the paragraph's own line pitch across the two slices.
           spacing = Math.max(0, dropLeadTop + drop.wrapLines * drop.pitchPx - y);
@@ -539,6 +671,7 @@ export class ReaderV2Paginator {
           // Mirror the gap the card group has above it.
           const ink = ReaderV2Paginator.lineInk(current, session.lineIndex, session.snapshot);
           spacing = Math.max(0, cardEdgeGap - (ink ? ink.top - firstLine.topHeight : 0));
+          joinsText = false;
         }
         if (!hasContent && !topInkGuardApplied) {
           // A zero user margin places the first logical line box on the page boundary. Some fonts (notably the
@@ -549,7 +682,11 @@ export class ReaderV2Paginator {
           y += ReaderV2Paginator.lineTopInkGuard(firstLine);
           topInkGuardApplied = true;
         }
-        const firstLineHeight = ReaderV2Paginator.lineBottom(firstLine) - firstLine.topHeight;
+        // 跨页段落的后半截单独排版，它的第一行比在整段里多一份首行字体内边距，字整体靠下这么多；
+        // 不算进去的话后面一段会贴上来，这一处的行距就比别处小。
+        const sliceLead = session.lineIndex > 0 && !current.block.title ?
+          ReaderV2Paginator.paragraphJoin(session.snapshot, session.lineStretchPx).sliceLeadPx : 0;
+        const firstLineHeight = ReaderV2Paginator.lineBottom(firstLine) - firstLine.topHeight + sliceLead;
         if (!hasContent) {
           // Keep at least one line on a short viewport even when the requested title margin is larger.
           spacing = Math.min(spacing, Math.max(0, columnBottom - y - firstLineHeight));
@@ -568,7 +705,7 @@ export class ReaderV2Paginator {
         y += spacing;
 
         const fragmentFirstLine = session.lineIndex;
-        const paragraphLineTop = current.line(fragmentFirstLine).topHeight;
+        const paragraphLineTop = current.line(fragmentFirstLine).topHeight - sliceLead;
         let fragmentLastLine = fragmentFirstLine - 1;
         let fragmentBottom = paragraphLineTop;
         while (session.lineIndex < current.lineCount) {
@@ -593,7 +730,9 @@ export class ReaderV2Paginator {
 
         const fragment = ReaderV2Paginator.createFragment(session.document, current, session.blockIndex,
           fragmentFirstLine, fragmentLastLine, column.left, y, paragraphLineTop, fragmentBottom,
-          session.snapshot, session.currentBlockStyles(), session.width, session.paragraphCache);
+          session.snapshot, session.currentBlockStyles(), session.width, session.paragraphCache,
+          current.stretchPx);
+        if (!current.block.title) draft.lineGaps += fragmentLastLine - fragmentFirstLine + (joinsText ? 1 : 0);
         const previous = session.blockIndex > 0 ? session.document.blocks[session.blockIndex - 1] : null;
         fragment.fixedGapBefore = startsNewBlock && hasContent &&
           ((current.block.title && session.titleMarginTopPx > 0) ||
@@ -647,38 +786,24 @@ export class ReaderV2Paginator {
         }
       }
 
-      if (!hasContent) break;
-      if (!session.continuous && !titlePageBoundary && session.blockIndex < session.document.blocks.length) {
-        // More of the chapter follows, so this page ended because the next line did not fit.
-        ReaderV2Paginator.alignPageBottom(page, fragmentActionStarts, column.bottom - y, session.snapshot);
-      }
-      ReaderV2Paginator.finalizePageSelection(page);
-      for (const fragment of page.fragments) {
-        page.contentBottomPx = Math.max(page.contentBottomPx, fragment.clipRect.bottom);
-      }
-      if (session.continuous && session.snapshot.titleSinglePage) {
-        page.contentBottomPx = Math.max(page.contentBottomPx, y);
-      }
-      const lastFragment = page.fragments[page.fragments.length - 1];
-      if (lastFragment.titleEnd && !session.snapshot.titleSinglePage && session.titleMarginBottomPx > 0) {
-        page.contentBottomPx = Math.min(columnBottom, Math.max(page.contentBottomPx,
-          lastFragment.paragraphY + lastFragment.paragraphHeight + session.titleMarginBottomPx));
-      }
-      // 单独成页的标题已在自己的排版里放好饰图（那里的字号可能缩过）。
-      if (page.decorations.length === 0) {
-        ReaderV2ChapterHeadLayout.place(page, session.snapshot, session.chapterHead, column);
-      }
-      ReaderV2Paginator.placeDropCap(page, session, column);
-      page.sourceStart = session.document.sourceOffsetForDisplay(page.displayStart);
-      page.sourceEnd = session.document.sourceOffsetForDisplay(page.displayEnd);
-      page.identity = `${session.document.identity}_${session.snapshot.identity}_${session.pageIndex}_` +
-        `${page.displayStart}_${page.displayEnd}`;
-      result.pages.push(page);
-      session.pageIndex++;
-      appended++;
+      draft.hasContent = hasContent;
+      draft.titlePageBoundary = titlePageBoundary;
+      draft.y = y;
     }
-    result.complete = session.blockIndex >= session.document.blocks.length;
-    return appended;
+    return draft;
+  }
+
+  /** 这一块的段落排版要带上的行间份额：只有正文带，标题的行距不动。 */
+  private static blockStretch(block: ReaderV2Block, session: ReaderV2PaginationSession): number {
+    return block.title ? 0 : session.lineStretchPx;
+  }
+
+  /** 当前块接在正文后面、两段之间按行距相接（blockSpacingBefore 里收回字体内边距的那种情况）。 */
+  private static joinsBodyText(session: ReaderV2PaginationSession, hasContent: boolean,
+    previousWasImage: boolean): boolean {
+    const block = session.document.blocks[session.blockIndex];
+    const previous = session.blockIndex > 0 ? session.document.blocks[session.blockIndex - 1] : null;
+    return hasContent && !previousWasImage && !block.title && !!previous && !previous.title && !previous.image;
   }
 
   private static blockSpacingBefore(session: ReaderV2PaginationSession, hasContent: boolean,
@@ -694,20 +819,24 @@ export class ReaderV2Paginator {
     if (hasContent && previous && previous.title) return paragraphGap + session.titleMarginBottomPx;
     // 正文接正文：段间距 0 时两段之间的行距和段内一样，设置值加在这个行距上面。
     const textAfterText = hasContent && !previousWasImage && !!previous && !previous.image;
-    return paragraphGap + (textAfterText ? ReaderV2Paginator.paragraphJoinPx(snapshot) : 0);
+    return paragraphGap +
+      (textAfterText ? ReaderV2Paginator.paragraphJoin(snapshot, session.lineStretchPx).joinPx : 0);
   }
 
-  private static readonly paragraphJoinCache: Map<string, number> = new Map();
+  private static readonly paragraphJoinCache: Map<string, ReaderV2ParagraphJoin> = new Map();
 
   /**
-   * 正文两段相接时要补上（多为负数，即收回）的距离，使前段末行与后段首行的基线距离等于段内相邻两行。
-   * 每段单独排版：首行上方、末行下方各带一份字体内边距（includeFontPadding），末行下方算不算行距也由排版
-   * 引擎决定，所以拿一段三行的正文样本量出“段内行距”与“直接相接”的差。只收回空白，字不会比段内更挤。
+   * 正文段落单独排版带来的两个修正量，拿一段三行的正文样本量出来（stretchPx 是页底对齐加在行间的份额）：
+   * joinPx——两段相接时要补上（多为负数，即收回）的距离，使前段末行与后段首行的基线距离等于段内相邻两行。
+   * 每段首行上方、末行下方各带一份字体内边距（includeFontPadding），末行下方算不算行距也由排版引擎决定。
+   * 只收回空白，字不会比段内更挤。
+   * sliceLeadPx——段落的后半截单独排版时，首行基线比它在整段里（当中间行时）靠下的距离。
    */
-  private static paragraphJoinPx(snapshot: ReaderV2LayoutSnapshot): number {
-    const cached = ReaderV2Paginator.paragraphJoinCache.get(snapshot.identity);
+  private static paragraphJoin(snapshot: ReaderV2LayoutSnapshot, stretchPx: number): ReaderV2ParagraphJoin {
+    const key = stretchPx === 0 ? snapshot.identity : `${snapshot.identity}_${stretchPx}`;
+    const cached = ReaderV2Paginator.paragraphJoinCache.get(key);
     if (cached !== undefined) return cached;
-    let join = 0;
+    const result = new ReaderV2ParagraphJoin();
     try {
       const sample = new ReaderV2Block('', '国国国', 0, 3, 0, 3, false);
       const style = ReaderV2Paginator.baseTextStyle(sample, snapshot);
@@ -717,7 +846,7 @@ export class ReaderV2Paginator {
         textDirection: graphicsText.TextDirection.LTR,
         wordBreak: graphicsText.WordBreak.BREAK_WORD,
         breakStrategy: graphicsText.BreakStrategy.GREEDY,
-        lineSpacing: snapshot.lineSpacingPx,
+        lineSpacing: snapshot.lineSpacingPx + stretchPx,
         includeFontPadding: true
       }, graphicsText.FontCollection.getGlobalInstance());
       builder.pushStyle(style);
@@ -732,20 +861,24 @@ export class ReaderV2Paginator {
         const last = paragraph.getLineMetrics(2);
         if (first && middle && last) {
           const pitch = last.baseline - middle.baseline;
-          const joined = (ReaderV2Paginator.lineBottom(last) - last.baseline) + (first.baseline - first.topHeight);
-          if (Number.isFinite(pitch) && Number.isFinite(joined) && pitch > 0) join = pitch - joined;
+          const firstLead = first.baseline - first.topHeight;
+          const joined = (ReaderV2Paginator.lineBottom(last) - last.baseline) + firstLead;
+          if (Number.isFinite(pitch) && Number.isFinite(joined) && pitch > 0) result.joinPx = pitch - joined;
+          const lead = firstLead - (middle.baseline - middle.topHeight);
+          if (Number.isFinite(lead) && Math.abs(lead) < snapshot.fontSizePx) result.sliceLeadPx = lead;
         }
       }
     } catch (_) {
-      join = 0;
+      result.joinPx = 0;
+      result.sliceLeadPx = 0;
     }
-    ReaderV2Paginator.paragraphJoinCache.set(snapshot.identity, join);
+    ReaderV2Paginator.paragraphJoinCache.set(key, result);
     while (ReaderV2Paginator.paragraphJoinCache.size > 16) {
       const oldest = ReaderV2Paginator.paragraphJoinCache.keys().next().value as string | undefined;
       if (oldest === undefined) break;
       ReaderV2Paginator.paragraphJoinCache.delete(oldest);
     }
-    return join;
+    return result;
   }
 
   /** Isolate the complete title group; its source ranges remain those of the original document. */
@@ -868,23 +1001,21 @@ export class ReaderV2Paginator {
     }
   }
 
+  /** 页底对齐时可以加距离的块间隙数；标题各行之间、定死的间隙（标题边距、段末热评卡）不算。 */
+  private static alignableGaps(page: ReaderV2PageLayout): number {
+    return page.fragments.filter((fragment: ReaderV2PageFragment, index: number): boolean =>
+      index > 0 && !fragment.titleContinuation && !fragment.fixedGapBefore).length;
+  }
+
   /**
-   * 页底对齐：一页排满后底部通常剩不到一行的空白，每页剩的还不一样。段内行距排好后改不了，只能加在块之间，
-   * 所以按“摊到本页每一处行间”的份额给每个块间隙加一点：段间距不会比行距明显大出来（段间距 0 时
-   * 段与段之间要和段内一样），摊不完的空白留在页底。不动行距和断行。
+   * 页底对齐的收尾：行间摊完后余下的零头，或者这一页没能按行距重排时的全部空白，均分到本页各块之间。
+   * 每个间隙最多加半个字高，摊不完的留在页底。不动行距和断行。
    */
   private static alignPageBottom(page: ReaderV2PageLayout, fragmentActionStarts: number[], leftoverPx: number,
     snapshot: ReaderV2LayoutSnapshot): void {
-    const gaps = page.fragments.filter((fragment: ReaderV2PageFragment, index: number): boolean =>
-      index > 0 && !fragment.titleContinuation && !fragment.fixedGapBefore).length;
-    // 剩余超过两行说明这一页是被整页插图或放不下的大块提前结束的，不属于要对齐的情况。
+    const gaps = ReaderV2Paginator.alignableGaps(page);
     if (gaps <= 0 || leftoverPx <= 0.5 || leftoverPx > (snapshot.fontSizePx + snapshot.lineSpacingPx) * 2) return;
-    let lines = 0;
-    for (const fragment of page.fragments) {
-      lines += fragment.paragraph ? Math.max(1, fragment.paragraph.getLineCount()) : 1;
-    }
-    const perGapPx = Math.min(leftoverPx / Math.max(gaps, lines - 1), snapshot.fontSizePx * 0.5);
-    if (perGapPx <= 0.05) return;
+    const perGapPx = Math.min(leftoverPx / gaps, snapshot.fontSizePx * 0.5);
     let shiftPx = 0;
     for (let index = 1; index < page.fragments.length; index++) {
       const fragment = page.fragments[index];
@@ -925,12 +1056,13 @@ export class ReaderV2Paginator {
 
   private static measureBlock(document: ReaderV2Document, block: ReaderV2Block,
     snapshot: ReaderV2LayoutSnapshot, regexStyles: ReaderV2SpanStyleRange[], width: number,
-    paragraphCache: ReaderV2ParagraphCache | null = null): ReaderV2MeasuredBlock {
+    paragraphCache: ReaderV2ParagraphCache | null = null, stretchPx: number = 0): ReaderV2MeasuredBlock {
     const paragraph = ReaderV2Paginator.buildParagraph(document, block, snapshot, regexStyles, width,
-      0, block.text.length, false, paragraphCache);
+      0, block.text.length, false, paragraphCache, stretchPx);
     const cached = paragraphCache?.measurements.get(paragraph);
     if (cached) return cached;
     const measured = new ReaderV2MeasuredBlock(block, paragraph);
+    measured.stretchPx = block.title ? 0 : stretchPx;
     paragraphCache?.measurements.set(paragraph, measured);
     return measured;
   }
@@ -938,8 +1070,11 @@ export class ReaderV2Paginator {
   private static buildParagraph(document: ReaderV2Document, block: ReaderV2Block,
     snapshot: ReaderV2LayoutSnapshot, regexStyles: ReaderV2SpanStyleRange[], width: number,
     sliceStart: number, sliceEnd: number, outlineOnly: boolean = false,
-    paragraphCache: ReaderV2ParagraphCache | null = null): graphicsText.Paragraph {
-    const cacheKey = `${snapshot.identity}_${block.id}_${sliceStart}_${sliceEnd}_${width}_${outlineOnly}`;
+    paragraphCache: ReaderV2ParagraphCache | null = null, stretchPx: number = 0): graphicsText.Paragraph {
+    // 页底对齐加在正文行间的份额；标题的行距不动。
+    const stretch = block.title ? 0 : stretchPx;
+    const cacheKey = `${snapshot.identity}_${block.id}_${sliceStart}_${sliceEnd}_${width}_${outlineOnly}` +
+      (stretch === 0 ? '' : `_${stretch}`);
     if (paragraphCache) {
       const ready = paragraphCache.ready.get(cacheKey);
       if (ready) return ready;
@@ -954,7 +1089,7 @@ export class ReaderV2Paginator {
       wordBreak: graphicsText.WordBreak.BREAK_WORD,
       breakStrategy: graphicsText.BreakStrategy.GREEDY,
       trailingSpaceOptimized: true,
-      lineSpacing: block.title ? snapshot.titleLineGapPx : snapshot.lineSpacingPx,
+      lineSpacing: block.title ? snapshot.titleLineGapPx : snapshot.lineSpacingPx + stretch,
       // A paragraph is painted independently for every source block. With font padding disabled, glyph ink from
       // some CJK families can extend above the first logical line box and be clipped by Paragraph itself. Later
       // lines appear intact because their preceding line spacing provides bleed room. Include the native font
@@ -993,7 +1128,7 @@ export class ReaderV2Paginator {
     if (!plan) {
       session.dropPart = 0;
       return ReaderV2Paginator.measureBlock(session.document, block, session.snapshot, session.currentBlockStyles(),
-        session.width, session.paragraphCache);
+        session.width, session.paragraphCache, session.lineStretchPx);
     }
     return session.dropPart === 0 ?
       ReaderV2Paginator.measureSlice(session, block, plan.bodyStart, plan.splitAt, session.width - plan.reservePx,
@@ -1004,8 +1139,9 @@ export class ReaderV2Paginator {
   private static measureSlice(session: ReaderV2PaginationSession, block: ReaderV2Block, start: number, end: number,
     width: number, lead: number): ReaderV2MeasuredBlock {
     const paragraph = ReaderV2Paginator.buildParagraph(session.document, block, session.snapshot,
-      session.currentBlockStyles(), width, start, end, false, session.paragraphCache);
+      session.currentBlockStyles(), width, start, end, false, session.paragraphCache, session.lineStretchPx);
     const measured = new ReaderV2MeasuredBlock(block, paragraph);
+    measured.stretchPx = ReaderV2Paginator.blockStretch(block, session);
     measured.sliceStart = start;
     measured.sliceEnd = end;
     measured.widthPx = width;
@@ -1434,7 +1570,7 @@ export class ReaderV2Paginator {
     lastLine: number, x: number, y: number, paragraphLineTop: number,
     paragraphLineBottom: number, snapshot: ReaderV2LayoutSnapshot,
     regexStyles: ReaderV2SpanStyleRange[], width: number,
-    paragraphCache: ReaderV2ParagraphCache | null = null): ReaderV2PageFragment {
+    paragraphCache: ReaderV2ParagraphCache | null = null, stretchPx: number = 0): ReaderV2PageFragment {
     const first = current.line(firstLine);
     const last = current.line(lastLine);
     const fragment = new ReaderV2PageFragment();
@@ -1456,7 +1592,7 @@ export class ReaderV2Paginator {
       first.startIndex === 0 && sliceEnd === current.sliceEnd;
     fragment.paragraph = wholeBlock ? current.paragraph :
       ReaderV2Paginator.buildParagraph(document, current.block, snapshot, regexStyles, layoutWidth,
-        sliceStart, sliceEnd, false, paragraphCache);
+        sliceStart, sliceEnd, false, paragraphCache, stretchPx);
     fragment.selectionRuns = ReaderV2Paginator.buildSelectionRuns(document, current.block, snapshot, regexStyles,
       sliceStart, sliceEnd);
     let runOffset = current.block.displayStart + sliceStart;
@@ -1467,7 +1603,7 @@ export class ReaderV2Paginator {
     });
     if (needsOutline) {
       const outline = ReaderV2Paginator.buildParagraph(document, current.block, snapshot, regexStyles, layoutWidth,
-        sliceStart, sliceEnd, true, paragraphCache);
+        sliceStart, sliceEnd, true, paragraphCache, stretchPx);
       fragment.fontStrokes = ReaderFontStroke.build(outline, snapshot.fontWeight,
         (offset: number): graphicsText.TextStyle => ReaderV2Paginator.styleAt(document, current.block,
           current.block.displayStart + sliceStart + offset, snapshot, regexStyles),

@@ -338,8 +338,8 @@ try {
   page.fragments[1].titleContinuation = true;
   Paginator.alignPageBottom(page, [0,0,0], 6, snapshot);
   assert.equal(page.fragments[1].paragraphY, 0, 'page-bottom distribution must not expand the title gap');
-  // 每个块间隙只分到“摊到每一处行间”的份额（三行两处行间），摊不完的留在页底。
-  assert.equal(page.fragments[2].paragraphY, 3);
+  // 行间摊完后余下的零头全部分给能加距离的块间隙（这里只有一处）。
+  assert.equal(page.fragments[2].paragraphY, 6);
 
   // 章首饰图：左侧时标题每行让出饰图的宽度、饰图上下居中于标题组；上方、下方时算进标题的上、下边距。
   const HeadStyle = sandbox.titleApi.ReaderV2ChapterHeadStyle;
@@ -515,7 +515,7 @@ try {
   Paginator.alignPageBottom(locked,[0,0,0,0],6,styledSnapshot);
   assert.equal(locked.fragments[1].paragraphY, 0);
   assert.equal(locked.fragments[2].paragraphY, 0);
-  assert.equal(locked.fragments[3].paragraphY, 2);
+  assert.equal(locked.fragments[3].paragraphY, 6);
   const short = new Input(); short.viewportWidthPx = 320; short.viewportHeightPx = 70;
   short.fontSizePx = 20; short.titleFontSizePx = 22; short.titleSecondaryScale = 1.5;
   short.titleMarginTopPx = 120; short.titleMarginBottomPx = 120;

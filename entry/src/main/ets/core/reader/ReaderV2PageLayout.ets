@@ -165,6 +165,8 @@ export class ReaderV2PageLayout implements ReaderPaginationBoundary {
   selectionY: number = 0;
   selectionWidth: number = 0;
   selectionHeight: number = 0;
+  /** 页底对齐给本页正文每处行间加的距离（像素）；选字层的行距要跟着加。 */
+  lineStretchPx: number = 0;
   /** 本页最后一个片段的下边缘（含字形出血），滚动阅读用它确定列表项高度。 */
   contentBottomPx: number = 0;
   /** 划线由阅读页按当前划线数据填入；annotationStamp 记填入时的数据版本，版本变了重新填。 */
