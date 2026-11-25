@@ -160,7 +160,9 @@ class TileGroupFlyer {
   cover: ResourceStr = '';
   /** 主题封面在书架上是拉伸铺满的，飞行时一样。 */
   fill: boolean = false;
-  color: string = '';
+  color: ResourceColor = '';
+  /** 主题边框，书架上的封面套着，飞行时也套，落地不再冒出一圈框。 */
+  frame: ResourceStr = '';
   initial: string = '';
   width: number = 0;
   height: number = 0;
@@ -451,6 +453,13 @@ export struct BookshelfPage {
    * 只限这一本：整屏都同步解码会在滚动时堵主线程。
    */
   private shelfLastOpenedBookUrl: string = '';
+  /**
+   * 多图封面轮播现在停在第几张（键 `${bookUrl}#theme` / `${bookUrl}#gallery`）。重建的轮播从这张接着放；
+   * 不轮播的“继续阅读”卡片、开书翻开的封面、关书落地与挪位飞行的封面都取这张，书从格子挪进卡片时不换图。
+   */
+  private shelfCarouselShown: Map<string, number> = new Map<string, number>();
+  /** 点开的这本书从翻开到关书挪位结束都不自动轮播：翻开、合上、落地、飞到新位置看到的是同一张。 */
+  @State shelfCarouselHeldBook: string = '';
   private tileGroupPendingBack: boolean = false;
   /** 已开始但还没切过去的目标分组（-1 表示没有）；兜底收尾时直接切过去，不让点击落空。 */
   private tileGroupPendingTarget: number = -1;
@@ -1039,7 +1048,10 @@ export struct BookshelfPage {
   async loadBooks(forceDataSourceReload: boolean = false): Promise<void> {
     const loadSerial = ++this.shelfLoadSerial;
     // 没经过关书动画回到书架（打开失败、阅读页被换成别的页再返回）时，按住的阅读时间在这里放掉。
-    if (!this.shelfReturnMotionActive && Number(router.getLength()) <= 1) BookshelfSortHelper.releaseReadTimes();
+    if (!this.shelfReturnMotionActive && Number(router.getLength()) <= 1) {
+      BookshelfSortHelper.releaseReadTimes();
+      this.shelfCarouselHeldBook = '';
+    }
     // Returning from the reader refreshes shelf metadata. Do not cover an already-rendered shelf
     // with the initial loading placeholder; that one-frame replacement is perceived as a flash.
     // 只有第一次读书架用占位；之后书架是空的也照常显示“暂无书籍”，重读时不来回切换。
@@ -2857,6 +2869,14 @@ export struct BookshelfPage {
           }
           if (!flyer.fill && this.shelfCoverDimOpacity() > 0) {
             this.shelfCoverDimLayer()
+          }
+          if (flyer.frame) {
+            Image(flyer.frame)
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Fill)
+              .syncLoad(true)
+              .draggable(false)
           }
         }
         .width(flyer.width)
@@ -4985,8 +5005,11 @@ export struct BookshelfPage {
     const flyer = new TileGroupFlyer();
     const base = from.width >= to.width ? from : to;
     flyer.key = book.bookUrl;
-    flyer.cover = this.getShelfCoverList(book).length > 0 ? this.imageCover(this.getShelfCover(book, true)) : '';
-    flyer.color = this.getBookColor(book.name);
+    const cover = this.galleryCoverShown(book);
+    flyer.cover = cover ? this.imageCover(cover) : '';
+    // 有图时垫和书架封面一样的底色（透明底的封面图露出来的是它），没图时才是首字色块。
+    flyer.color = flyer.cover ? this.shelfCoverBackdropColor() : this.getBookColor(book.name);
+    flyer.frame = this.activeThemeShelfFrame();
     flyer.initial = book.name ? book.name.substring(0, 1) : '书';
     flyer.width = base.width;
     flyer.height = base.height;
@@ -7732,6 +7755,7 @@ export struct BookshelfPage {
     }
     this.cloudBookOpenRequest++;
     this.shelfLastOpenedBookUrl = book.bookUrl;
+    this.shelfCarouselHeldBook = book.bookUrl;
     if (this.bookOpenAnimationEnabled()) {
       AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
         Date.now() + SHELF_COVER_OPEN_START_CAP + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
@@ -7917,7 +7941,7 @@ export struct BookshelfPage {
     return cover.boundsWidth > 0 && cover.boundsHeight > 0 ? cover : null;
   }
 
-  /** 阅读页翻开的封面与书架上看到的一致：开着主题边框时带书框，多图取第一张，没有封面时用首字色块。 */
+  /** 阅读页翻开的封面与书架上看到的一致：开着主题边框时带书框，多图取轮播正停着的那张，没有封面时用首字色块。 */
   shelfOpeningCover(book: Book, touchX: number = -1, touchY: number = -1): ShelfOpeningCover {
     const opening: ShelfOpeningCover = {
       bookUrl: book.bookUrl, cover: '', frame: '', color: this.getBookColor(book.name),
@@ -7927,14 +7951,13 @@ export struct BookshelfPage {
     };
     this.measureShelfOpeningBounds(book, opening, touchX, touchY);
     if (this.shouldUseThemeBookCoverFor(book)) {
-      const covers = this.activeThemeBookCovers(book);
-      opening.cover = covers.length > 0 ? covers[0] : '';
+      opening.cover = this.themeCoverShown(book);
       // 不显示边框时书架上的主题封面没有底色，翻开的封面也不垫，不然起步那一帧闪出一块灰。
       opening.color = opening.frameless ? '#00000000' : this.inputColor();
       opening.themeCover = true;
     } else {
-      const covers = this.getShelfCoverList(book);
-      opening.cover = covers.length > 0 ? this.imageCover(covers[0]) : '';
+      const cover = this.galleryCoverShown(book);
+      opening.cover = cover ? this.imageCover(cover) : '';
     }
     opening.frame = this.activeThemeShelfFrame();
     return opening;
@@ -8183,6 +8206,7 @@ export struct BookshelfPage {
           AppStorage.setOrCreate<number>('shelfReturnRefreshNonce', Date.now());
           BookshelfSortHelper.releaseReadTimes();
           this.shelfReturnMotionActive = false;
+          this.shelfCarouselHeldBook = '';
           if (this.shelfImmersivePendingCollapse) {
             // 首页盖图在刷新通知后约 120ms 揭开，揭开后再收。
             setTimeout((): void => {
@@ -8319,10 +8343,11 @@ export struct BookshelfPage {
   makeShelfReorderFlyer(book: Book, from: SharedElementBounds, to: SharedElementBounds): TileGroupFlyer {
     const flyer = this.makeTileGroupFlyer(book, from, to);
     if (this.shouldUseThemeBookCoverFor(book)) {
-      const covers = this.activeThemeBookCovers(book);
-      if (covers.length > 0) {
-        flyer.cover = covers[0];
+      const cover = this.themeCoverShown(book);
+      if (cover) {
+        flyer.cover = cover;
         flyer.fill = true;
+        flyer.color = this.shelfCoverBackdropColor();
       }
     }
     return flyer;
@@ -8560,10 +8585,10 @@ export struct BookshelfPage {
     Stack() {
       if (this.shouldUseThemeBookCoverFor(book)) {
         if ((this.activeThemeBookCovers(book).length === 1 || !animateCovers) &&
-          this.themeImageCrop(ThemeImageSlots.COVER, this.activeThemeBookCovers(book)[0])) {
-          // 主题包动图封面取景时只记了显示区域，按区域画。
-          ThemeCroppedImage({ src: this.activeThemeBookCovers(book)[0],
-            crop: this.themeImageCrop(ThemeImageSlots.COVER, this.activeThemeBookCovers(book)[0]) as ThemeImageCrop,
+          this.themeImageCrop(ThemeImageSlots.COVER, this.themeCoverShown(book))) {
+          // 主题包动图封面取景时只记了显示区域，按区域画。不轮播的地方取轮播正停着的那张，书挪进卡片不换图。
+          ThemeCroppedImage({ src: this.themeCoverShown(book),
+            crop: this.themeImageCrop(ThemeImageSlots.COVER, this.themeCoverShown(book)) as ThemeImageCrop,
             syncLoad: syncDecode || !this.tileGroupAwaitCovers,
             onLoaded: () => this.tileGroupPendingCovers.delete(book.bookUrl),
             onFailed: () => this.tileGroupPendingCovers.delete(book.bookUrl) })
@@ -8573,7 +8598,7 @@ export struct BookshelfPage {
               if (this.tileGroupAwaitCovers && !syncDecode) this.tileGroupPendingCovers.add(book.bookUrl);
             })
         } else if (this.activeThemeBookCovers(book).length === 1 || !animateCovers) {
-          Image(this.activeThemeBookCovers(book)[0])
+          Image(this.themeCoverShown(book))
             .width(width)
             .height(height)
             .objectFit(animateCovers ? ImageFit.Fill : imageFit)
@@ -8624,7 +8649,10 @@ export struct BookshelfPage {
           }
           .width(width)
           .height(height)
-          .autoPlay(true)
+          // 重建时接着上次停的那张放；点开的书在开书到挪位结束前不轮播。
+          .index(this.shelfCarouselIndex(book, 'theme', this.activeThemeBookCovers(book).length))
+          .onChange((index: number) => this.noteShelfCarouselIndex(book, 'theme', index))
+          .autoPlay(this.shelfCarouselHeldBook !== book.bookUrl)
           .interval(this.themeBookCoverInterval(book))
           .indicator(false)
           .loop(true)
@@ -8666,7 +8694,9 @@ export struct BookshelfPage {
         }
         .width(width)
         .height(height)
-        .autoPlay(true)
+        .index(this.shelfCarouselIndex(book, 'gallery', this.getShelfCoverList(book).length))
+        .onChange((index: number) => this.noteShelfCarouselIndex(book, 'gallery', index))
+        .autoPlay(this.shelfCarouselHeldBook !== book.bookUrl)
         .interval(3500)
         .indicator(false)
         .loop(true)
@@ -8756,6 +8786,34 @@ export struct BookshelfPage {
    */
   private themeAssetsLive(): boolean {
     return this.themeRevision >= 0;
+  }
+
+  /** 这本书的轮播现在停在第几张；没记过或张数变了从第一张开始。 */
+  shelfCarouselIndex(book: Book, kind: string, count: number): number {
+    const index = this.shelfCarouselShown.get(`${book.bookUrl}#${kind}`);
+    return index !== undefined && index >= 0 && index < count ? index : 0;
+  }
+
+  noteShelfCarouselIndex(book: Book, kind: string, index: number): void {
+    this.shelfCarouselShown.set(`${book.bookUrl}#${kind}`, index);
+  }
+
+  /** 主题封面里书架上正显示的那张（轮播停着的那张）。 */
+  themeCoverShown(book: Book): ResourceStr {
+    const covers = this.activeThemeBookCovers(book);
+    return covers.length > 0 ? covers[this.shelfCarouselIndex(book, 'theme', covers.length)] : '';
+  }
+
+  /** 书自带或图集封面里书架上正显示的那张（未转本地的原始地址，调用方再过 imageCover）。 */
+  galleryCoverShown(book: Book): string {
+    const covers = this.getShelfCoverList(book);
+    return covers.length > 0 ? covers[this.shelfCarouselIndex(book, 'gallery', covers.length)] : '';
+  }
+
+  /** 书架封面图下面垫的底色：同 coverView 的 backdrop，平铺类布局关掉“显示书籍边框”时不垫。 */
+  shelfCoverBackdropColor(): string {
+    return this.bookshelfLayoutMode !== 'companion' && !this.bookshelfTileCoverFrame ? '#00000000' :
+      this.inputColor();
   }
 
   activeThemeBookCovers(book: Book): ResourceStr[] {
@@ -8893,7 +8951,9 @@ export struct BookshelfPage {
 
   getShelfCover(book: Book, animateCovers: boolean = true): string {
     const covers = this.getShelfCoverList(book);
-    return covers.length > 0 ? (animateCovers ? BookDisplayHelper.pickCover(covers) : covers[0]) : '';
+    // 不轮播的地方（继续阅读卡片等）取轮播正停着的那张，书从格子挪过去不换图。
+    return covers.length > 0 ? (animateCovers ? BookDisplayHelper.pickCover(covers) :
+      covers[this.shelfCarouselIndex(book, 'gallery', covers.length)]) : '';
   }
 
   getShelfCoverList(book: Book): string[] {
