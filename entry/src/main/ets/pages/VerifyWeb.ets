@@ -12,6 +12,7 @@ import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 /**
  * Restricted bridge used only by HTML passed to java.showBrowser(). Remote pages do not receive
@@ -529,7 +530,7 @@ struct VerifyWebPage {
   async confirmOnlineBookSourceImport(importUrl: string): Promise<void> {
     const hostMatch = importUrl.match(/^https?:\/\/([^/?#]+)/i);
     const host = hostMatch && hostMatch[1] ? hostMatch[1] : '远程服务器';
-    const result = await promptAction.showDialog({
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '更新书源',
       message: `将从 ${host} 下载并更新书源。现有书源变量、登录状态和本地设置会保留。`,
       buttons: [

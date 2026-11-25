@@ -7,6 +7,7 @@ import { ChangeSourceResultCache } from './ChangeSourceResultCache';
 import { SearchExplorePendingBook } from './SearchExplorePendingBook';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { HdsFeedback } from './HdsFeedback';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 /**
  * The shelf keeps one online copy per work (see BookIdentity.workKeyOf). Adding the same work from
@@ -24,7 +25,7 @@ export class ShelfWorkDuplicatePrompt {
       `《${name}》已在书架。要改用当前这个结果吗？阅读进度、分组和书签会保留。` :
       `《${name}》已在书架（来源：${shelfBook.originName || '其他书源'}）。要换到「${target}」吗？阅读进度、分组和书签会保留。`;
     try {
-      const choice = await uiContext.getPromptAction().showDialog({
+      const choice = await ThemedDialog.showDialog(uiContext, {
         title: '书架已有这本书',
         message: message,
         buttons: [

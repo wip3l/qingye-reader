@@ -2,6 +2,7 @@ import { ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
+import { DialogStyle } from '../theme/DialogStyle';
 
 /**
  * 点击区域动作设置内容（配合系统自定义对话框使用，表面材质由系统渲染）。
@@ -143,7 +144,7 @@ export struct TapZoneSettingsDialogContent {
           .layoutWeight(1)
           .height(40)
           .fontSize(AppFontSize.BODY)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.saveActions('3,3,2,3,1,2,2,2,2');
@@ -153,8 +154,8 @@ export struct TapZoneSettingsDialogContent {
           .layoutWeight(1)
           .height(40)
           .fontSize(AppFontSize.BODY)
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => {
             this.onDone();
           })

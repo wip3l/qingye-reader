@@ -8,6 +8,7 @@ import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { LengthMetrics, router } from '@kit.ArkUI';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 /** 播放位置刷新间隔：字幕切行比面板进度条（每秒一次）更跟手。 */
 const POSITION_POLL_MS = 250;
@@ -308,7 +309,7 @@ export struct AudioSubtitleView {
   async downloadModel(): Promise<void> {
     if (AudioOfflineStore.network() === 'cellular') {
       try {
-        const result = await this.getUIContext().getPromptAction().showDialog({
+        const result = await ThemedDialog.showDialog(this.getUIContext(), {
           title: '正在使用移动网络',
           message: `字幕模型约 ${SubtitleModelStore.totalLabel()}，会消耗较多流量。确定现在下载？`,
           buttons: [{ text: '取消', color: ThemeRuntime.subTextColor(this.darkMode) },

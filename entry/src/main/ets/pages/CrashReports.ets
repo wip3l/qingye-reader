@@ -8,6 +8,7 @@ import { PageScaffold } from '../components/common/PageScaffold';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
 import { CrashReportStore, CrashReportSummary } from '../utils/CrashReportStore';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 /** 本机的崩溃记录列表（闪退、卡死、被系统结束），点开看详情并分享给开发者。 */
 @Entry
@@ -169,7 +170,7 @@ struct CrashReportsPage {
   }
 
   async confirmClearAll(): Promise<void> {
-    const result = await promptAction.showDialog({
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '清除崩溃记录',
       message: '确定清除全部崩溃记录吗？清除后无法恢复。',
       buttons: [

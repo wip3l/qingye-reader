@@ -80,6 +80,8 @@ import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { PopupMenuAction, PopupMenuHeader } from '../components/common/PopupMenuAction';
 import { compareText } from '../platform/TextCompare';
+import { DialogStyle } from '../theme/DialogStyle';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 // “我的”页已拥有区只露这么多套，其余进“全部”列表，免得把方案挤到很下面。
 const OWNED_PREVIEW_COUNT = 8;
@@ -494,7 +496,7 @@ struct ThemeSettingsPage {
     if (ThemePackageService.isAvailable()) {
       return true;
     }
-    const result = await promptAction.showDialog({
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '主题分享 Beta · 会员专享',
       message: '开通任一档会员后，可以把自定义主题导出为 .qytheme 主题包分享给好友，也可以导入别人分享的主题包。',
       buttons: [
@@ -513,7 +515,7 @@ struct ThemeSettingsPage {
     if (!scheme) return;
     const exclusiveName = ThemePackageService.exclusiveThemeBlockingExport(scheme);
     if (exclusiveName) {
-      await promptAction.showDialog({
+      await ThemedDialog.showDialog(this.getUIContext(), {
         title: '这套主题不能分享',
         message: `它用到了终身超级会员专属主题「${exclusiveName}」，专属主题的素材只能自己使用，不能导出为主题包分享。`,
         buttons: [{ text: '知道了', color: this.accentColor() }]
@@ -3026,7 +3028,7 @@ struct ThemeSettingsPage {
     const pricePoints = offer.pricePoints;
     const validDays = offer.validDays;
     if (!this.accountLoggedIn) {
-      const loginDialog = await promptAction.showDialog({
+      const loginDialog = await ThemedDialog.showDialog(this.getUIContext(), {
         title: '登录后获取主题',
         message: `该主题需要 ${pricePoints} 点，获取后有效 ${validDays} 天。首次登录免费送 300 点。`,
         buttons: [
@@ -3040,7 +3042,7 @@ struct ThemeSettingsPage {
       return false;
     }
     const theme = BuiltinThemeRegistry.findById(themeId);
-    const confirm = await promptAction.showDialog({
+    const confirm = await ThemedDialog.showDialog(this.getUIContext(), {
       title: `获取「${theme.name}」`,
       message: `将扣除 ${pricePoints} 点，主题有效期为 ${validDays} 天。有效期内可在所有已登录终端使用。`,
       buttons: [
@@ -3061,7 +3063,7 @@ struct ThemeSettingsPage {
         await this.refreshThemeCatalog();
         HdsFeedback.showToast('主题价格或有效期已更新，请重新确认');
       } else if (error.errorCode === 'INSUFFICIENT_POINTS') {
-        const recharge = await promptAction.showDialog({
+        const recharge = await ThemedDialog.showDialog(this.getUIContext(), {
           title: '点数不足',
           message: `当前有 ${this.accountPoints} 点，获取该主题需要 ${pricePoints} 点。`,
           buttons: [
@@ -3112,7 +3114,7 @@ struct ThemeSettingsPage {
           return false;
         }
       }
-      const choice = await promptAction.showDialog({
+      const choice = await ThemedDialog.showDialog(this.getUIContext(), {
         title: `领取「${name}」`,
         message: '终身超级会员专属，不扣除点数。领取后有效一年，到期后可再次手动领取；有效期内不重复叠加。',
         buttons: [{ text: '取消', color: this.subTextColor() }, { text: '领取一年', color: this.accentColor() }]
@@ -4197,7 +4199,7 @@ struct ThemeSettingsPage {
         .height(42)
         .fontColor(this.primaryTextColor())
         .placeholderColor(this.subTextColor())
-        .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .borderRadius(ThemeRuntime.mediumRadius())
         .onChange((value: string) => {
           this.renameCustomThemeName = value;
@@ -4207,15 +4209,15 @@ struct ThemeSettingsPage {
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.cardColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => this.closeRenameCustomThemeDialog())
         Button('保存', { type: ButtonType.Normal })
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.accentColor())
-          .fontColor(ThemeRuntime.onAccentColor(this.accentColor()))
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .enabled(!!this.renameCustomThemeName.trim())
           .onClick(() => this.renameCustomTheme())
       }
@@ -4257,15 +4259,15 @@ struct ThemeSettingsPage {
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.cardColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => this.closeDeleteCustomThemeDialog())
         Button('删除', { type: ButtonType.Normal })
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode))
-          .fontColor(ThemeRuntime.onAccentColor(ThemeRuntime.dangerColor(this.appDarkMode)))
+          .backgroundColor(DialogStyle.fill('danger', this.appDarkMode))
+          .fontColor(DialogStyle.text('danger', this.appDarkMode))
           .onClick(() => this.confirmDeleteCustomTheme())
       }
       .width('100%')
@@ -4305,7 +4307,7 @@ struct ThemeSettingsPage {
           .maxLength(24)
           .fontColor(this.primaryTextColor())
           .placeholderColor(this.subTextColor())
-          .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+          .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
           .borderRadius(ThemeRuntime.mediumRadius())
           .onChange((value: string) => {
             this.startupTextTitle = value;
@@ -4324,7 +4326,7 @@ struct ThemeSettingsPage {
           .maxLength(48)
           .fontColor(this.primaryTextColor())
           .placeholderColor(this.subTextColor())
-          .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+          .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
           .borderRadius(ThemeRuntime.mediumRadius())
           .onChange((value: string) => {
             this.startupTextSubtitle = value;
@@ -4337,7 +4339,7 @@ struct ThemeSettingsPage {
         .borderRadius(ThemeRuntime.buttonRadius())
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.accentColor())
-        .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+        .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
         .onClick(() => {
           this.startupTextTitle = '开源轻页';
           this.startupTextSubtitle = StartupCoverTextStore.defaultSubtitle(this.startupTextThemeId);
@@ -4347,15 +4349,15 @@ struct ThemeSettingsPage {
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.cardColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => this.closeStartupTextDialog())
         Button('保存', { type: ButtonType.Normal })
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.accentColor())
-          .fontColor(ThemeRuntime.onAccentColor(this.accentColor()))
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => this.saveStartupText())
       }
       .width('100%')
@@ -4403,15 +4405,15 @@ struct ThemeSettingsPage {
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.cardColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => this.cancelThemeApply())
         Button('应用', { type: ButtonType.Normal })
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.accentColor())
-          .fontColor(ThemeRuntime.onAccentColor(this.accentColor()))
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => this.confirmThemeApply())
       }
       .width('100%')

@@ -3,6 +3,7 @@ import { ReaderKeyboard } from '../../core/reader/ReaderKeyboard';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
+import { DialogStyle } from '../../theme/DialogStyle';
 
 @Component
 export struct ReaderKeyboardCaptureDialog {
@@ -94,7 +95,7 @@ export struct ReaderKeyboardCaptureDialog {
         Button('重新录入')
           .enabled(!this.saving)
           .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
-          .backgroundColor(ThemeRuntime.hairlineColor(this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .onClick((): void => this.retry())
       }
       Row({ space: AppSpacing.LG }) {
@@ -102,13 +103,13 @@ export struct ReaderKeyboardCaptureDialog {
           .layoutWeight(1)
           .enabled(!this.saving)
           .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
-          .backgroundColor(ThemeRuntime.hairlineColor(this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .onClick((): void => this.onClose())
         Button(this.saving ? '保存中…' : '保存')
           .layoutWeight(1)
           .enabled(this.released && !this.saving)
-          .fontColor(ThemeRuntime.onAccentColor())
-          .backgroundColor(ThemeRuntime.buttonColor(this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
           .onClick((): void => { this.save(); })
       }
       .width('100%')

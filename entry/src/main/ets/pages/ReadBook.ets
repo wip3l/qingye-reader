@@ -299,6 +299,7 @@ import { WatchReaderHost, WatchReaderSnapshot, WatchRemoteBridge } from '../util
 import { READER_TURN_FRAME_RATE, applyReaderTurnFrameRate } from '../utils/ReaderTurnFrameRate';
 import { PlatformInfo } from '../platform/PlatformInfo';
 import { NAVIGATION_BAR_TAKES_TOUCHES, systemBarContentColor } from '../platform/SystemInsets';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 const READER_CURRENT_PAGINATION_AHEAD_PAGE_COUNT = 4;
 /** 换到上一章时从最后一句开读的标记，传给 playPositionFromFloatingSession 的 sourceOffset。 */
@@ -15893,7 +15894,7 @@ struct ReadBookPage {
   async showMimoAnalysisRecovery(message: string): Promise<void> {
     if (!this.readerPageVisible) { HdsFeedback.showToast(message); return; }
     const failedToken = this.ttsReadToken;
-    const result = await this.getUIContext().getPromptAction().showDialog({
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '人物识别暂未完成', message: message + '\n已保留朗读位置，重试时可能重读当前片段。',
       buttons: [{ text: '稍后再试', color: this.getSubTextColor() },
         { text: '改用单音色', color: this.accentColor() }]
@@ -15909,7 +15910,7 @@ struct ReadBookPage {
   async showMimoFailureRecovery(message: string): Promise<void> {
     if (!this.readerPageVisible) { HdsFeedback.showToast(message); return; }
     const failedToken = this.ttsReadToken;
-    const result = await this.getUIContext().getPromptAction().showDialog({
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
       title: 'MiMo 朗读已暂停', message: message + '\n已保留朗读位置，可改用常规音色继续。',
       buttons: [{ text: '稍后再试', color: this.getSubTextColor() },
         { text: '改用常规朗读', color: this.accentColor() }]

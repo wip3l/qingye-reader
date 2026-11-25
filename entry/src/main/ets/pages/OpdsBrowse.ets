@@ -28,6 +28,8 @@ import { syncSystemBars } from '../utils/SystemBars';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
+import { DialogStyle } from '../theme/DialogStyle';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 /** 路径上的一层。离开这一层时记下已加载的条目和滚动位置，返回时直接恢复，不用重新联网。 */
 class OpdsNavFrame {
@@ -918,7 +920,7 @@ struct OpdsBrowsePage {
           .width('100%')
           .padding(AppSpacing.LG)
           .borderRadius(ThemeRuntime.mediumRadius())
-          .backgroundColor(this.softColor())
+          .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         }
 
         this.detailPrimaryActions()
@@ -964,15 +966,15 @@ struct OpdsBrowsePage {
           .layoutWeight(1)
           .height(42)
           .fontSize(AppFontSize.BODY)
-          .fontColor(ThemeRuntime.onAccentColor())
-          .backgroundColor(this.accentColor())
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
           .onClick(() => this.readDetailBook())
         Button('移出书架')
           .layoutWeight(1)
           .height(42)
           .fontSize(AppFontSize.BODY)
           .fontColor(this.primaryTextColor())
-          .backgroundColor(this.softColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .onClick(() => this.removeDetailBook())
       } else if (this.detailBestRow && this.detailBestRow.downloadable) {
         Button('在线预览')
@@ -980,14 +982,14 @@ struct OpdsBrowsePage {
           .height(42)
           .fontSize(AppFontSize.BODY)
           .fontColor(this.primaryTextColor())
-          .backgroundColor(this.softColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .onClick(() => this.startBestPreview())
         Button('加入书架')
           .layoutWeight(1)
           .height(42)
           .fontSize(AppFontSize.BODY)
-          .fontColor(ThemeRuntime.onAccentColor())
-          .backgroundColor(this.accentColor())
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
           .onClick(() => this.addBestToShelf())
       } else if (this.downloadRows.length > 0) {
         Text('该获取方式暂不支持，请到书库网页端操作')
@@ -1082,7 +1084,7 @@ struct OpdsBrowsePage {
   }
 
   private confirmPreviewShelf(book: Book): void {
-    promptAction.showDialog({
+    ThemedDialog.showDialog(this.getUIContext(), {
       title: '是否加入书架',
       message: `《${book.name}》已下载到本地缓存`,
       buttons: [
@@ -1114,7 +1116,7 @@ struct OpdsBrowsePage {
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.accentColor())
         .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.XXS, bottom: AppSpacing.XXS })
-        .backgroundColor(this.softColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .borderRadius(ThemeRuntime.mediumRadius())
       if (row.sizeText) {
         Text(row.sizeText)

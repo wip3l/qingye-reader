@@ -1,6 +1,7 @@
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
 import { HdsFeedback } from './HdsFeedback';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 /** 听书页发给书架的下载请求。书架页一直在页面栈底部，后台任务、通知栏进度和取消都由它负责。 */
 export class AudioOfflineDownloadRequest {
@@ -33,7 +34,7 @@ export class AudioOfflineDownloadPrompt {
     }
     try {
       const scope = chapterCount > 0 ? `${chapterCount} 章音频` : '全部章节音频';
-      const result = await uiContext.getPromptAction().showDialog({
+      const result = await ThemedDialog.showDialog(uiContext, {
         title: '正在使用移动网络',
         message: `下载${scope}可能消耗较多流量，每章常有几到几十 MB。确定继续下载？`,
         buttons: [{ text: '取消', color: ThemeRuntime.subTextColor(darkMode) },

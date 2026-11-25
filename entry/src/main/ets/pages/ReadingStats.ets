@@ -27,6 +27,7 @@ import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
 import { ReadStatsPosterSnapshot, ReadStatsPosterSession } from '../core/stats/ReadStatsPosterModel';
 import { ReadStatsSettingsStore } from '../utils/ReadStatsSettingsStore';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 const STATS_MODES: string[] = ['day', 'week', 'month', 'year', 'all'];
 const STATS_MODE_LABELS: string[] = ['日', '周', '月', '年', '全部'];
@@ -1028,7 +1029,7 @@ struct ReadingStatsPage {
     const ownerId = this.ownerId;
     const keys = items.map((item: ReadStatsRank): string => item.bookKey);
     try {
-      const confirmation = await promptAction.showDialog({ title, message,
+      const confirmation = await ThemedDialog.showDialog(this.getUIContext(), { title, message,
         buttons: [{ text: '取消', color: this.subTextColor() }, { text: '删除', color: ThemeRuntime.dangerColor(this.appDarkMode) }] });
       if (confirmation.index !== 1) return;
       // 等确认框退场后这些行消散，与删记录同时进行；播完补位，再原位重读排名和图表。

@@ -47,6 +47,8 @@ import { NewBookGroupStore } from '../utils/NewBookGroupStore';
 import { NewBookGroup } from '../utils/NewBookGroup';
 import { BookMarkService } from '../core/mark/BookMarkService';
 import { PendingTrialBookCleanup } from '../utils/PendingTrialBookCleanup';
+import { DialogStyle } from '../theme/DialogStyle';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 /** 书源解析出音频地址的总时限。WebView 嗅探本身最多 15 秒，失败后还会回退 HTTP 规则。 */
 const AUDIO_URL_RESOLVE_TIMEOUT_MS = 30000;
@@ -522,7 +524,7 @@ struct AudioBookPage {
         .type(InputType.Number)
         .height(44)
         .width('100%')
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .fontColor(this.primaryTextColor())
         .onChange((value: string) => {
           this.voiceCodeInput = value;
@@ -530,15 +532,15 @@ struct AudioBookPage {
       Row({ space: AppSpacing.MD }) {
         Button('取消')
           .layoutWeight(1)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.showVoiceDialog = false;
           })
         Button('保存并重新加载')
           .layoutWeight(1)
-          .backgroundColor(this.accentColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => this.saveVoiceCode())
       }
       .width('100%')
@@ -2150,7 +2152,7 @@ struct AudioBookPage {
     };
     let index = -1;
     try {
-      const result: promptAction.ActionMenuSuccessResponse = await ui.getPromptAction().showActionMenu({
+      const result: promptAction.ActionMenuSuccessResponse = await ThemedDialog.showActionMenu(ui, {
         title: this.offlineSummaryText() || '离线下载',
         buttons: this.offlineChapterDates.size > 0 ? [all, next, auto, remove] : [all, next, auto]
       });
@@ -2180,7 +2182,7 @@ struct AudioBookPage {
     }));
     let index = -1;
     try {
-      const result: promptAction.ActionMenuSuccessResponse = await ui.getPromptAction().showActionMenu({
+      const result: promptAction.ActionMenuSuccessResponse = await ThemedDialog.showActionMenu(ui, {
         title: '边听边下：支持移动网络，会消耗流量；听完自动删除，手动下载的不受影响',
         buttons: [buttons[0], buttons[1], buttons[2], buttons[3]]
       });
@@ -2209,7 +2211,7 @@ struct AudioBookPage {
     const downloaded = this.offlineChapterDates.has(canonicalIndex);
     let index = -1;
     try {
-      const result: promptAction.ActionMenuSuccessResponse = await ui.getPromptAction().showActionMenu({
+      const result: promptAction.ActionMenuSuccessResponse = await ThemedDialog.showActionMenu(ui, {
         title: chapter.title || `第${canonicalIndex + 1}章`,
         buttons: [downloaded ? { text: '删除本章音频', color: ThemeRuntime.dangerColor(this.appDarkMode) } :
           { text: '下载本章', color: this.accentColor() }]
@@ -2245,7 +2247,7 @@ struct AudioBookPage {
 
   async deleteOfflineAudio(ui: UIContext, bookUrl: string): Promise<void> {
     try {
-      const result = await ui.getPromptAction().showDialog({
+      const result = await ThemedDialog.showDialog(ui, {
         title: '删除已下载音频？',
         message: '删除本书下载到本地的音频文件，之后收听需要联网。',
         buttons: [{ text: '取消', color: this.subTextColor() },

@@ -40,6 +40,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { AudioSheetTransition, AUDIO_SHEET_ENTER_DURATION, AUDIO_SHEET_EXIT_DURATION } from '../utils/AudioSheetTransition';
 import { BookMarkService } from '../core/mark/BookMarkService';
 import { systemBarContentColor } from '../platform/SystemInsets';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 @Entry
 @Component
@@ -263,7 +264,7 @@ struct Index {
       CrashReportStore.clearPendingNotice();
       const title = summary.kind === 'freeze' ? '轻页上次卡住后被关闭' :
         (summary.kind === 'killed' ? '轻页上次在使用中被系统关闭' : '轻页上次意外退出了');
-      this.getUIContext().getPromptAction().showDialog({
+      ThemedDialog.showDialog(this.getUIContext(), {
         title: title,
         message: '本机留下了一条崩溃记录。方便的话，可以把它分享给开发者帮助找到原因；' +
           '以后也能在“关于 › 交流与反馈 › 崩溃记录”里查看。',

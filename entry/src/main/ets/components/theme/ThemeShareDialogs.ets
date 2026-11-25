@@ -10,6 +10,7 @@ import {
   ThemeImportPreview
 } from '../../theme/share/ThemePackageService';
 import { CustomThemeScheme } from '../../utils/CustomThemeSchemeStore';
+import { DialogStyle } from '../../theme/DialogStyle';
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -78,7 +79,7 @@ struct ThemeShareNotice {
     .alignItems(HorizontalAlign.Start)
     .padding(AppSpacing.MD)
     .borderRadius(ThemeRuntime.mediumRadius())
-    .backgroundColor(ThemeRuntime.inputColor(this.darkMode))
+    .backgroundColor(DialogStyle.rowFill(this.darkMode))
   }
 }
 
@@ -108,7 +109,7 @@ function shareDialogTitle(title: string, darkMode: boolean) {
       .fontColor(ThemeRuntime.accentColor(darkMode))
       .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: 2, bottom: 2 })
       .borderRadius(8)
-      .backgroundColor(ThemeRuntime.inputColor(darkMode))
+      .backgroundColor(DialogStyle.iconFill(darkMode))
   }
   .width('100%')
   .alignItems(VerticalAlign.Center)
@@ -268,7 +269,7 @@ export struct ThemeExportDialog {
             .maxLength(ThemePackageLimits.MAX_AUTHOR_LENGTH)
             .fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
             .placeholderColor(ThemeRuntime.subTextColor(this.darkMode))
-            .backgroundColor(ThemeRuntime.inputColor(this.darkMode))
+            .backgroundColor(DialogStyle.rowFill(this.darkMode))
             .borderRadius(ThemeRuntime.mediumRadius())
             .onChange((value: string) => {
               this.authorName = value;
@@ -292,7 +293,7 @@ export struct ThemeExportDialog {
             .layoutWeight(1)
             .height(42)
             .borderRadius(ThemeRuntime.buttonRadius())
-            .backgroundColor(ThemeRuntime.cardColor(this.darkMode))
+            .backgroundColor(DialogStyle.fill('cancel', this.darkMode))
             .fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
             .enabled(!this.busy)
             .onClick(() => this.onClose())
@@ -300,7 +301,7 @@ export struct ThemeExportDialog {
             .layoutWeight(1)
             .height(42)
             .borderRadius(ThemeRuntime.buttonRadius())
-            .backgroundColor(ThemeRuntime.inputColor(this.darkMode))
+            .backgroundColor(DialogStyle.fill('cancel', this.darkMode))
             .fontColor(ThemeRuntime.accentColor(this.darkMode))
             .enabled(this.canExport())
             .onClick(() => this.run(false))
@@ -308,8 +309,8 @@ export struct ThemeExportDialog {
             .layoutWeight(1)
             .height(42)
             .borderRadius(ThemeRuntime.buttonRadius())
-            .backgroundColor(ThemeRuntime.accentColor(this.darkMode))
-            .fontColor(ThemeRuntime.onAccentColor(ThemeRuntime.accentColor(this.darkMode)))
+            .backgroundColor(DialogStyle.fill('primary', this.darkMode))
+            .fontColor(DialogStyle.text('primary', this.darkMode))
             .enabled(this.canExport())
             .onClick(() => this.run(true))
         }
@@ -491,7 +492,7 @@ export struct ThemeImportDialog {
             .layoutWeight(1)
             .height(42)
             .borderRadius(ThemeRuntime.buttonRadius())
-            .backgroundColor(ThemeRuntime.cardColor(this.darkMode))
+            .backgroundColor(DialogStyle.fill('cancel', this.darkMode))
             .fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
             .enabled(!this.busy)
             .onClick(() => this.onClose())
@@ -499,9 +500,8 @@ export struct ThemeImportDialog {
             .layoutWeight(1)
             .height(42)
             .borderRadius(ThemeRuntime.buttonRadius())
-            .backgroundColor(this.isFull() ? ThemeRuntime.dangerColor(this.darkMode) : ThemeRuntime.accentColor(this.darkMode))
-            .fontColor(ThemeRuntime.onAccentColor(this.isFull() ? ThemeRuntime.dangerColor(this.darkMode) :
-              ThemeRuntime.accentColor(this.darkMode)))
+            .backgroundColor(DialogStyle.fill(this.isFull() ? 'danger' : 'primary', this.darkMode))
+            .fontColor(DialogStyle.text(this.isFull() ? 'danger' : 'primary', this.darkMode))
             .enabled(!this.busy && (!this.isFull() || !!this.replaceSchemeId))
             .onClick(() => this.run())
         }

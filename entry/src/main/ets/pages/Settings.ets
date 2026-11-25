@@ -51,6 +51,7 @@ import { ReaderHaptics } from '../utils/ReaderHaptics';
 import { ReaderCommentCardSettings } from '../utils/ReaderCommentCardSettings';
 import { ReaderTypographyThemes, TypographyThemeOption } from '../utils/ReaderTypographyThemes';
 import { PlatformInfo } from '../platform/PlatformInfo';
+import { ThemedDialog } from '../utils/ThemedDialog';
 class ReaderCustomFontItem {
   familyName: string = '';
   filePath: string = '';
@@ -3356,7 +3357,7 @@ struct SettingsPage {
 
   async confirmTypographyChange(title: string, message: string): Promise<boolean> {
     try {
-      const result = await promptAction.showDialog({
+      const result = await ThemedDialog.showDialog(this.getUIContext(), {
         title: title,
         message: message,
         buttons: [{ text: '取消', color: this.subTextColor() }, { text: '确定', color: this.accentColor() }]

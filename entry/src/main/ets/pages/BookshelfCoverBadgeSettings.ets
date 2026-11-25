@@ -10,6 +10,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { syncSystemBars } from '../utils/SystemBars';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 @Entry
 @Component
@@ -57,7 +58,7 @@ struct BookshelfCoverBadgeSettingsPage {
       this.getUIContext().getRouter().back();
       return;
     }
-    this.getUIContext().showAlertDialog({
+    ThemedDialog.showAlertDialog(this.getUIContext(), {
       title: '放弃修改？', message: '封面标识的修改尚未保存。',
       primaryButton: { value: '继续编辑', action: () => {} },
       secondaryButton: { value: '放弃修改', action: () => this.getUIContext().getRouter().back() }

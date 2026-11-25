@@ -24,6 +24,7 @@ assert.equal(Requests.take(oldest), '', '未打开的路由请求也有数量上
 let menuIndex = 3, routed = null, saved = 0, shared = 0, reloaded = 0, toast = '';
 const menuContext = vm.createContext({
   Map, Set, Error,
+  ThemedDialog: { showDialog: (ui, options) => ui.getPromptAction().showDialog(options), showActionMenu: (ui, options) => ui.getPromptAction().showActionMenu(options) },
   router: { async pushUrl(options) { routed = options; } },
   HdsFeedback: { showToast(value) { toast = value; } },
   ReaderImageMarker: { pendingRaw: value => value === 'pending' ? 'raw' : '', failureReason: () => '' },

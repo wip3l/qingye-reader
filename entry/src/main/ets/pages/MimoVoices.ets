@@ -18,6 +18,7 @@ import { syncSystemBars } from '../utils/SystemBars';
 import { MimoStore } from '../utils/mimo/MimoStore';
 import { MimoPreviewSession } from '../utils/mimo/MimoPreviewSession';
 import { MimoRole, MIMO_VOICES } from '../core/mimo/MimoPolicy';
+import { ThemedDialog } from '../utils/ThemedDialog';
 import { MimoVoicePreset, MimoVoiceScheme, MimoVoiceChange, MimoVoicePolicy,
   MIMO_AGES, MIMO_AGE_LABELS, MIMO_GENDERS, MIMO_GENDER_LABELS } from '../core/mimo/MimoVoicePolicy';
 
@@ -158,7 +159,7 @@ struct MimoVoicesPage {
   private async confirm(title: string, message: string, action: string, danger: boolean = false,
     cancel: string = '取消'): Promise<boolean> {
     try {
-      const answer = await this.getUIContext().getPromptAction().showDialog({ title, message,
+      const answer = await ThemedDialog.showDialog(this.getUIContext(), { title, message,
         buttons: [{ text: cancel, color: ThemeRuntime.subTextColor(this.dark) },
           { text: action, color: danger ? ThemeRuntime.dangerColor(this.dark) : ThemeRuntime.accentColor(this.dark) }] });
       return answer.index === 1;

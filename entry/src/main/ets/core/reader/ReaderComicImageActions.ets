@@ -6,6 +6,7 @@ import { ReaderImageMarker } from '../book/ReaderImageMarker';
 import { ReaderImageResults } from '../book/ReaderImageResults';
 import { ReaderComicImageExport, ReaderComicSnapshotProvider } from './ReaderComicImageExport';
 import { ComicTextRequests } from './ComicTextRequests';
+import { ThemedDialog } from '../../utils/ThemedDialog';
 
 /** 阅读页为漫画图片操作提供的环境。 */
 export interface ReaderComicImageActionsHost {
@@ -60,7 +61,7 @@ export class ReaderComicImageActions {
     if (failure) {
       // 获取正文时就没拿到这张图，没有可保存的内容；只能重新抓取本章。
       try {
-        await this.host.uiContext().getPromptAction().showActionMenu({
+        await ThemedDialog.showActionMenu(this.host.uiContext(), {
           title: failure.length > 60 ? `${failure.substring(0, 60)}…` : failure,
           buttons: [{ text: '刷新本章', color: this.host.accentColor() }]
         });
@@ -75,7 +76,7 @@ export class ReaderComicImageActions {
     let index = -1;
     try {
       const color = this.host.accentColor();
-      const result = await this.host.uiContext().getPromptAction().showActionMenu({
+      const result = await ThemedDialog.showActionMenu(this.host.uiContext(), {
         title: '图片',
         buttons: [
           { text: '保存到相册', color: color },

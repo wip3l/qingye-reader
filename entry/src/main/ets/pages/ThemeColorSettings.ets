@@ -116,6 +116,7 @@ import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
 import { fileUri } from '../platform/FileUri';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 const DROP_CAP_LINE_NAMES: string[] = ['不处理', '占 2 行', '占 3 行', '占 4 行'];
 /** 首字样式：下沉（前几行绕排）、放大（底边对齐第一行、向上抬出）。和 dropCapStyle 的空串、raise 一一对应。 */
@@ -1229,7 +1230,7 @@ struct ThemeColorSettingsPage {
   /** 恢复默认会一次清掉多项排版，容易误点，先确认。 */
   async confirmResetTypography(): Promise<void> {
     try {
-      const result = await promptAction.showDialog({
+      const result = await ThemedDialog.showDialog(this.getUIContext(), {
         title: '恢复默认排版？',
         message: '字号、间距、边距与页眉页脚会恢复默认，字体和强调规则保留。',
         buttons: [{ text: '取消', color: this.subTextColor() },
@@ -3762,7 +3763,7 @@ struct ThemeColorSettingsPage {
     else if (b.length === 3) buttons = [b[0], b[1], b[2]];
     else if (b.length >= 4) buttons = [b[0], b[1], b[2], b[3]];
     try {
-      const result: promptAction.ActionMenuSuccessResponse = await this.getUIContext().getPromptAction().showActionMenu({
+      const result: promptAction.ActionMenuSuccessResponse = await ThemedDialog.showActionMenu(this.getUIContext(), {
         title: title,
         buttons: buttons
       });
@@ -5698,7 +5699,7 @@ struct ThemeColorSettingsPage {
     const b: promptAction.Button = { text: second, color: this.menuColor(second) };
     const c: promptAction.Button = { text: third, color: this.menuColor(third) };
     try {
-      const result: promptAction.ActionMenuSuccessResponse = await this.getUIContext().getPromptAction().showActionMenu({
+      const result: promptAction.ActionMenuSuccessResponse = await ThemedDialog.showActionMenu(this.getUIContext(), {
         title: title,
         buttons: third ? [a, b, c] : [a, b]
       });
@@ -6116,7 +6117,7 @@ struct ThemeColorSettingsPage {
 
   async ensureAdvanced(): Promise<boolean> {
     if (!this.advancedLocked()) return true;
-    const result = await promptAction.showDialog({
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '高级主题自定义 · 会员专享',
       message: '开通任一档会员后，可以逐项调整配色和强调气泡，上传封面、图标、背景等素材，绑定界面字体，' +
         '调整圆角与启动封面文案样式，并设置方案预览图。已保存的改动在会员到期后继续生效。',

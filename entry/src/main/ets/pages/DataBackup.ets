@@ -15,6 +15,8 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { copyFile, saveDocuments, selectDocuments } from '../platform/Files';
 import { PlatformInfo } from '../platform/PlatformInfo';
+import { DialogStyle } from '../theme/DialogStyle';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 @Entry
 @Component
@@ -397,7 +399,7 @@ struct DataBackupPage {
         .type(InputType.Password)
         .height(44)
         .fontColor(this.primaryTextColor())
-        .backgroundColor(this.softColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .onChange((value: string) => {
           if (exporting) this.exportPassword = value;
           else this.importPassword = value;
@@ -409,7 +411,7 @@ struct DataBackupPage {
           .type(InputType.Password)
           .height(44)
           .fontColor(this.primaryTextColor())
-          .backgroundColor(this.softColor())
+          .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
           .margin({ top: AppSpacing.MD })
           .onChange((value: string) => {
             this.exportPasswordConfirm = value;
@@ -429,13 +431,14 @@ struct DataBackupPage {
         Button('取消')
           .layoutWeight(1)
           .height(42)
-          .backgroundColor(this.softColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => this.closePasswordDialog(exporting))
         Button(exporting ? '继续导出' : '解密备份')
           .layoutWeight(1)
           .height(42)
-          .backgroundColor(this.accentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => {
             if (exporting) this.confirmExportPassword();
             else this.confirmImportPassword();
@@ -683,7 +686,7 @@ struct DataBackupPage {
 
   async importData(): Promise<void> {
     if (this.busy || !this.importSession || !this.hasImportSelection()) return;
-    const confirmation = await promptAction.showDialog({
+    const confirmation = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '确认导入数据',
       message: '所选数据会合并到当前应用；相同书籍、书源和设置将以备份内容更新。是否继续？',
       buttons: [
@@ -723,7 +726,7 @@ struct DataBackupPage {
     try {
       const missing = await AppDataBackupService.countBooksWithoutSource(getContext(this));
       if (missing <= 0) return;
-      const answer = await promptAction.showDialog({
+      const answer = await ThemedDialog.showDialog(this.getUIContext(), {
         title: `${missing} 本书的书源不在本机`,
         message: '这些书暂时无法更新和阅读。可以在已启用的书源里自动找同名同作者的书并换过去，阅读进度按章名对位保留。',
         buttons: [

@@ -21,6 +21,8 @@ import { CollapsingHeader } from '../utils/CollapsingHeader';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
+import { DialogStyle } from '../theme/DialogStyle';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 @Entry
 @Component
@@ -413,7 +415,7 @@ struct OpdsServersPage {
             TextInput({ text: this.draftName, placeholder: '例如：我的 Calibre 书库' })
               .width('100%')
               .height(44)
-              .backgroundColor(this.softColor())
+              .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
               .fontColor(this.primaryTextColor())
               .placeholderColor(this.subTextColor())
               .onChange((value: string) => {
@@ -426,7 +428,7 @@ struct OpdsServersPage {
             TextInput({ text: this.draftBaseUrl, placeholder: 'http://192.168.1.10:8080/opds' })
               .width('100%')
               .height(44)
-              .backgroundColor(this.softColor())
+              .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
               .fontColor(this.primaryTextColor())
               .placeholderColor(this.subTextColor())
               .onChange((value: string) => {
@@ -459,7 +461,7 @@ struct OpdsServersPage {
               TextInput({ text: this.draftUsername, placeholder: '登录用户名' })
                 .width('100%')
                 .height(44)
-                .backgroundColor(this.softColor())
+                .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
                 .fontColor(this.primaryTextColor())
                 .placeholderColor(this.subTextColor())
                 .onChange((value: string) => {
@@ -473,7 +475,7 @@ struct OpdsServersPage {
                 .type(InputType.Password)
                 .width('100%')
                 .height(44)
-                .backgroundColor(this.softColor())
+                .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
                 .fontColor(this.primaryTextColor())
                 .placeholderColor(this.subTextColor())
                 .onChange((value: string) => {
@@ -505,14 +507,14 @@ struct OpdsServersPage {
         Button('取消')
           .layoutWeight(1)
           .height(42)
-          .backgroundColor(this.softColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => this.closeEditorDialog())
         Button(this.editingServerId ? '保存' : '添加')
           .layoutWeight(1)
           .height(42)
-          .backgroundColor(this.accentColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => this.submitEditorDialog())
       }
       .width('100%')
@@ -606,7 +608,7 @@ struct OpdsServersPage {
   }
 
   async confirmDeleteServer(server: OpdsServerConfig): Promise<void> {
-    const confirmation = await promptAction.showDialog({
+    const confirmation = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '删除书库',
       message: `确定删除“${server.name}”吗？只会删除本机配置和保存的密码，不会删除远端图书。`,
       buttons: [{ text: '取消', color: this.subTextColor() }, { text: '删除', color: ThemeRuntime.dangerColor(this.appDarkMode) }]

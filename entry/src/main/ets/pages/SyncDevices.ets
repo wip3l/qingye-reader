@@ -16,6 +16,8 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
+import { DialogStyle } from '../theme/DialogStyle';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 @Entry
 @Component
@@ -401,7 +403,7 @@ struct SyncDevicesPage {
         .height(42)
         .fontColor(this.primaryTextColor())
         .placeholderColor(this.subTextColor())
-        .backgroundColor(this.softColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .borderRadius(ThemeRuntime.mediumRadius())
         .maxLength(80)
         .onChange((value: string) => {
@@ -412,7 +414,7 @@ struct SyncDevicesPage {
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.cardColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.showRenameDialog = false;
@@ -421,8 +423,8 @@ struct SyncDevicesPage {
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.accentColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .enabled(!!this.renameDeviceName.trim() && !this.renaming)
           .onClick(() => this.saveRename())
       }
@@ -433,7 +435,7 @@ struct SyncDevicesPage {
 
 
   async confirmRevoke(device: CloudSyncDevice): Promise<void> {
-    const result = await promptAction.showDialog({
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '移除同步设备',
       message: `确定移除“${device.deviceName || 'HarmonyOS 设备'}”吗？移除后该设备将停止同步。`,
       buttons: [

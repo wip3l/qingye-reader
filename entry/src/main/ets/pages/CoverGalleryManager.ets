@@ -19,6 +19,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
 import { HeaderBackdrop } from '../components/common/HeaderBackdrop';
 import { copyFile, saveDocuments, selectDocuments, selectImages } from '../platform/Files';
+import { DialogButtonRole, DialogStyle } from '../theme/DialogStyle';
 
 class CoverGalleryExportResult {
   zipPath: string = '';
@@ -996,7 +997,7 @@ struct CoverGalleryManagerPage {
         .height(44)
         .fontColor(this.primaryTextColor())
         .placeholderColor(this.subTextColor())
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .borderRadius(ThemeRuntime.mediumRadius())
         .onChange((value: string) => {
           this.newAlbumName = value;
@@ -1006,7 +1007,7 @@ struct CoverGalleryManagerPage {
         Button('取消')
           .height(42)
           .layoutWeight(1)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.newAlbumName = '';
@@ -1016,8 +1017,8 @@ struct CoverGalleryManagerPage {
         Button('新建')
           .height(42)
           .layoutWeight(1)
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => {
             this.createAlbum();
           })
@@ -1048,7 +1049,7 @@ struct CoverGalleryManagerPage {
         Button('取消')
           .height(42)
           .layoutWeight(1)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.showDeleteAlbumConfirm = false;
@@ -1056,8 +1057,8 @@ struct CoverGalleryManagerPage {
         Button('删除')
           .height(42)
           .layoutWeight(1)
-          .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode))
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('danger', this.appDarkMode))
+          .fontColor(DialogStyle.text('danger', this.appDarkMode))
           .onClick(() => {
             this.deleteSelectedAlbum();
           })
@@ -1089,7 +1090,7 @@ struct CoverGalleryManagerPage {
         Button('关闭')
           .height(34)
           .fontSize(AppFontSize.BODY)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.closeImageManager();
@@ -1098,9 +1099,9 @@ struct CoverGalleryManagerPage {
       .width('100%')
 
       Row({ space: AppSpacing.MD }) {
-        this.imageManageButton('全选', this.buttonColor(), () => this.selectAllImages())
-        this.imageManageButton('取消选择', '#60656F', () => this.clearImageSelection())
-        this.imageManageButton('删除所选', ThemeRuntime.dangerColor(this.appDarkMode), () => this.deleteSelectedImages())
+        this.imageManageButton('全选', 'primary', () => this.selectAllImages())
+        this.imageManageButton('取消选择', 'cancel', () => this.clearImageSelection())
+        this.imageManageButton('删除所选', 'danger', () => this.deleteSelectedImages())
       }
       .width('100%')
 
@@ -1144,13 +1145,13 @@ struct CoverGalleryManagerPage {
 
 
   @Builder
-  imageManageButton(title: string, color: string, action: () => void) {
+  imageManageButton(title: string, role: DialogButtonRole, action: () => void) {
     Button(title)
       .height(36)
       .fontSize(AppFontSize.CAPTION)
       .layoutWeight(1)
-      .fontColor('#FFFFFF')
-      .backgroundColor(color)
+      .fontColor(DialogStyle.text(role, this.appDarkMode))
+      .backgroundColor(DialogStyle.fill(role, this.appDarkMode))
       .borderRadius(ThemeRuntime.buttonRadius())
       .onClick(action)
   }

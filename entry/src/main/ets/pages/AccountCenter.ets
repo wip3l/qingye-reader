@@ -31,10 +31,13 @@ import { syncSystemBars } from '../utils/SystemBars';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
+import { DialogStyle } from '../theme/DialogStyle';
+import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
 import { selectImages } from '../platform/Files';
 import { PlatformInfo } from '../platform/PlatformInfo';
+import { ThemedDialog } from '../utils/ThemedDialog';
 import {
   checkExternalRecharge, EXTERNAL_RECHARGE_AVAILABLE, ExternalRechargeResult, redeemRechargeCode, startExternalRecharge
 } from '../platform/Payments';
@@ -119,8 +122,7 @@ struct AccountCenterPage {
   private readonly compareRowHeight: number = 54;
   private compareScroller: Scroller = new Scroller();
   private compareViewportWidth: number = 0;
-  private pointsUsageDialogBuilder: CustomBuilder | undefined = undefined;
-  private pointsUsageDialogId: number = -1;
+  private pointsUsageDialogSession: SystemDialogSession = new SystemDialogSession();
   private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
   /** 上次显示时是否已登录：从用户名登录页回来要补做登录后的刷新，申请注销后回来要清掉会员信息。 */
   private shownLoggedIn: boolean = false;
@@ -409,7 +411,7 @@ struct AccountCenterPage {
   }
 
   async logout(): Promise<void> {
-    const result = await promptAction.showDialog({
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '退出登录',
       message: '点数、会员和主题权益仍保存在云端，下次登录后会自动恢复。',
       buttons: [
@@ -1066,7 +1068,7 @@ struct AccountCenterPage {
 
   async showPurchaseTerms(): Promise<void> {
     try {
-      await promptAction.showDialog({ title: '会员权益与购买说明', message: this.purchaseTerms(),
+      await ThemedDialog.showDialog(this.getUIContext(), { title: '会员权益与购买说明', message: this.purchaseTerms(),
         buttons: [{ text: '我知道了', color: this.accentColor() }] });
     } catch (e) {
       // Dismissing the explanation never changes purchase consent.
@@ -1095,7 +1097,7 @@ struct AccountCenterPage {
       if (quote.payablePoints > this.paidPoints) {
         // 充值入口收进了点数行的面板，点数不够时在这里直接引导过去。安卓的面板里还有兑换码：会员码可直接开通。
         const codeHint = EXTERNAL_RECHARGE_AVAILABLE ? `\n有${product.name}兑换码的话，在面板里输入即可直接开通，不用充值。` : '';
-        const recharge = await promptAction.showDialog({
+        const recharge = await ThemedDialog.showDialog(this.getUIContext(), {
           title: '充值点不足',
           message: `本次需扣除 ${quote.payablePoints} 充值点，当前 ${this.paidPoints} 点，还差 ` +
             `${quote.payablePoints - this.paidPoints} 点。赠送点不可抵扣。${codeHint}`,
@@ -1106,7 +1108,7 @@ struct AccountCenterPage {
         return;
       }
       const credit = quote.creditPoints > 0 ? `\n升级抵扣 ${quote.creditPoints} 点` : '';
-      const decision = await promptAction.showDialog({
+      const decision = await ThemedDialog.showDialog(this.getUIContext(), {
         title: this.membership.active ? `确认${product.months === null ? '升级' : '续费'}` : `开通${product.name}`,
         message: `${product.name}  ${quote.listPoints} 点${credit}\n本次扣除 ${quote.payablePoints} 充值点\n` +
           `当前充值点 ${this.paidPoints}\n赠送点不可抵扣，不自动续费。`,
@@ -2319,8 +2321,8 @@ struct AccountCenterPage {
         .width('100%')
         .height(42)
         .fontSize(AppFontSize.BODY_LARGE)
-        .fontColor(this.accentColor())
-        .backgroundColor(this.inputColor())
+        .fontColor(DialogStyle.text('primary', this.appDarkMode))
+        .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
         .borderRadius(ThemeRuntime.buttonRadius())
         .onClick(() => {
           this.closePointsUsageDialog();
@@ -2330,28 +2332,18 @@ struct AccountCenterPage {
   }
 
   showPointsUsageDialog(): void {
-    this.pointsUsageDialogBuilder = (): void => {
+    this.pointsUsageDialogSession.open(this.getUIContext(), (): void => {
       this.pointsUsageDialogContent();
-    };
-    // Dialog APIs moved off UIContext to getPromptAction() in this SDK; the
-    // builder overload is what the compatible API level exposes.
-    this.getUIContext().getPromptAction().openCustomDialog({
-      builder: this.pointsUsageDialogBuilder,
+    }, {
+      darkMode: this.appDarkMode,
       autoCancel: true,
-      alignment: DialogAlignment.Center,
-      maskColor: ThemeRuntime.scrimColor(this.appDarkMode)
-    }).then((dialogId: number) => {
-      this.pointsUsageDialogId = dialogId;
-    }).catch((error: Error) => {
-      console.warn('显示点数使用说明失败:', error);
+      maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
+      warnTag: '显示点数使用说明失败:'
     });
   }
 
   closePointsUsageDialog(): void {
-    if (this.pointsUsageDialogId >= 0) {
-      this.getUIContext().getPromptAction().closeCustomDialog(this.pointsUsageDialogId);
-      this.pointsUsageDialogId = -1;
-    }
+    this.pointsUsageDialogSession.close(this.getUIContext());
   }
 
   @Builder

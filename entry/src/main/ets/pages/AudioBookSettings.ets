@@ -13,6 +13,7 @@ import { syncSystemBars } from '../utils/SystemBars';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { SubtitleModelStore } from '../utils/subtitle/SubtitleModelStore';
 import { AudioSubtitleService } from '../utils/subtitle/AudioSubtitleService';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 /**
  * 阅读与收听 → 有声书：打开时是否自动播放、离线下载的设备设置，以及 AI 字幕的识别模型。
@@ -69,7 +70,7 @@ struct AudioBookSettingsPage {
     }));
     let index = -1;
     try {
-      const result = await this.getUIContext().getPromptAction().showActionMenu({
+      const result = await ThemedDialog.showActionMenu(this.getUIContext(), {
         title: '边听边下：支持移动网络，会消耗流量；听完自动删除，手动下载的不受影响',
         buttons: [buttons[0], buttons[1], buttons[2], buttons[3]]
       });
@@ -96,7 +97,7 @@ struct AudioBookSettingsPage {
       color: this.optionColor(bytes === this.capBytes)
     }));
     try {
-      const result = await this.getUIContext().getPromptAction().showActionMenu({
+      const result = await ThemedDialog.showActionMenu(this.getUIContext(), {
         title: '离线音频上限',
         buttons: [buttons[0], buttons[1], buttons[2], buttons[3], buttons[4]]
       });
@@ -146,10 +147,9 @@ struct AudioBookSettingsPage {
       SubtitleModelStore.cancel();
       return;
     }
-    const prompt = this.getUIContext().getPromptAction();
     if (this.subtitleModelState === SubtitleModelStore.INSTALLED) {
       try {
-        const result = await prompt.showDialog({
+        const result = await ThemedDialog.showDialog(this.getUIContext(), {
           title: '删除字幕模型？',
           message: `释放约 ${SubtitleModelStore.totalLabel()}。已经生成的字幕会保留，之后要再识别新章节需重新下载。`,
           buttons: [{ text: '取消', color: ThemeRuntime.subTextColor(this.darkMode) },
@@ -170,7 +170,7 @@ struct AudioBookSettingsPage {
     }
     if (AudioOfflineStore.network() === 'cellular') {
       try {
-        const result = await prompt.showDialog({
+        const result = await ThemedDialog.showDialog(this.getUIContext(), {
           title: '正在使用移动网络',
           message: `字幕模型约 ${SubtitleModelStore.totalLabel()}，会消耗较多流量。确定现在下载？`,
           buttons: [{ text: '取消', color: ThemeRuntime.subTextColor(this.darkMode) },

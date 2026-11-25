@@ -7,6 +7,7 @@ import { SettingNavRow, SettingSwitchRow } from '../components/common/SettingRow
 import { AppSpacing } from '../theme/AppSpacing';
 import { WebParseSettingsStore } from '../utils/WebParseSettingsStore';
 import { AppDatabase } from '../model/data/AppDatabase';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 /**
  * 我的 › 在线阅读：网页解析总开关、使用须知和安卓备份导入。
@@ -134,7 +135,7 @@ struct WebParseSettingsPage {
       } catch (error) {
         console.warn('统计在线书籍失败:', error);
       }
-      const answer = await promptAction.showDialog({
+      const answer = await ThemedDialog.showDialog(this.getUIContext(), {
         title: '关闭网页解析？',
         message: (hidden > 0 ? `关闭后，发现、搜索和书源管理会收起来，书架上 ${hidden} 本通过网页解析添加的书也会暂时隐藏。` :
           '关闭后，发现、搜索和书源管理会收起来。') +

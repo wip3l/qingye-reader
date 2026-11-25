@@ -17,6 +17,7 @@ import { ReaderRasterAssets } from '../core/reader/ReaderRasterAssets';
 import { ShelfBackdropConfig, ShelfBackdropLook, ShelfBackdropStore } from '../utils/ShelfBackdropStore';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { SHELF_BACKDROP_LAYOUTS, SHELF_BACKDROP_LAYOUT_NAMES } from '../theme/share/ThemePackageFormat';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 /**
  * 书架设置 › 书架背景：跟随主题，或单独上传一张铺在顶部 / 全屏。
@@ -579,7 +580,7 @@ struct ShelfBackdropSettingsPage {
     const b: promptAction.Button = { text: second, color: this.menuColor(second) };
     try {
       const result: promptAction.ActionMenuSuccessResponse =
-        await this.getUIContext().getPromptAction().showActionMenu({ title: title, buttons: [a, b] });
+        await ThemedDialog.showActionMenu(this.getUIContext(), { title: title, buttons: [a, b] });
       return result.index;
     } catch (_) {
       return -1;

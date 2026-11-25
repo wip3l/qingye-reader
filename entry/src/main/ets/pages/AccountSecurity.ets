@@ -12,6 +12,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { syncSystemBars } from '../utils/SystemBars';
 import { PlatformInfo } from '../platform/PlatformInfo';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 const VIEW_OVERVIEW = '';
 const VIEW_PASSWORD = 'password';
@@ -512,7 +513,7 @@ struct AccountSecurityPage {
       this.errorText = '请输入当前密码';
       return;
     }
-    const confirm = await promptAction.showDialog({
+    const confirm = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '确认注销账号？',
       message: `所有设备会立即退出登录。${DELETION_GRACE_DAYS} 天内重新登录可撤销，期满后点数、会员和云端数据都无法找回。`,
       buttons: [

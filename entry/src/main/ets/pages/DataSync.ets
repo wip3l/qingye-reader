@@ -13,6 +13,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow, SettingSwitchRow, SettingRow } from '../components/common/SettingRow';
 import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 @Entry
 @Component
@@ -333,7 +334,7 @@ struct DataSyncPage {
   }
 
   async promptSuperMembership(): Promise<void> {
-    const result = await promptAction.showDialog({
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '终身超级会员专享',
       message: '本地书籍、自定义字体和自定义主题同步仅限终身超级会员，请开通或升级为终身超级会员。',
       buttons: [
@@ -401,7 +402,7 @@ struct DataSyncPage {
       if (!(await CloudSyncCoordinator.needsInitialConflictChoice(getContext(this)))) {
         return 'cloud';
       }
-      const result = await promptAction.showDialog({
+      const result = await ThemedDialog.showDialog(this.getUIContext(), {
         title: '选择首次同步方式',
         message: '检测到云端已有同步数据。如果本机与云端的同一项数据发生冲突，请选择以哪一端为准。未冲突的数据仍会正常合并。',
         buttons: [
@@ -515,7 +516,7 @@ struct DataSyncPage {
       HdsFeedback.showToast(this.accountLoggedIn ? '请先开启云同步' : '请先登录账号');
       return;
     }
-    const result = await promptAction.showDialog({
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '重新从云端同步',
       message: '将重新获取云端阅读数据，本机尚未上传的修改会继续保留。',
       buttons: [

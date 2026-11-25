@@ -8,6 +8,7 @@ import { ImmersiveBackButton } from '../ImmersiveBackButton';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
+import { DialogStyle } from '../../theme/DialogStyle';
 
 /**
  * 阅读页"缓存"对话框的内容（配合系统自定义对话框使用）。两种形态共用这一个组件：
@@ -206,7 +207,7 @@ export struct ReaderCacheDialogContent {
         .width('100%')
         .height(44)
         .margin({ top: AppSpacing.MD })
-        .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+        .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
         .fontColor(this.textColor())
         .onClick(() => this.onClose())
     }
@@ -219,7 +220,7 @@ export struct ReaderCacheDialogContent {
       .width('100%')
       .height(44)
       .margin({ top: AppSpacing.SM })
-      .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+      .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
       .fontColor(color || this.textColor())
       .enabled(!disabled)
       .opacity(disabled ? 0.5 : 1)
@@ -280,8 +281,8 @@ export struct ReaderCacheDialogContent {
           .width(96)
           .height(42)
           .fontSize(AppFontSize.BODY)
-          .fontColor(ThemeRuntime.onAccentColor())
-          .backgroundColor(ThemeRuntime.buttonColor(this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
           .enabled(this.chapters.length > 0)
           .onClick(() => this.cacheRange())
       }

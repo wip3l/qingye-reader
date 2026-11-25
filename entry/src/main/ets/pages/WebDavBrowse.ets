@@ -26,6 +26,8 @@ import { PageScaffold } from '../components/common/PageScaffold';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { PopupMenuAction, PopupMenuHeader } from '../components/common/PopupMenuAction';
 import { selectDocuments } from '../platform/Files';
+import { DialogStyle } from '../theme/DialogStyle';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 /** listedPath 的初值：还没有列出过任何目录。 */
 const NO_LISTING: string = '\u0000';
@@ -1090,7 +1092,7 @@ struct WebDavBrowsePage {
         placeholder: this.entryNameMode === 'create' ? '文件夹名称' : '新名称' })
         .width('100%')
         .height(44)
-        .backgroundColor(this.softColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .fontColor(this.primaryTextColor())
         .placeholderColor(this.subTextColor())
         .onChange((value: string) => {
@@ -1100,14 +1102,14 @@ struct WebDavBrowsePage {
         Button('取消')
           .layoutWeight(1)
           .height(42)
-          .backgroundColor(this.softColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => this.closeEntryNameDialog())
         Button(this.entryNameMode === 'create' ? '创建' : '保存')
           .layoutWeight(1)
           .height(42)
-          .backgroundColor(this.accentColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => this.submitEntryNameDialog())
       }
       .width('100%')
@@ -1556,7 +1558,7 @@ struct WebDavBrowsePage {
       .width('100%')
       .padding(AppSpacing.LG)
       .borderRadius(ThemeRuntime.mediumRadius())
-      .backgroundColor(this.softColor())
+      .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
 
       Row({ space: AppSpacing.MD }) {
         if (this.fileDetailBook) {
@@ -1564,15 +1566,15 @@ struct WebDavBrowsePage {
             .layoutWeight(1)
             .height(42)
             .fontSize(AppFontSize.BODY)
-            .fontColor(ThemeRuntime.onAccentColor())
-            .backgroundColor(this.accentColor())
+            .fontColor(DialogStyle.text('primary', this.appDarkMode))
+            .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
             .onClick(() => this.readFileBookNow())
           Button('移出书架')
             .layoutWeight(1)
             .height(42)
             .fontSize(AppFontSize.BODY)
             .fontColor(this.primaryTextColor())
-            .backgroundColor(this.softColor())
+            .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
             .onClick(() => this.removeFileBook())
         } else {
           Button('在线预览')
@@ -1580,14 +1582,14 @@ struct WebDavBrowsePage {
             .height(42)
             .fontSize(AppFontSize.BODY)
             .fontColor(this.primaryTextColor())
-            .backgroundColor(this.softColor())
+            .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
             .onClick(() => this.previewFileBook())
           Button('加入书架')
             .layoutWeight(1)
             .height(42)
             .fontSize(AppFontSize.BODY)
-            .fontColor(ThemeRuntime.onAccentColor())
-            .backgroundColor(this.accentColor())
+            .fontColor(DialogStyle.text('primary', this.appDarkMode))
+            .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
             .onClick(() => this.addFileBookToShelf())
         }
       }
@@ -1652,7 +1654,7 @@ struct WebDavBrowsePage {
   removeFileBook(): void {
     const book = this.fileDetailBook;
     if (!book) return;
-    promptAction.showDialog({
+    ThemedDialog.showDialog(this.getUIContext(), {
       title: '移出书架',
       message: `《${book.name}》`,
       buttons: [
@@ -1677,7 +1679,7 @@ struct WebDavBrowsePage {
   }
 
   private confirmPreviewShelf(book: Book): void {
-    promptAction.showDialog({
+    ThemedDialog.showDialog(this.getUIContext(), {
       title: '是否加入书架',
       message: `《${book.name}》已下载到本地缓存`,
       buttons: [
@@ -1804,7 +1806,7 @@ struct WebDavBrowsePage {
     const entry = this.actionEntry();
     if (!entry || this.busy) return;
     this.closeEntryActions();
-    const confirmation = await promptAction.showDialog({
+    const confirmation = await ThemedDialog.showDialog(this.getUIContext(), {
       title: entry.directory ? '删除文件夹' : '删除文件',
       message: entry.directory ? `确定删除“${entry.name}”及其中的全部内容吗？此操作无法撤销。` :
         `确定删除“${entry.name}”吗？此操作无法撤销。`,

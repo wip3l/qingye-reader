@@ -5,6 +5,7 @@ import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { BookCover } from './BookCover';
 import { BookMarkStars } from './BookMarkStars';
+import { ThemedDialog } from '../../utils/ThemedDialog';
 
 /**
  * 标记编辑面板的内容，材质交给宿主 bindSheet。打开时从 initial 复制一份草稿；
@@ -201,7 +202,7 @@ export struct BookMarkSheet {
   }
 
   private confirmDelete(): void {
-    this.getUIContext().showAlertDialog({
+    ThemedDialog.showAlertDialog(this.getUIContext(), {
       title: '删除标记',
       message: '这本书的评分、状态、标签和短评都会删除，书架上的标签保留。',
       primaryButton: { value: '取消', action: (): void => {} },
@@ -214,7 +215,7 @@ export struct BookMarkSheet {
           this.onClose();
         }
       }
-    });
+    }, this.darkMode);
   }
 
   build() {

@@ -10,6 +10,7 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { CrashReportStore, CrashReportSummary } from '../utils/CrashReportStore';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 /** 单条崩溃记录：完整文本（可复制）、分享为 txt、删除。 */
 @Entry
@@ -127,7 +128,7 @@ struct CrashReportDetailPage {
   }
 
   async confirmDelete(): Promise<void> {
-    const result = await promptAction.showDialog({
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '删除崩溃记录',
       message: '确定删除这条崩溃记录吗？',
       buttons: [

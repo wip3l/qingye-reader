@@ -13,6 +13,7 @@ import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
+import { DialogStyle } from '../theme/DialogStyle';
 
 class BookSourceEditDraft {
   sourceJson: string = '';
@@ -646,8 +647,8 @@ struct BookSourceEditPage {
       Button('保存并返回')
         .width('100%')
         .height(44)
-        .backgroundColor(this.buttonColor())
-        .fontColor(ThemeRuntime.onAccentColor())
+        .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+        .fontColor(DialogStyle.text('primary', this.appDarkMode))
         .margin({ bottom: AppSpacing.MD })
         .onClick(() => {
           this.saveSourceAndBackFromDialog();
@@ -656,7 +657,7 @@ struct BookSourceEditPage {
       Button('放弃修改')
         .width('100%')
         .height(44)
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
         .fontColor(this.primaryTextColor())
         .margin({ bottom: AppSpacing.MD })
         .onClick(() => {
@@ -668,7 +669,7 @@ struct BookSourceEditPage {
       Button('取消')
         .width('100%')
         .height(44)
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
         .fontColor(this.primaryTextColor())
         .onClick(() => {
           this.showUnsavedDialog = false;
@@ -698,8 +699,8 @@ struct BookSourceEditPage {
       Button('使用导入的新版')
         .width('100%')
         .height(44)
-        .backgroundColor(this.buttonColor())
-        .fontColor(ThemeRuntime.onAccentColor())
+        .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+        .fontColor(DialogStyle.text('primary', this.appDarkMode))
         .margin({ bottom: AppSpacing.MD })
         .onClick(() => {
           this.useImportedSourceInsteadOfDraft();
@@ -708,7 +709,7 @@ struct BookSourceEditPage {
       Button('恢复未保存草稿')
         .width('100%')
         .height(44)
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
         .fontColor(this.primaryTextColor())
         .onClick(() => {
           this.restoreConflictingDraft();

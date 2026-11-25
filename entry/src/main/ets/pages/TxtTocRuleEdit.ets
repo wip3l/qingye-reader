@@ -13,6 +13,7 @@ import { TxtTocRuleSettings, TxtTocRuleStore } from '../utils/TxtTocRuleStore';
 import { TxtChapterMatcher, TxtTocResolvedRule, TxtTocRule, TxtTocRules } from '../core/book/TxtTocRules';
 import { LocalBookService, TxtTocPreview, TxtTocPreviewItem } from '../core/book/LocalBookService';
 import { appDb } from '../model/data/AppDatabase';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 class TxtTocTestLine {
   text: string = '';
@@ -213,7 +214,7 @@ struct TxtTocRuleEditPage {
   }
 
   private async confirmDelete(): Promise<void> {
-    const result = await promptAction.showDialog({
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '删除这条规则？',
       message: '正在用它的书会改回智能识别，下次重新解析时生效。',
       buttons: [

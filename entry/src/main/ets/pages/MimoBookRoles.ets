@@ -14,6 +14,7 @@ import { HdsFeedback } from '../utils/HdsFeedback';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { syncSystemBars } from '../utils/SystemBars';
 import { appDb } from '../model/data/AppDatabase';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 class MimoRolePageParams { book: string = ''; }
 
@@ -89,7 +90,7 @@ struct MimoBookRolesPage {
     HdsFeedback.showToast('已纠正，重新朗读这句时生效');
   }
   private async clearCast(): Promise<void> {
-    const result = await this.getUIContext().getPromptAction().showDialog({ title: '清除本书人物档案？',
+    const result = await ThemedDialog.showDialog(this.getUIContext(), { title: '清除本书人物档案？',
       message: '人物、音色和纠正记录都会删除，下次多角色朗读时重新识别。',
       buttons: [{ text: '取消', color: ThemeRuntime.subTextColor(this.dark) },
         { text: '清除', color: ThemeRuntime.dangerColor(this.dark) }] });

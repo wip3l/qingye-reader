@@ -15,6 +15,7 @@ import { ChangeSourceCandidates } from '../core/book/ChangeSourceCandidates';
 import { AuthorFold, ChangeSourceAuthorMatch } from '../core/book/ChangeSourceAuthorMatch';
 import { SkippedSource, SourceFormProfile } from '../core/book/SourceFormProfile';
 import { SourceFormJudge } from '../core/book/SourceFormJudge';
+import { DialogStyle } from '../theme/DialogStyle';
 
 class ChangeSourceGroupOption {
   name: string = '';
@@ -915,8 +916,8 @@ export struct BookChangeSourceDialog {
             .fontSize(AppFontSize.BODY)
             .borderRadius(18)
             .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
-            .backgroundColor(this.buttonColor())
-            .fontColor(ThemeRuntime.onAccentColor())
+            .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+            .fontColor(DialogStyle.text('primary', this.appDarkMode))
             .enabled(!this.switching)
             .onClick(() => this.expandToAllSources())
         }
@@ -1005,14 +1006,14 @@ export struct BookChangeSourceDialog {
                   .height(32)
                   .fontSize(AppFontSize.BODY)
                   .borderRadius(16)
-                  .backgroundColor(this.buttonColor())
-                  .fontColor(ThemeRuntime.onAccentColor())
+                  .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+                  .fontColor(DialogStyle.text('primary', this.appDarkMode))
                   .enabled(!this.switching)
                   .onClick(() => this.switchSource(book))
               }
               .width('100%')
               .padding(AppSpacing.LG)
-              .backgroundColor(this.inputColor())
+              .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
               .borderRadius(ThemeRuntime.mediumRadius())
             }
           }, (book: SearchBook) => `${book.origin}|${book.bookUrl}`)
@@ -1204,7 +1205,7 @@ export struct BookChangeSourceDialog {
     }
     .width('100%')
     .padding(AppSpacing.LG)
-    .backgroundColor(this.inputColor())
+    .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
     .borderRadius(ThemeRuntime.mediumRadius())
   }
 
@@ -1260,7 +1261,7 @@ export struct BookChangeSourceDialog {
             }
             .width('100%')
             .padding({ left: AppSpacing.LG, right: AppSpacing.MD, top: AppSpacing.MD, bottom: AppSpacing.MD })
-            .backgroundColor(this.inputColor())
+            .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
             .borderRadius(ThemeRuntime.mediumRadius())
           }
         }, (item: SkippedSource): string => `${item.source.bookSourceUrl}|${this.alwaysRevision}`)

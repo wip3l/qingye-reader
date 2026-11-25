@@ -2,6 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
 import { ComicColorModels, ComicColorizer } from '@legado/aiengine';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 export class ComicColorDownloadPrompt {
   static async ensure(context: common.Context, ui: UIContext, active: () => boolean,
@@ -11,7 +12,7 @@ export class ComicColorDownloadPrompt {
     if (bytes === 0) return true;
     if (!active() || !ComicColorizer.memberAllowed()) return false;
     const dark = AppStorage.get<boolean>('appDarkMode') || false;
-    const choice = await ui.getPromptAction().showDialog({
+    const choice = await ThemedDialog.showDialog(ui, {
       title: '下载漫画着色模型',
       message: `首次使用需下载约 ${(bytes / 1024 / 1024).toFixed(1)} MB 模型，建议连接 Wi-Fi。下载完成后可离线着色，漫画图片不会上传。`,
       buttons: [

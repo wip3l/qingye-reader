@@ -55,6 +55,7 @@ import { CloudAutoSync, CloudRemoteFont } from '../account/CloudAutoSync';
 import { CloudFontMenu } from '../account/CloudFontMenu';
 import { ThemeTypographyDraft } from '../utils/ThemeTypographyDraft';
 import { ReaderTitlePreviewStore } from '../utils/ReaderTitlePreviewStore';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 class ReaderCustomFontItem {
   familyName: string = '';
@@ -816,7 +817,7 @@ export struct ReaderFontSettingsEditor {
       this.closeRegexRuleEditor();
       return;
     }
-    this.getUIContext().showAlertDialog({
+    ThemedDialog.showAlertDialog(this.getUIContext(), {
       title: '是否保存？',
       message: this.isEditingNewRegexRule() ? '这条新规则还没有保存。' : '这条规则的修改还没有保存。',
       primaryButton: { value: '不保存', action: () => this.closeRegexRuleEditor() },
@@ -834,7 +835,7 @@ export struct ReaderFontSettingsEditor {
 
   /** 列表左滑删除：先确认，再按编辑页删除同样消散。 */
   confirmDeleteRegexRule(rule: ReaderRegexFontRule): void {
-    this.getUIContext().showAlertDialog({
+    ThemedDialog.showAlertDialog(this.getUIContext(), {
       title: '删除规则',
       message: `确定删除“${rule.name || '正则规则'}”吗？只想暂时不用可以选“停用”。`,
       primaryButton: { value: '取消', action: () => {} },

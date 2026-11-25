@@ -19,6 +19,7 @@ import { HdsFeedback } from '../utils/HdsFeedback';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 /** 我的权益：每月礼包、专属主题等要手动领取的权益和其余权益状态集中在这页，入口在会员卡上。 */
 @Entry
@@ -190,7 +191,7 @@ struct MemberBenefitsPage {
   }
 
   async confirmClaim(tier: string, title: string): Promise<void> {
-    const decision = await promptAction.showDialog({
+    const decision = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '领取本期礼包',
       message: `领取${title} ${this.giftChars(tier)} 字？每个自然月只能二选一，领取后不能更换；已领字数可累计使用。`,
       buttons: [{ text: '取消', color: this.subTextColor() }, { text: '领取', color: this.accentColor() }]
@@ -346,7 +347,7 @@ struct MemberBenefitsPage {
       return;
     }
     const name = BuiltinThemeRegistry.findById(themeId).name;
-    const choice = await promptAction.showDialog({ title: `领取「${name}」`,
+    const choice = await ThemedDialog.showDialog(this.getUIContext(), { title: `领取「${name}」`,
       message: '终身超级会员专属，不扣除点数。领取后有效一年，到期后可再次手动领取。',
       buttons: [{ text: '取消', color: this.subTextColor() }, { text: '领取一年', color: this.accentColor() }] });
     if (choice.index !== 1) return;

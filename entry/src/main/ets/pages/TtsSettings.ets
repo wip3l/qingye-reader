@@ -34,6 +34,7 @@ import { TtsTurnFollow } from '../utils/TtsTurnFollow';
 import { LocalTtsModel, LocalTtsModels } from '../utils/localtts/LocalTtsModels';
 import { LocalTtsSelection } from '../utils/localtts/LocalTtsSelection';
 import { selectDocuments } from '../platform/Files';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 interface TtsSettingsVoiceSelectOption extends SelectOption {
   key: string;
@@ -437,7 +438,7 @@ struct TtsSettingsPage {
       return;
     }
     const tierName = item.tier === 'PREMIUM' ? '精品音色' : '标准音色';
-    const result = await promptAction.showDialog({
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '兑换在线朗读字数',
       message: `使用 ${item.points} 充值点兑换 ${tierName} ${this.formatTtsChars(item.chars)}，有效期 ${item.validDays} 天。赠送点不能兑换。`,
       buttons: [

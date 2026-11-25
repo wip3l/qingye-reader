@@ -44,7 +44,8 @@ const managerContext=vm.createContext({
  MimoStore:{library:()=>globalScheme,saveLibrary:value=>globalScheme=value,cast:()=>bookScheme,saveCast:(_book,value)=>bookScheme=value,
  load:()=>({voice:'白桦',enabled:true,multi:false,analysisAvailable:true})},
  MimoVoicePolicy:{clone:value=>JSON.parse(JSON.stringify(value))},HdsFeedback:{showToast:message=>{throw Error(message)}},
- ThemeRuntime:{subTextColor:()=>'',accentColor:()=>''}
+ ThemeRuntime:{subTextColor:()=>'',accentColor:()=>''},
+ ThemedDialog: { showDialog: (ui, options) => ui.getPromptAction().showDialog(options), showActionMenu: (ui, options) => ui.getPromptAction().showActionMenu(options) },
 });
 const managementSource=read('pages/MimoVoices.ets');
 const Manager=vm.runInContext(stripTypeScriptTypes('class Manager {'+['confirm','activate','chooseRolePreset','loadRole'].map(n=>privateMethod(managementSource,n)).join('\n')+'}; Manager'),managerContext);

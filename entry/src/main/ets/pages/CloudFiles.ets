@@ -21,6 +21,7 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { MembershipIcons } from '../account/MembershipIcons';
 import { selectDocuments } from '../platform/Files';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 class LocalCloudFile {
   name: string = '';
@@ -462,7 +463,7 @@ struct CloudFilesPage {
   }
 
   async removeThemes(): Promise<void> {
-    const answer = await promptAction.showDialog({ title: '删除云端的自定义主题',
+    const answer = await ThemedDialog.showDialog(this.getUIContext(), { title: '删除云端的自定义主题',
       message: '只删除自定义主题的云端副本，各设备上的主题保留；之后改动主题时会重新上传。',
       buttons: [{ text: '取消', color: ThemeRuntime.subTextColor(this.dark) }, { text: '删除', color: ThemeRuntime.accentColor(this.dark) }] });
     if (answer.index !== 1) return;
@@ -621,7 +622,7 @@ struct CloudFilesPage {
     finally { this.busy = false; await this.refresh(true); }
   }
   async remove(file: CloudFileItem): Promise<void> {
-    const answer = await promptAction.showDialog({ title: '删除云文件', message: file.kind === 'SOURCE' ? `删除“${file.name}”的云端副本？已下载到本机的文件会保留。` :
+    const answer = await ThemedDialog.showDialog(this.getUIContext(), { title: '删除云文件', message: file.kind === 'SOURCE' ? `删除“${file.name}”的云端副本？已下载到本机的文件会保留。` :
         `只删除“${file.name}”的云端副本，各设备已下载的文件保留，之后不再自动同步它。想在所有设备移除，请在书架或字体管理里删除。`,
       buttons: [{ text: '取消', color: ThemeRuntime.subTextColor(this.dark) }, { text: '删除', color: ThemeRuntime.accentColor(this.dark) }] });
     if (answer.index !== 1) return;

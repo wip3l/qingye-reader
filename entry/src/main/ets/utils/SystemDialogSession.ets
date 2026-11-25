@@ -11,6 +11,8 @@ export interface SystemDialogOptions {
   warnTag: string;
   /** 弹窗以任何方式关闭（含蒙层/返回键自动关闭）后的回调，用于复位页面侧标志位。 */
   onDismiss?: () => void;
+  /** 打开失败（系统拒绝）时的回调。 */
+  onOpenFailed?: (error: Error) => void;
 }
 
 /**
@@ -65,6 +67,7 @@ export class SystemDialogSession {
     }).catch((error: Error) => {
       this.wanted = false;
       console.warn(options.warnTag, error);
+      if (options.onOpenFailed) options.onOpenFailed(error);
     });
   }
 

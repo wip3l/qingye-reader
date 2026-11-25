@@ -94,6 +94,8 @@ import { BookIdentity } from '../../utils/BookIdentity';
 import { copyFile, selectDocuments } from '../../platform/Files';
 import { compareText } from '../../platform/TextCompare';
 import { PlatformInfo } from '../../platform/PlatformInfo';
+import { DialogStyle } from '../../theme/DialogStyle';
+import { ThemedDialog } from '../../utils/ThemedDialog';
 
 const SHELF_FULL_TEXT_CACHE_NOTIFICATION_INTERVAL_MS: number = 5000;
 /** 有声书同时下载的章数。 */
@@ -3034,7 +3036,7 @@ export struct BookshelfPage {
   async showShelfBlankMenu(): Promise<void> {
     if (this.isBookMultiSelect || this.tileGroupAnimating) return;
     try {
-      const result = await this.getUIContext().getPromptAction().showActionMenu({
+      const result = await ThemedDialog.showActionMenu(this.getUIContext(), {
         title: '书架',
         buttons: [{ text: '更换书架背景', color: this.primaryTextColor() },
           { text: '书架设置', color: this.primaryTextColor() }]
@@ -4160,10 +4162,11 @@ export struct BookshelfPage {
         .fontSize(AppFontSize.BODY).fontColor(this.secondaryTextColor()).textAlign(TextAlign.Center)
       Row({ space: AppSpacing.LG }) {
         Button('取消', { type: ButtonType.Normal }).layoutWeight(1).height(42).borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.glassCardColor()).fontColor(this.primaryTextColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode)).fontColor(this.primaryTextColor())
           .onClick(() => this.closeBatchExportDialog())
         Button('确认', { type: ButtonType.Normal }).layoutWeight(1).height(42).borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.buttonColor()).fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => {
             this.closeBatchExportDialog();
             this.exportSelectedLocalBooks();
@@ -4254,14 +4257,15 @@ export struct BookshelfPage {
     Column({ space: AppSpacing.XL }) {
       Text(this.addBookGroupThenAssign ? '新建分组并移入' : '新增书籍分组').fontSize(AppFontSize.SUBTITLE).fontWeight(FontWeight.Bold).fontColor(this.primaryTextColor())
       TextInput({ placeholder: '输入分组名称', text: this.newBookGroupName })
-        .width('100%').height(42).backgroundColor(this.inputColor()).fontColor(this.primaryTextColor())
+        .width('100%').height(42).backgroundColor(DialogStyle.rowFill(this.appDarkMode)).fontColor(this.primaryTextColor())
         .borderRadius(ThemeRuntime.mediumRadius()).onChange((value: string) => this.newBookGroupName = value)
       Row({ space: AppSpacing.LG }) {
         Button('取消', { type: ButtonType.Normal }).layoutWeight(1).height(42).borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.glassCardColor()).fontColor(this.primaryTextColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode)).fontColor(this.primaryTextColor())
           .onClick(() => this.closeAddBookGroupDialog())
         Button(this.addBookGroupThenAssign ? '新建并移入' : '新增', { type: ButtonType.Normal }).layoutWeight(1).height(42).borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.buttonColor()).fontColor(ThemeRuntime.onAccentColor()).enabled(!!this.newBookGroupName.trim())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode)).enabled(!!this.newBookGroupName.trim())
           .onClick(() => this.addShelfBookGroup())
       }.width('100%')
     }    .padding(22)
@@ -4325,14 +4329,15 @@ export struct BookshelfPage {
     Column({ space: AppSpacing.XL }) {
       Text('重命名分组').fontSize(AppFontSize.SUBTITLE).fontWeight(FontWeight.Bold).fontColor(this.primaryTextColor())
       TextInput({ placeholder: '输入分组名称', text: this.renameBookGroupName })
-        .width('100%').height(42).backgroundColor(this.inputColor()).fontColor(this.primaryTextColor())
+        .width('100%').height(42).backgroundColor(DialogStyle.rowFill(this.appDarkMode)).fontColor(this.primaryTextColor())
         .borderRadius(ThemeRuntime.mediumRadius()).onChange((value: string) => this.renameBookGroupName = value)
       Row({ space: AppSpacing.LG }) {
         Button('取消', { type: ButtonType.Normal }).layoutWeight(1).height(42).borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.glassCardColor()).fontColor(this.primaryTextColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode)).fontColor(this.primaryTextColor())
           .onClick(() => this.closeRenameBookGroupDialog())
         Button('保存', { type: ButtonType.Normal }).layoutWeight(1).height(42).borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.buttonColor()).fontColor(ThemeRuntime.onAccentColor()).enabled(!!this.renameBookGroupName.trim())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode)).enabled(!!this.renameBookGroupName.trim())
           .onClick(() => this.renameShelfBookGroup())
       }.width('100%')
     }    .padding(22)
@@ -4358,10 +4363,11 @@ export struct BookshelfPage {
         .fontSize(AppFontSize.BODY).fontColor(this.secondaryTextColor()).textAlign(TextAlign.Center)
       Row({ space: AppSpacing.LG }) {
         Button('取消', { type: ButtonType.Normal }).layoutWeight(1).height(42).borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.glassCardColor()).fontColor(this.primaryTextColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode)).fontColor(this.primaryTextColor())
           .onClick(() => this.closeDeleteBookGroupDialog())
         Button('删除', { type: ButtonType.Normal }).layoutWeight(1).height(42).borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode)).fontColor(ThemeRuntime.onAccentColor()).onClick(() => this.deleteShelfBookGroup())
+          .backgroundColor(DialogStyle.fill('danger', this.appDarkMode))
+          .fontColor(DialogStyle.text('danger', this.appDarkMode)).onClick(() => this.deleteShelfBookGroup())
       }.width('100%')
     }    .padding(22)
   }
@@ -4391,10 +4397,11 @@ export struct BookshelfPage {
       }
       Row({ space: AppSpacing.LG }) {
         Button('取消', { type: ButtonType.Normal }).layoutWeight(1).height(42).borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.glassCardColor()).fontColor(this.primaryTextColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode)).fontColor(this.primaryTextColor())
           .onClick(() => this.closeBatchDeleteDialog())
         Button('删除', { type: ButtonType.Normal }).layoutWeight(1).height(42).borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode)).fontColor(ThemeRuntime.onAccentColor()).onClick(() => this.deleteSelectedBooks())
+          .backgroundColor(DialogStyle.fill('danger', this.appDarkMode))
+          .fontColor(DialogStyle.text('danger', this.appDarkMode)).onClick(() => this.deleteSelectedBooks())
       }.width('100%')
     }    .padding(22)
   }
@@ -4436,15 +4443,15 @@ export struct BookshelfPage {
         Button('取消')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => this.closeDeleteBookDialog())
 
         Button('删除')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode))
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('danger', this.appDarkMode))
+          .fontColor(DialogStyle.text('danger', this.appDarkMode))
           .onClick(() => {
             if (this.pendingDeleteBook) {
               const book = this.pendingDeleteBook;
@@ -4497,7 +4504,7 @@ export struct BookshelfPage {
         .height(44)
         .fontColor(this.primaryTextColor())
         .placeholderColor(this.subTextColor())
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .borderRadius(ThemeRuntime.mediumRadius())
         .onChange((value: string) => {
           this.editingBookName = value;
@@ -4514,7 +4521,7 @@ export struct BookshelfPage {
         .height(44)
         .fontColor(this.primaryTextColor())
         .placeholderColor(this.subTextColor())
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .borderRadius(ThemeRuntime.mediumRadius())
         .onChange((value: string) => {
           this.editingBookAuthor = value;
@@ -4552,7 +4559,7 @@ export struct BookshelfPage {
         .fontSize(AppFontSize.BODY)
         .fontColor(this.primaryTextColor())
         .placeholderColor(this.subTextColor())
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .borderRadius(ThemeRuntime.mediumRadius())
         .onChange((value: string) => {
           this.editingBookIntro = value;
@@ -4562,15 +4569,15 @@ export struct BookshelfPage {
         Button('取消')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => this.closeEditBookInfoDialog())
 
         Button('保存')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .enabled(!!this.editingBookName.trim())
           .opacity(this.editingBookName.trim() ? 1 : 0.45)
           .onClick(() => this.saveLocalBookInfo())
@@ -4636,7 +4643,7 @@ export struct BookshelfPage {
         TextInput({ placeholder: '输入标签', text: this.tagInput })
           .height(40)
           .layoutWeight(1)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .placeholderColor(this.subTextColor())
           .borderRadius(ThemeRuntime.mediumRadius())
@@ -4647,6 +4654,8 @@ export struct BookshelfPage {
         Button('添加')
           .height(40)
           .margin({ left: AppSpacing.MD })
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => {
             this.addEditingTag();
           })
@@ -4658,7 +4667,7 @@ export struct BookshelfPage {
         Button('取消')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.closeTagDialog();
@@ -4667,8 +4676,8 @@ export struct BookshelfPage {
         Button('保存')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => {
             this.saveCustomTags();
           })
@@ -4715,7 +4724,7 @@ export struct BookshelfPage {
         .height(44)
         .fontColor(this.primaryTextColor())
         .placeholderColor(this.subTextColor())
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .borderRadius(ThemeRuntime.mediumRadius())
         .onChange((value: string) => {
           this.customNetworkCoverUrl = value;
@@ -4729,7 +4738,7 @@ export struct BookshelfPage {
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.closeCustomCoverDialog();
@@ -4739,8 +4748,8 @@ export struct BookshelfPage {
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .enabled(/^https?:\/\/[^\s]+$/i.test(this.customNetworkCoverUrl.trim()))
           .onClick(() => this.applyCustomNetworkCover())
       }
@@ -8918,7 +8927,7 @@ export struct BookshelfPage {
       .width('100%')
       .height(44)
       .margin({ top: AppSpacing.SM })
-      .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+      .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
       .fontColor(color)
       .onClick(action)
   }
@@ -8977,7 +8986,7 @@ export struct BookshelfPage {
         .width('100%')
         .height(44)
         .margin({ top: 10 })
-        .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+        .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
         .fontColor(this.primaryTextColor())
         .onClick(() => {
           this.closeCacheDialog();
@@ -9041,8 +9050,8 @@ export struct BookshelfPage {
           .width(96)
           .height(42)
           .fontSize(AppFontSize.BODY)
-          .fontColor(ThemeRuntime.onAccentColor())
-          .backgroundColor(this.buttonColor())
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
           .enabled(this.cacheChapters.length > 0)
           .onClick(() => this.cacheChapterRange())
       }
@@ -9819,7 +9828,7 @@ export struct BookshelfPage {
         .height(44)
         .fontColor(this.primaryTextColor())
         .placeholderColor(this.subTextColor())
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .borderRadius(ThemeRuntime.mediumRadius())
         .onChange((value: string) => {
           this.privateShelfPasswordInput = value;
@@ -9848,15 +9857,15 @@ export struct BookshelfPage {
         Button('取消')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => this.closePrivateShelfUnlockDialog())
 
         Button('确定')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .enabled(this.privateShelfPasswordInput.length > 0)
           .opacity(this.privateShelfPasswordInput.length > 0 ? 1 : 0.45)
           .onClick(() => this.submitPrivateShelfUnlock())

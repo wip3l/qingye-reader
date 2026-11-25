@@ -39,6 +39,7 @@ import {
 } from '../core/reader/ReaderInfoBarModel';
 import { ReaderInfoBarClock } from '../core/reader/ReaderInfoBarClock';
 import { ReaderParagraphIndent } from '../core/reader/ReaderParagraphIndent';
+import { ThemedDialog } from '../utils/ThemedDialog';
 import {
   ReaderRegexBubbleStyleResolver,
   ReaderRegexEmphasisContext,
@@ -849,7 +850,7 @@ struct ThemeTypographySettingsPage {
   async confirmResetLayout(): Promise<void> {
     if (!this.loaded) return;
     try {
-      const result = await promptAction.showDialog({
+      const result = await ThemedDialog.showDialog(this.getUIContext(), {
         title: '恢复默认排版？',
         message: '字号、间距、边距与页眉页脚会恢复默认，字体和强调规则保留。',
         buttons: [{ text: '取消', color: this.subTextColor() },
@@ -916,7 +917,7 @@ struct ThemeTypographySettingsPage {
 
   async confirmDiscard(): Promise<boolean> {
     try {
-      const result = await promptAction.showDialog({
+      const result = await ThemedDialog.showDialog(this.getUIContext(), {
         title: '放弃本次修改？',
         message: '主题排版还没有保存，返回后修改不会生效。',
         buttons: [{ text: '继续编辑', color: this.subTextColor() },

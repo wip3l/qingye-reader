@@ -24,6 +24,8 @@ import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
 import { PopupMenuAction, PopupMenuHeader } from '../components/common/PopupMenuAction';
 import { saveDocuments, selectDocuments, writeTextFile } from '../platform/Files';
+import { DialogStyle } from '../theme/DialogStyle';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 const REPLACE_RULE_IMPORT_FILE_LIMIT_BYTES: number = 5 * 1024 * 1024;
 const REPLACE_RULE_IMPORT_TIMEOUT_MS: number = 20000;
@@ -193,7 +195,7 @@ struct ReaderReplaceRulesPage {
     const result = ReplaceRuleImport.parse(raw);
     if (ReplaceRuleImport.needsConfirm(result)) {
       this.isImporting = false;
-      const confirmed = await promptAction.showDialog({
+      const confirmed = await ThemedDialog.showDialog(this.getUIContext(), {
         title: ReplaceRuleImport.confirmTitle(result),
         message: ReplaceRuleImport.confirmMessage(result),
         buttons: [
@@ -484,7 +486,7 @@ struct ReaderReplaceRulesPage {
         .width('100%')
         .height(48)
         .borderRadius(ThemeRuntime.mediumRadius())
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .fontColor(this.primaryTextColor())
         .placeholderColor(this.subTextColor())
         .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -495,7 +497,7 @@ struct ReaderReplaceRulesPage {
         Button('取消')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.showImportUrlDialog = false;
@@ -504,8 +506,8 @@ struct ReaderReplaceRulesPage {
         Button('导入')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .enabled(!this.isImporting)
           .onClick(() => this.importRulesFromUrl())
       }
@@ -883,7 +885,7 @@ struct ReaderReplaceRulesPage {
         .width('100%')
         .height(48)
         .borderRadius(ThemeRuntime.mediumRadius())
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .fontColor(this.primaryTextColor())
         .placeholderColor(this.subTextColor())
         .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -896,14 +898,14 @@ struct ReaderReplaceRulesPage {
         Button('取消')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => this.showMoveToDialog = false)
         Button('移动')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => this.confirmMoveTo())
       }
       .width('100%')
@@ -1686,7 +1688,7 @@ struct ReaderReplaceRulesPage {
       return;
     }
     const count = deletableIds.length;
-    const result = await promptAction.showDialog({
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '删除规则',
       message: `确定删除已选择的 ${count} 条规则吗？`,
       buttons: [{ text: '取消', color: this.secondaryTextColor() }, { text: '删除', color: ThemeRuntime.dangerColor(this.appDarkMode) }]
@@ -2007,7 +2009,7 @@ struct ReaderReplaceRulesPage {
       HdsFeedback.showToast('内置规则不能删除，可以禁用');
       return;
     }
-    const result = await promptAction.showDialog({
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '删除规则',
       message: `确定删除“${rule.name || '未命名规则'}”吗？`,
       buttons: [{ text: '取消', color: this.secondaryTextColor() }, { text: '删除', color: ThemeRuntime.dangerColor(this.appDarkMode) }]

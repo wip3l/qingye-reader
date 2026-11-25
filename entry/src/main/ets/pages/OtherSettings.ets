@@ -10,6 +10,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { ReaderCacheBudget, ReaderCacheCleanup } from '../core/book/ReaderCacheBudget';
 import { ReaderCacheBudgetPolicy } from '../core/book/ReaderCacheBudgetPolicy';
 import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 /** 我的 › 其他设置：数据导入导出、缓存、交互。外观相关的在“外观”，在线阅读有自己的入口，试验性功能在“实验室”。 */
 @Entry
@@ -223,7 +224,7 @@ struct OtherSettingsPage {
   async confirmClearAudioOffline(): Promise<void> {
     if (this.cacheClearing) return;
     try {
-      const answer = await promptAction.showDialog({
+      const answer = await ThemedDialog.showDialog(this.getUIContext(), {
         title: '删除离线音频？',
         message: '删除所有手动下载的有声书音频，之后收听需要联网。正在播放的章节会继续播完。',
         buttons: [{ text: '取消', color: ThemeRuntime.subTextColor(this.appDarkMode) },
@@ -243,7 +244,7 @@ struct OtherSettingsPage {
     if (this.cacheClearing) return;
     const dark = this.appDarkMode;
     try {
-      const result = await promptAction.showDialog({
+      const result = await ThemedDialog.showDialog(this.getUIContext(), {
         title: text ? '清理小说自动缓存？' : '清理漫画自动缓存？',
         message: text ? '删除阅读时自动缓存的正文。手动离线内容、本地书和正在使用的书会保留。之后阅读可能需要联网。' :
           '删除自动缓存的图片和可重新生成的处理结果，保留离线原图及正在使用、最近 10 分钟访问的图片。之后阅读可能需要联网补图。',
@@ -270,7 +271,7 @@ struct OtherSettingsPage {
   async confirmClearOffline(): Promise<void> {
     if (this.cacheClearing) return;
     try {
-      const answer = await promptAction.showDialog({
+      const answer = await ThemedDialog.showDialog(this.getUIContext(), {
         title: '删除离线内容？',
         message: '删除手动缓存的在线小说正文与漫画原图，之后需要联网重新缓存。本地导入书和正在使用的内容会保留。',
         buttons: [{ text: '取消', color: ThemeRuntime.subTextColor(this.appDarkMode) },

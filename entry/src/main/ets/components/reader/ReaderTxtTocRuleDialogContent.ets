@@ -6,6 +6,7 @@ import { AppSpacing } from '../../theme/AppSpacing';
 import { LocalBookService, TxtTocPreview, TxtTocPreviewItem } from '../../core/book/LocalBookService';
 import { TxtTocRule, TxtTocRules } from '../../core/book/TxtTocRules';
 import { TxtTocRuleStore } from '../../utils/TxtTocRuleStore';
+import { DialogStyle } from '../../theme/DialogStyle';
 
 class TxtTocRuleRowItem {
   rule: TxtTocRule;
@@ -266,14 +267,14 @@ export struct ReaderTxtTocRuleDialogContent {
           .layoutWeight(1)
           .height(42)
           .fontColor(this.textColor())
-          .backgroundColor(ThemeRuntime.hairlineColor(this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .enabled(!this.applying)
           .onClick(() => this.onManageRules())
         Button(this.applyLabel())
           .layoutWeight(1)
           .height(42)
-          .fontColor(ThemeRuntime.onAccentColor())
-          .backgroundColor(ThemeRuntime.buttonColor(this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
           .enabled(!this.applying && !this.isDraftCurrent())
           .opacity(this.isDraftCurrent() && !this.applying ? 0.5 : 1)
           .onClick(() => this.apply())

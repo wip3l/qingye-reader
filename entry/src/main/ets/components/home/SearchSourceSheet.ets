@@ -1,4 +1,4 @@
-import { promptAction } from '@kit.ArkUI';
+import { UIContext } from '@kit.ArkUI';
 import { BookSource, NativeSourceService } from '@legado/sourceengine';
 import { SearchSourceIndexDataSource } from '../../core/book/ShelfDataSources';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
@@ -8,6 +8,7 @@ import { AppSpacing } from '../../theme/AppSpacing';
 import { ImmersiveBackButton } from '../ImmersiveBackButton';
 import { ListDissolve } from '../../utils/ListDissolve';
 import { DeleteParticleBurst, DeleteParticleLayer } from '../common/DeleteParticles';
+import { ThemedDialog } from '../../utils/ThemedDialog';
 import { SourceActionKind, SourceActionMenu, SourceActionRunner, SourceDeleteConfirm, SourceDeleteDialogParams,
   SourceGroupDialogParams, SourceGroupEditor, SourceGroupTag, SourcePickerKit, SourcePickerSearchField,
   SourceVariableDialogParams, SourceVariableEditor
@@ -19,9 +20,9 @@ export class SearchSourceSheetSession {
 }
 
 /** 有没保存的勾选时先问一句，返回 true 表示放弃修改。 */
-export async function confirmDiscardSearchSourceChanges(): Promise<boolean> {
+export async function confirmDiscardSearchSourceChanges(uiContext: UIContext): Promise<boolean> {
   try {
-    const result = await promptAction.showDialog({
+    const result = await ThemedDialog.showDialog(uiContext, {
       title: '放弃本次修改？',
       message: '搜索范围的勾选还没有保存。',
       buttons: [{ text: '继续编辑', color: ThemeRuntime.subTextColor(AppStorage.get<boolean>('appDarkMode') === true) },
@@ -769,7 +770,7 @@ export struct SearchSourceSheet {
   }
 
   async cancel(): Promise<void> {
-    if (this.session.dirty && !(await confirmDiscardSearchSourceChanges())) return;
+    if (this.session.dirty && !(await confirmDiscardSearchSourceChanges(this.getUIContext()))) return;
     this.session.dirty = false;
     this.onCancel();
   }

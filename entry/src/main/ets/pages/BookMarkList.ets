@@ -14,6 +14,7 @@ import { BookMark, BookMarkRules, BookMarkStatus } from '../model/book/BookMark'
 import { BookMarkService } from '../core/mark/BookMarkService';
 import { BookCover } from '../components/book/BookCover';
 import { BookMarkStars } from '../components/book/BookMarkStars';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 const SORT_RECENT: string = 'recent';
 const SORT_RATING: string = 'rating';
@@ -1325,7 +1326,7 @@ struct BookMarkListPage {
   }
 
   confirmDeleteCategory(name: string): void {
-    this.getUIContext().showAlertDialog({
+    ThemedDialog.showAlertDialog(this.getUIContext(), {
       title: `删除标签“${name}”`,
       message: `${this.categoryCount(name)} 本标记的书和书架上的书都会去掉这个标签，评分和短评不受影响。`,
       primaryButton: { value: '取消', action: (): void => {} },
@@ -1336,7 +1337,7 @@ struct BookMarkListPage {
           this.deleteCategory(name);
         }
       }
-    });
+    }, this.darkMode);
   }
 
   async deleteCategory(name: string): Promise<void> {
@@ -1353,7 +1354,7 @@ struct BookMarkListPage {
   }
 
   confirmDelete(item: BookMark): void {
-    this.getUIContext().showAlertDialog({
+    ThemedDialog.showAlertDialog(this.getUIContext(), {
       title: '删除标记',
       message: `《${item.bookName}》的评分、状态、标签和短评都会删除，书架上的标签保留。`,
       primaryButton: { value: '取消', action: (): void => {} },
@@ -1364,7 +1365,7 @@ struct BookMarkListPage {
           this.deleteMark(item);
         }
       }
-    });
+    }, this.darkMode);
   }
 
   async deleteMark(item: BookMark): Promise<void> {

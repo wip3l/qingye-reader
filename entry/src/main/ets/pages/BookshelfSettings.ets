@@ -25,6 +25,8 @@ import { NewBookGroup } from '../utils/NewBookGroup';
 import { NewBookGroupStore } from '../utils/NewBookGroupStore';
 import { PlatformInfo } from '../platform/PlatformInfo';
 import { ShelfBackdropStore } from '../utils/ShelfBackdropStore';
+import { DialogStyle } from '../theme/DialogStyle';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 @Entry
 @Component
@@ -630,7 +632,7 @@ struct BookshelfSettingsPage {
   }
 
   async confirmResetPrivateShelf(): Promise<void> {
-    const confirmation = await promptAction.showDialog({
+    const confirmation = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '重置隐私书架',
       message: '该操作会删除所有隐私书籍，包括进度、书签等，并关闭隐私书架选项',
       buttons: [{ text: '取消', color: this.subTextColor() }, { text: '确认', color: ThemeRuntime.dangerColor(this.appDarkMode) }]
@@ -986,7 +988,7 @@ struct BookshelfSettingsPage {
       .height(44)
       .fontColor(this.primaryTextColor())
       .placeholderColor(this.subTextColor())
-      .backgroundColor(this.inputColor())
+      .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
       .borderRadius(ThemeRuntime.mediumRadius())
       .margin({ bottom: AppSpacing.MD })
       .onChange((text: string) => {
@@ -1035,15 +1037,15 @@ struct BookshelfSettingsPage {
         Button('取消')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => this.closePrivatePasswordDialog())
 
         Button(this.privatePasswordDialogMode === 'disable' ? '关闭' : '保存')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => {
             this.submitPrivatePasswordDialog();
           })

@@ -47,6 +47,8 @@ import { CollapsingHeader } from '../utils/CollapsingHeader';
 import { HeaderBackdrop } from '../components/common/HeaderBackdrop';
 import { PopupMenuAction, PopupMenuHeader } from '../components/common/PopupMenuAction';
 import { saveDocuments, selectDocuments, writeTextFile } from '../platform/Files';
+import { DialogButtonRole, DialogStyle } from '../theme/DialogStyle';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 const BOOK_SOURCE_IMPORT_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 const BOOK_SOURCE_IMPORT_MAX_FILES = 50;
@@ -1064,7 +1066,7 @@ struct BookSourcePage {
         .width('100%')
         .height(48)
         .borderRadius(ThemeRuntime.mediumRadius())
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .fontColor(this.primaryTextColor())
         .placeholderColor(this.placeholderTextColor())
         .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -1083,7 +1085,7 @@ struct BookSourcePage {
         Button('取消')
           .width('45%')
           .height(44)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.showImportUrlDialog = false;
@@ -1093,8 +1095,8 @@ struct BookSourcePage {
         Button('导入')
           .width('45%')
           .height(44)
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => {
             this.importFromUrl();
           })
@@ -1129,7 +1131,7 @@ struct BookSourcePage {
         Button('取消')
           .width('45%')
           .height(44)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.showBatchDeleteDialog = false;
@@ -1138,7 +1140,8 @@ struct BookSourcePage {
         Button('删除')
           .width('45%')
           .height(44)
-          .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('danger', this.appDarkMode))
+          .fontColor(DialogStyle.text('danger', this.appDarkMode))
           .onClick(() => {
             this.showBatchDeleteDialog = false;
             this.batchDeleteSelectedSources();
@@ -1175,7 +1178,7 @@ struct BookSourcePage {
         .width('100%')
         .height(44)
         .borderRadius(ThemeRuntime.mediumRadius())
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .fontColor(this.primaryTextColor())
         .placeholderColor(this.placeholderTextColor())
         .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -1191,7 +1194,7 @@ struct BookSourcePage {
                 .fontSize(AppFontSize.BODY)
                 .fontColor(this.secondaryTextColor())
                 .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
-                .backgroundColor(this.inputColor())
+                .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
                 .borderRadius(ThemeRuntime.buttonRadius())
                 .margin({ right: AppSpacing.MD, top: AppSpacing.MD })
                 .onClick(() => {
@@ -1211,7 +1214,7 @@ struct BookSourcePage {
         Button('取消')
           .width('45%')
           .height(44)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.closeSourceGroupDialog();
@@ -1220,8 +1223,8 @@ struct BookSourcePage {
         Button('保存')
           .width('45%')
           .height(44)
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => {
             this.applySelectedSourceGroup();
           })
@@ -1280,7 +1283,7 @@ struct BookSourcePage {
             .height(42)
             .borderRadius(ThemeRuntime.buttonRadius())
             .fontSize(AppFontSize.BODY)
-            .backgroundColor(this.inputColor())
+            .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
             .fontColor(this.primaryTextColor())
             .onClick(() => {
               this.cancelBookSourceCheck(true);
@@ -1291,8 +1294,8 @@ struct BookSourcePage {
             .height(42)
             .borderRadius(ThemeRuntime.buttonRadius())
             .fontSize(AppFontSize.BODY)
-            .backgroundColor(this.buttonColor())
-            .fontColor(ThemeRuntime.onAccentColor())
+            .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+            .fontColor(DialogStyle.text('primary', this.appDarkMode))
             .onClick(() => {
               this.continueBookSourceCheckInBackground();
             })
@@ -1322,7 +1325,7 @@ struct BookSourcePage {
           .width('100%')
           .height(Math.min(this.checkResultDetails.length * 40 + 20, 160))
           .padding(AppSpacing.MD)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
           .borderRadius(ThemeRuntime.mediumRadius())
           .margin({ bottom: AppSpacing.XL })
           .scrollBar(BarState.Off)
@@ -1334,8 +1337,8 @@ struct BookSourcePage {
             .height(42)
             .borderRadius(ThemeRuntime.buttonRadius())
             .fontSize(AppFontSize.BODY)
-            .backgroundColor('#B26A00')
-            .fontColor('#FFFFFF')
+            .backgroundColor(DialogStyle.fill('danger', this.appDarkMode))
+            .fontColor(DialogStyle.text('danger', this.appDarkMode))
             .margin({ bottom: AppSpacing.MD })
             .onClick(() => {
               this.trustCheckCertificateHostsAndRetry();
@@ -1350,8 +1353,8 @@ struct BookSourcePage {
               .borderRadius(ThemeRuntime.buttonRadius())
               .fontSize(AppFontSize.CAPTION)
               .enabled(this.checkBadUrls.length > 0 && !this.isBatchOperating)
-              .backgroundColor(this.checkBadUrls.length > 0 && !this.isBatchOperating ? '#F57C00' : this.inputColor())
-              .fontColor(this.checkBadUrls.length > 0 && !this.isBatchOperating ? '#FFFFFF' : this.subTextColor())
+              .backgroundColor(DialogStyle.fill(this.checkBadUrls.length > 0 && !this.isBatchOperating ? 'primary' : 'cancel', this.appDarkMode))
+              .fontColor(this.checkBadUrls.length > 0 && !this.isBatchOperating ? DialogStyle.text('primary', this.appDarkMode) : this.subTextColor())
               .onClick(() => {
                 this.disableFailedCheckedSources();
               })
@@ -1362,8 +1365,8 @@ struct BookSourcePage {
               .borderRadius(ThemeRuntime.buttonRadius())
               .fontSize(AppFontSize.CAPTION)
               .enabled(this.checkBadUrls.length > 0 && !this.isBatchOperating)
-              .backgroundColor(this.checkBadUrls.length > 0 && !this.isBatchOperating ? ThemeRuntime.dangerColor(this.appDarkMode) : this.inputColor())
-              .fontColor(this.checkBadUrls.length > 0 && !this.isBatchOperating ? '#FFFFFF' : this.subTextColor())
+              .backgroundColor(DialogStyle.fill(this.checkBadUrls.length > 0 && !this.isBatchOperating ? 'danger' : 'cancel', this.appDarkMode))
+              .fontColor(this.checkBadUrls.length > 0 && !this.isBatchOperating ? DialogStyle.text('danger', this.appDarkMode) : this.subTextColor())
               .onClick(() => {
                 this.deleteFailedCheckedSources();
               })
@@ -1374,7 +1377,7 @@ struct BookSourcePage {
             .height(42)
             .borderRadius(ThemeRuntime.buttonRadius())
             .fontSize(AppFontSize.CAPTION)
-            .backgroundColor(this.inputColor())
+            .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
             .fontColor(this.primaryTextColor())
             .onClick(() => {
               this.showCheckDialog = false;
@@ -1563,7 +1566,7 @@ struct BookSourcePage {
         Button('取消')
           .layoutWeight(1)
           .height(42)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.showCheckOptionsDialog = false;
@@ -1572,9 +1575,8 @@ struct BookSourcePage {
         Button('开始校验')
           .layoutWeight(1)
           .height(42)
-          .backgroundColor(this.checkValidationMode === 'search' && this.checkInvalidAction === 'delete' ?
-            '#B71C1C' : this.buttonColor())
-          .fontColor('#FFFFFF')
+          .backgroundColor(DialogStyle.fill(this.checkStartRole(), this.appDarkMode))
+          .fontColor(DialogStyle.text(this.checkStartRole(), this.appDarkMode))
           .onClick(() => {
             this.startCheckEnabledSources(this.checkValidationMode === 'exploreReading' ?
               'none' : this.checkInvalidAction);
@@ -1587,16 +1589,21 @@ struct BookSourcePage {
     .padding(AppSpacing.XL)
   }
 
+  /** 开始校验：搜索校验并删除失效书源时按删除类按钮显示。 */
+  checkStartRole(): DialogButtonRole {
+    return this.checkValidationMode === 'search' && this.checkInvalidAction === 'delete' ? 'danger' : 'primary';
+  }
+
   @Builder
   checkModeOption(value: string, label: string) {
     Text(label)
       .fontSize(AppFontSize.BODY)
-      .fontColor(this.checkValidationMode === value ? '#FFFFFF' : this.primaryTextColor())
+      .fontColor(this.checkValidationMode === value ? DialogStyle.text('primary', this.appDarkMode) : this.primaryTextColor())
       .layoutWeight(1)
       .height(38)
       .textAlign(TextAlign.Center)
       .borderRadius(ThemeRuntime.mediumRadius())
-      .backgroundColor(this.checkValidationMode === value ? this.buttonColor() : this.inputColor())
+      .backgroundColor(this.checkValidationMode === value ? DialogStyle.fill('primary', this.appDarkMode) : DialogStyle.rowFill(this.appDarkMode))
       .onClick(() => {
         this.checkValidationMode = value;
         if (value === 'exploreReading') this.checkInvalidAction = 'none';
@@ -1628,7 +1635,7 @@ struct BookSourcePage {
     .width('100%')
     .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.MD, bottom: AppSpacing.MD })
     .borderRadius(ThemeRuntime.mediumRadius())
-    .backgroundColor(this.checkInvalidAction === action ? this.inputColor() : this.cardColor())
+    .backgroundColor(this.checkInvalidAction === action ? DialogStyle.fill(danger ? 'danger' : 'primary', this.appDarkMode) : DialogStyle.rowFill(this.appDarkMode))
     .border({
       width: this.checkInvalidAction === action ? 1 : 0.5,
       color: this.checkInvalidAction === action ? (danger ? '#B71C1C' : this.accentColor()) : this.glassBorderColor()
@@ -1724,7 +1731,7 @@ struct BookSourcePage {
                     .layoutWeight(1)
                     .height(42)
                     .borderRadius(ThemeRuntime.mediumRadius())
-                    .backgroundColor(this.inputColor())
+                    .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
                     .fontColor(this.primaryTextColor())
                     .placeholderColor(this.placeholderTextColor())
                     .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -1738,7 +1745,7 @@ struct BookSourcePage {
                       .height(42)
                       .fontSize(AppFontSize.BODY)
                       .fontColor(this.primaryTextColor())
-                      .backgroundColor(this.inputColor())
+                      .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
                       .enabled(!this.isExecutingLoginAction)
                       .onClick(() => {
                         this.executeSourceLoginAction(item);
@@ -1775,7 +1782,7 @@ struct BookSourcePage {
               .height(48)
               .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
               .borderRadius(ThemeRuntime.mediumRadius())
-              .backgroundColor(this.inputColor())
+              .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
             } else if (this.isSourceLoginSelect(item)) {
               Row({ space: AppSpacing.LG }) {
                 Text(this.sourceLoginItemDisplayName(item))
@@ -1791,7 +1798,7 @@ struct BookSourcePage {
                   .value(this.sourceLoginChoiceValue(item))
                   .fontColor(this.primaryTextColor())
                   .selectedOptionFontColor(this.accentColor())
-                  .backgroundColor(this.cardColor())
+                  .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
                   .divider(null)
                   .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
                   .menuBackgroundBlurStyle(BlurStyle.NONE)
@@ -1805,7 +1812,7 @@ struct BookSourcePage {
               .height(48)
               .padding({ left: AppSpacing.LG, right: AppSpacing.MD })
               .borderRadius(ThemeRuntime.mediumRadius())
-              .backgroundColor(this.inputColor())
+              .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
             } else {
               Button(this.isExecutingLoginAction && item.action ? `执行中 · ${item.name}` :
                 this.sourceLoginButtonLabel(item),
@@ -1814,7 +1821,7 @@ struct BookSourcePage {
                 .height(40)
                 .fontSize(AppFontSize.BODY)
                 .fontColor(item.action ? this.primaryTextColor() : this.subTextColor())
-                .backgroundColor(item.action ? this.inputColor() : this.cardColor())
+                .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
                 .enabled(!!item.action && !this.isExecutingLoginAction)
                 .onClick(() => {
                   this.executeSourceLoginAction(item);
@@ -1836,7 +1843,7 @@ struct BookSourcePage {
         Button('关闭')
           .layoutWeight(1)
           .height(42)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.saveSourceLoginInputs();
@@ -1851,8 +1858,8 @@ struct BookSourcePage {
             .layoutWeight(1)
             .height(42)
             .fontSize(AppFontSize.BODY)
-            .fontColor(ThemeRuntime.onAccentColor())
-            .backgroundColor(this.accentColor())
+            .fontColor(DialogStyle.text('primary', this.appDarkMode))
+            .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
             .enabled(!this.isExecutingLoginAction)
             .onClick(() => {
               this.confirmSourceLoginInputs();
@@ -2108,7 +2115,7 @@ struct BookSourcePage {
         Button('取消')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.showSourceDeleteDialog = false;
@@ -2118,8 +2125,8 @@ struct BookSourcePage {
         Button('删除')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor('#B71C1C')
-          .fontColor('#FFFFFF')
+          .backgroundColor(DialogStyle.fill('danger', this.appDarkMode))
+          .fontColor(DialogStyle.text('danger', this.appDarkMode))
           .onClick(() => {
             this.deleteActionSource();
           })
@@ -2427,7 +2434,7 @@ struct BookSourcePage {
             .width('100%')
             .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: AppSpacing.MD, bottom: AppSpacing.MD })
             .borderRadius(ThemeRuntime.mediumRadius())
-            .backgroundColor(this.inputColor())
+            .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
           }
         }, (source: BookSource) => source.bookSourceUrl)
       }
@@ -2473,7 +2480,7 @@ struct BookSourcePage {
             .layoutWeight(1)
             .height(42)
             .borderRadius(ThemeRuntime.buttonRadius())
-            .backgroundColor(this.glassCardColor())
+            .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
             .fontColor(this.primaryTextColor())
             .onClick(() => this.cancelImportSourceSelection())
           Button('导入所选', { type: ButtonType.Normal })
@@ -2481,8 +2488,8 @@ struct BookSourcePage {
             .height(42)
             .borderRadius(ThemeRuntime.buttonRadius())
             .enabled(this.importSelectedCount() > 0 && !this.isImporting)
-            .backgroundColor(this.buttonColor())
-            .fontColor(ThemeRuntime.onAccentColor())
+            .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+            .fontColor(DialogStyle.text('primary', this.appDarkMode))
             .onClick(() => this.confirmImportSourceSelection())
         }
         .width('100%')
@@ -3130,7 +3137,7 @@ struct BookSourcePage {
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.glassCardColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.showSourceGroupManagerDialog = false;
@@ -3211,7 +3218,7 @@ struct BookSourcePage {
       TextInput({ placeholder: '输入分组名称', text: this.newSourceGroupInput })
         .width('100%')
         .height(42)
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .fontColor(this.primaryTextColor())
         .borderRadius(ThemeRuntime.mediumRadius())
         .onChange((value: string) => this.newSourceGroupInput = value)
@@ -3221,15 +3228,15 @@ struct BookSourcePage {
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.glassCardColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => this.closeAddSourceGroupDialog())
         Button('新增', { type: ButtonType.Normal })
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .enabled(!!this.newSourceGroupInput.trim() && !this.isBatchOperating)
           .onClick(() => this.addSourceGroup())
       }
@@ -3249,7 +3256,7 @@ struct BookSourcePage {
       TextInput({ placeholder: '输入分组名称', text: this.renameSourceGroupInput })
         .width('100%')
         .height(42)
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .fontColor(this.primaryTextColor())
         .borderRadius(ThemeRuntime.mediumRadius())
         .onChange((value: string) => this.renameSourceGroupInput = value)
@@ -3259,15 +3266,15 @@ struct BookSourcePage {
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.glassCardColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => this.closeRenameSourceGroupDialog())
         Button('保存', { type: ButtonType.Normal })
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .enabled(!!this.renameSourceGroupInput.trim() && !this.isBatchOperating)
           .onClick(() => this.renameSourceGroup())
       }
@@ -3292,15 +3299,15 @@ struct BookSourcePage {
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.glassCardColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => this.closeDeleteSourceGroupDialog())
         Button('删除', { type: ButtonType.Normal })
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode))
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('danger', this.appDarkMode))
+          .fontColor(DialogStyle.text('danger', this.appDarkMode))
           .enabled(!this.isBatchOperating)
           .onClick(() => this.deleteSourceGroup())
       }
@@ -6475,7 +6482,7 @@ struct BookSourcePage {
     if (this.isCheckingSources || this.checkTlsTrustHosts.length === 0) return;
     const hosts = [...this.checkTlsTrustHosts];
     const retryUrls = new Set<string>(this.checkTlsRetrySourceUrls);
-    const confirmation = await promptAction.showDialog({
+    const confirmation = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '信任证书风险提示',
       message: `系统无法验证以下主机的身份：\n${hosts.join('\n')}\n\n` +
         '继续后，仅在本设备上对这些精确主机跳过证书校验。连接可能被冒充或监听；只有在你确认书源和网络可信时才继续。',
@@ -7276,7 +7283,7 @@ struct BookSourcePage {
   // 返回 null 表示用户取消了这次导入。
   async askKeepImportSourceGroups(sources: BookSource[]): Promise<boolean | null> {
     try {
-      const confirmation = await promptAction.showDialog({
+      const confirmation = await ThemedDialog.showDialog(this.getUIContext(), {
         title: '保留原分组？',
         message: `书源自带分组 ${this.importSourceGroupSummary(sources)}。`,
         buttons: [

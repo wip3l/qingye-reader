@@ -14,6 +14,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 /** 问题记录里书源在本机的当前状态，决定能否打开或删除。 */
 class IssueSourceInfo {
@@ -338,7 +339,7 @@ struct SyncIssuesPage {
       HdsFeedback.showToast('锁定的书源不能删除');
       return;
     }
-    const result = await promptAction.showDialog({
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '删除书源',
       message: `确定从本机删除“${this.issueTarget(issue)}”吗？删除后不会再尝试上传它。`,
       buttons: [
@@ -372,7 +373,7 @@ struct SyncIssuesPage {
   }
 
   async confirmClearAll(): Promise<void> {
-    const result = await promptAction.showDialog({
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
       title: '清除同步问题',
       message: '确定清除全部同步问题记录吗？问题本身不会因此解决，再次出现时会重新记录。',
       buttons: [

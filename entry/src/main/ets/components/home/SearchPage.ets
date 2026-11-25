@@ -432,7 +432,7 @@ export struct SearchPage {
           action.dismiss();
           return;
         }
-        confirmDiscardSearchSourceChanges().then((discard: boolean): void => {
+        confirmDiscardSearchSourceChanges(this.getUIContext()).then((discard: boolean): void => {
           if (discard) {
             this.searchSourceSheetSession.dirty = false;
             action.dismiss();

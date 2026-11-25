@@ -36,6 +36,8 @@ import { LocalTtsEngine } from '../utils/localtts/LocalTtsEngine';
 import { LocalTtsImport } from '../utils/localtts/LocalTtsImport';
 import { LocalTtsSpeakers } from '../utils/localtts/LocalTtsSpeakers';
 import { saveDocuments, selectDocuments, writeTextFile } from '../platform/Files';
+import { DialogStyle } from '../theme/DialogStyle';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 class ManagedTtsVoiceEntry {
   key: string = '';
@@ -450,7 +452,7 @@ struct CustomTtsVoiceManagerPage {
       return;
     }
     if (LocalTtsImport.isBusy()) return;
-    this.getUIContext().showAlertDialog({
+    ThemedDialog.showAlertDialog(this.getUIContext(), {
       title: '导入离线模型',
       message: '支持 sherpa-onnx 的 VITS、Piper、Matcha、Kokoro 语音合成模型，请把模型文件夹打成 zip 再导入' +
         '（官方的 .tar.bz2 需要先解压）。\n\n导入的模型由你自行确认版权与用途。不兼容的模型可能在第一次朗读时让应用退出，' +
@@ -479,7 +481,7 @@ struct CustomTtsVoiceManagerPage {
       if (this.pageAlive && !this.ttsLocalVoiceId) this.selectLocalVoice(model);
     } catch (error) {
       if (this.pageAlive) {
-        this.getUIContext().showAlertDialog({
+        ThemedDialog.showAlertDialog(this.getUIContext(), {
           title: '导入失败',
           message: (error as Error).message || String(error),
           confirm: { value: '知道了', action: (): void => {} }
@@ -602,7 +604,7 @@ struct CustomTtsVoiceManagerPage {
     const message = members.length > 1 ?
       `“${model.name}”属于多人音色包，删除会同时移除包里的 ${members.length} 个音色，之后需要重新${model.imported ? '导入' : '下载'}才能使用。` :
       `确定删除离线音色“${model.name}”吗？删除后需要重新${model.imported ? '导入' : '下载'}才能使用。`;
-    this.getUIContext().showAlertDialog({
+    ThemedDialog.showAlertDialog(this.getUIContext(), {
       title: members.length > 1 ? '删除音色包' : '删除音色',
       message: message,
       primaryButton: { value: '取消', action: (): void => {} },
@@ -1046,7 +1048,7 @@ struct CustomTtsVoiceManagerPage {
   }
 
   deleteVoice(voice: HttpTTS): void {
-    this.getUIContext().showAlertDialog({
+    ThemedDialog.showAlertDialog(this.getUIContext(), {
       title: '删除音色',
       message: `确定删除自定义音色“${voice.name || '未命名音色'}”吗？删除后无法撤销。`,
       primaryButton: { value: '取消', action: (): void => {} },
@@ -1192,7 +1194,7 @@ struct CustomTtsVoiceManagerPage {
   showBatchResult(action: string, count: number, blocked: string[]): void {
     const summary = `已${action} ${count} 个音色`;
     if (blocked.length === 0) { HdsFeedback.showToast(summary); return; }
-    this.getUIContext().showAlertDialog({
+    ThemedDialog.showAlertDialog(this.getUIContext(), {
       title: `批量${action}结果`,
       message: `${summary}\n\n以下音色无法${action}：\n${blocked.join('\n')}`,
       confirm: { value: '知道了', action: (): void => {} }
@@ -1249,7 +1251,7 @@ struct CustomTtsVoiceManagerPage {
     const customVoices = selected.filter((voice: TtsBatchVoiceEntry): boolean => voice.kind === '自定义音色');
     const localTargets = this.batchLocalRemovalTargets(selected);
     if (customVoices.length === 0 && localTargets.length === 0) {
-      this.getUIContext().showAlertDialog({
+      ThemedDialog.showAlertDialog(this.getUIContext(), {
         title: '无法删除所选音色',
         message: `仅自定义音色和离线音色可以删除，当前选择中没有这两类音色。未删除任何音色。\n\n${blocked.join('\n')}`,
         confirm: { value: '知道了', action: (): void => {} }
@@ -1265,7 +1267,7 @@ struct CustomTtsVoiceManagerPage {
     const hint = localTargets.length === 0 ? '删除后无法撤销。' :
       (deletable.length === 0 ? '删除后需要重新下载或导入才能使用。' : '自定义音色删除后无法撤销，离线音色需要重新下载或导入。');
     const restrictions = blocked.length > 0 ? `\n\n以下音色无法删除，将保留：\n${blocked.join('\n')}` : '';
-    this.getUIContext().showAlertDialog({
+    ThemedDialog.showAlertDialog(this.getUIContext(), {
       title: '批量删除音色',
       message: `确定删除以下 ${total} 项吗？${hint}\n\n${names}${restrictions}`,
       primaryButton: { value: '取消', action: (): void => {} },
@@ -1620,7 +1622,7 @@ struct CustomTtsVoiceManagerPage {
     if (this.selectedVoiceIds.length === 0 || this.isBatchOperating) return;
     const selected = this.voices.filter((voice: HttpTTS): boolean => this.isVoiceSelected(voice));
     if (selected.length === 0) {
-      this.getUIContext().showAlertDialog({
+      ThemedDialog.showAlertDialog(this.getUIContext(), {
         title: '无法导出所选音色',
         message: '仅自定义音色可以导出，当前选择中没有自定义音色。',
         confirm: { value: '知道了', action: (): void => {} }
@@ -2234,7 +2236,7 @@ struct CustomTtsVoiceManagerPage {
       TextInput({ placeholder: '音色 JSON URL', text: this.importUrl })
         .width('100%')
         .height(44)
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .fontColor(this.primaryTextColor())
         .placeholderColor(this.subTextColor())
         .onChange((value: string) => {
@@ -2244,7 +2246,7 @@ struct CustomTtsVoiceManagerPage {
         Button('取消')
           .layoutWeight(1)
           .height(42)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.showImportUrlDialog = false;
@@ -2252,8 +2254,8 @@ struct CustomTtsVoiceManagerPage {
         Button(this.isImporting ? '导入中' : '导入')
           .layoutWeight(1)
           .height(42)
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .enabled(!this.isImporting)
           .onClick(() => {
             this.importFromUrl();
@@ -2335,7 +2337,7 @@ struct CustomTtsVoiceManagerPage {
         Button('取消')
           .layoutWeight(1)
           .height(42)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.closeEditDialog();
@@ -2343,8 +2345,8 @@ struct CustomTtsVoiceManagerPage {
         Button('保存')
           .layoutWeight(1)
           .height(42)
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => {
             this.saveEditedVoice();
           })
@@ -2377,7 +2379,7 @@ struct CustomTtsVoiceManagerPage {
       TextInput({ placeholder, text: value })
         .width('100%')
         .height(42)
-        .backgroundColor(this.inputColor())
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .fontColor(this.primaryTextColor())
         .placeholderColor(this.subTextColor())
         .onChange((nextValue: string) => {

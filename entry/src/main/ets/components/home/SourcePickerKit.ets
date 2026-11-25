@@ -10,6 +10,7 @@ import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 import { PopupMenuAction } from '../common/PopupMenuAction';
+import { DialogStyle } from '../../theme/DialogStyle';
 
 /**
  * 发现页书源下拉与搜索范围面板共用的书源选择约定：分组名、分组顺序、同名书源的显示名、
@@ -243,7 +244,7 @@ export struct SourceVariableEditor {
           .width('100%')
           .padding(AppSpacing.MD)
           .borderRadius(ThemeRuntime.mediumRadius())
-          .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+          .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
       }
 
       TextArea({ text: this.value, placeholder: this.params.comment || '请输入书源变量' })
@@ -252,7 +253,7 @@ export struct SourceVariableEditor {
         .fontSize(AppFontSize.BODY)
         .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
         .placeholderColor(ThemeRuntime.subTextColor(this.appDarkMode))
-        .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .borderRadius(ThemeRuntime.mediumRadius())
         .padding(AppSpacing.LG)
         .enabled(!this.saving)
@@ -265,14 +266,14 @@ export struct SourceVariableEditor {
           .layoutWeight(1)
           .height(40)
           .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
-          .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .enabled(!this.saving)
           .onClick(() => this.params.onClose())
         Button(this.saving ? '保存中…' : '保存')
           .layoutWeight(1)
           .height(40)
-          .fontColor(ThemeRuntime.onAccentColor())
-          .backgroundColor(ThemeRuntime.accentColor(this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
           .enabled(!this.saving)
           .onClick(() => this.save())
       }
@@ -337,7 +338,7 @@ export struct SourceGroupEditor {
         .fontSize(AppFontSize.BODY)
         .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
         .placeholderColor(ThemeRuntime.subTextColor(this.appDarkMode))
-        .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+        .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
         .borderRadius(ThemeRuntime.mediumRadius())
         .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
         .enabled(!this.saving)
@@ -364,14 +365,14 @@ export struct SourceGroupEditor {
           .layoutWeight(1)
           .height(40)
           .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
-          .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .enabled(!this.saving)
           .onClick(() => this.params.onClose())
         Button(this.saving ? '保存中…' : '保存')
           .layoutWeight(1)
           .height(40)
-          .fontColor(ThemeRuntime.onAccentColor())
-          .backgroundColor(ThemeRuntime.accentColor(this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
           .enabled(!this.saving)
           .onClick(() => this.save())
       }
@@ -388,7 +389,7 @@ export struct SourceGroupEditor {
         ThemeRuntime.subTextColor(this.appDarkMode))
       .fontWeight(this.value.trim() === group ? FontWeight.Medium : FontWeight.Regular)
       .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
-      .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+      .backgroundColor(DialogStyle.rowFill(this.appDarkMode))
       .borderRadius(ThemeRuntime.buttonRadius())
       .margin({ right: AppSpacing.MD, bottom: AppSpacing.MD })
       .onClick(() => {
@@ -451,15 +452,15 @@ export struct SourceDeleteConfirm {
         Button('取消')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
           .onClick(() => this.params.onCancel())
 
         Button('删除')
           .layoutWeight(1)
           .height(44)
-          .backgroundColor('#B71C1C')
-          .fontColor('#FFFFFF')
+          .backgroundColor(DialogStyle.fill('danger', this.appDarkMode))
+          .fontColor(DialogStyle.text('danger', this.appDarkMode))
           .onClick(() => this.params.onConfirm())
       }
       .width('100%')

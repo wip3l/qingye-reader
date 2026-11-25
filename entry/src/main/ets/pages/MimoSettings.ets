@@ -17,6 +17,7 @@ import { syncSystemBars } from '../utils/SystemBars';
 import { AccountSessionStore } from '../account/AccountSessionStore';
 import { AccountCommerceApi } from '../account/AccountCommerceApi';
 import { MembershipBadge } from '../components/common/MembershipBadge';
+import { ThemedDialog } from '../utils/ThemedDialog';
 
 /** Result of one capability check: idle (not run), running, ok, fail, skipped. */
 type MimoCheck = 'idle' | 'running' | 'ok' | 'fail' | 'skipped';
@@ -261,7 +262,7 @@ struct MimoSettingsPage {
     this.syncSettings();
   }
   private async removeKey(): Promise<void> {
-    const result = await this.getUIContext().getPromptAction().showDialog({ title: '删除本机密钥？',
+    const result = await ThemedDialog.showDialog(this.getUIContext(), { title: '删除本机密钥？',
       message: '将停止 MiMo 朗读并清除密钥。人物档案保留。',
       buttons: [{ text: '取消', color: ThemeRuntime.subTextColor(this.dark) },
         { text: '删除', color: ThemeRuntime.dangerColor(this.dark) }] });

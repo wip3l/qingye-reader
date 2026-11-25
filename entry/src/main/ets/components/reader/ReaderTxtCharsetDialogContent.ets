@@ -3,6 +3,7 @@ import { ImmersiveBackButton } from '../ImmersiveBackButton';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
+import { DialogStyle } from '../../theme/DialogStyle';
 
 /** 本地 TXT 可手动指定的字符编码。 */
 export class ReaderTxtCharsets {
@@ -132,14 +133,14 @@ export struct ReaderTxtCharsetDialogContent {
           .layoutWeight(1)
           .height(42)
           .fontColor(this.textColor())
-          .backgroundColor(ThemeRuntime.hairlineColor(this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .enabled(!this.applying)
           .onClick(() => this.onClose())
         Button(this.applying ? '正在重新解析…' : '应用')
           .layoutWeight(1)
           .height(42)
-          .fontColor(ThemeRuntime.onAccentColor())
-          .backgroundColor(ThemeRuntime.buttonColor(this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
           .enabled(!this.applying)
           .onClick(() => this.apply())
       }

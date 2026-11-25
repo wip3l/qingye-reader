@@ -1,4 +1,4 @@
-import { router } from '@kit.ArkUI';
+import { promptAction, router } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { LengthMetrics } from '@ohos.arkui.node';
 import { ReaderCommentCardSettings } from '../utils/ReaderCommentCardSettings';
@@ -33,6 +33,7 @@ import { HdsFeedback } from '../utils/HdsFeedback';
 import { SourceShelfEvents } from '../utils/SourceShelfEvents';
 import { VideoBookPlayer } from '../utils/VideoBookPlayer';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
+import { ThemedDialog } from '../utils/ThemedDialog';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { KnockShare } from '../utils/KnockShare';
@@ -52,6 +53,7 @@ import { BookReadStatsPanel } from '../components/book/BookReadStatsPanel';
 import { BookReadStatsLoader, BookReadStatsSnapshot } from '../core/stats/BookReadStatsLoader';
 import { NewBookGroup } from '../utils/NewBookGroup';
 import { NewBookGroupStore } from '../utils/NewBookGroupStore';
+import { DialogStyle } from '../theme/DialogStyle';
 
 @Entry
 @Component
@@ -202,8 +204,6 @@ struct SearchBookDetailPage {
   private knockShareOwner: string = `book-detail-${Date.now()}-${Math.random()}`;
   private openingCatalogChapter: boolean = false;
   private authorSearchDialogSession: SystemDialogSession = new SystemDialogSession();
-  private changeSourceDialogBuilder: CustomBuilder | undefined = undefined;
-  private changeSourceDialogId: number = -1;
   @StorageLink('searchExplorePromptAddToShelfOnBack') searchExplorePromptAddToShelfOnBack: boolean = true;
 
   aboutToAppear() {
@@ -1761,26 +1761,16 @@ struct SearchBookDetailPage {
       HdsFeedback.showToast('本地书籍无需换源');
       return;
     }
-    this.changeSourceDialogBuilder = (): void => {
-      this.changeSourceConfirmDialogContent();
-    };
-    this.getUIContext().getPromptAction().openCustomDialog({
-      builder: this.changeSourceDialogBuilder,
-      autoCancel: true,
-      alignment: DialogAlignment.Center,
-      maskColor: ThemeRuntime.scrimColor(this.appDarkMode)
-    }).then((dialogId: number) => {
-      this.changeSourceDialogId = dialogId;
-    }).catch((error: Error) => {
-      console.warn('显示换源确认失败:', error);
-    });
-  }
-
-  closeChangeSourceDialog(): void {
-    if (this.changeSourceDialogId >= 0) {
-      this.getUIContext().getPromptAction().closeCustomDialog(this.changeSourceDialogId);
-      this.changeSourceDialogId = -1;
-    }
+    ThemedDialog.showDialog(this.getUIContext(), {
+      title: '换源',
+      message: `是否为《${this.name || '这本书'}》搜索可切换的书源？`,
+      buttons: [
+        { text: '取消', color: this.subTextColor() },
+        { text: '换源', color: this.accentColor() }
+      ]
+    }, this.appDarkMode).then((result: promptAction.ShowDialogSuccessResponse) => {
+      if (result.index === 1) this.confirmChangeSource();
+    }).catch(() => {});
   }
 
   detailTargetBook(): Book {
@@ -1790,7 +1780,6 @@ struct SearchBookDetailPage {
   }
 
   confirmChangeSource(): void {
-    this.closeChangeSourceDialog();
     // 打开面板前固化目标书籍，避免面板打开期间详情信息加载完成导致目标被替换。
     this.changeSourceTarget = this.detailTargetBook();
     this.showChangeSourcePanel = true;
@@ -2457,7 +2446,7 @@ struct SearchBookDetailPage {
           .layoutWeight(1)
           .height(42)
           .fontSize(AppFontSize.BODY_LARGE)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.dismissAddToShelfOnBackPrompt();
@@ -2467,8 +2456,8 @@ struct SearchBookDetailPage {
           .layoutWeight(1)
           .height(42)
           .fontSize(AppFontSize.BODY_LARGE)
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => {
             this.confirmAddToShelfOnBack();
           })
@@ -2574,7 +2563,7 @@ struct SearchBookDetailPage {
           .layoutWeight(1)
           .height(42)
           .fontSize(AppFontSize.BODY_LARGE)
-          .backgroundColor(this.inputColor())
+          .backgroundColor(DialogStyle.fill('cancel', this.appDarkMode))
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.closeAuthorSearchDialog();
@@ -2584,51 +2573,10 @@ struct SearchBookDetailPage {
           .layoutWeight(1)
           .height(42)
           .fontSize(AppFontSize.BODY_LARGE)
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(DialogStyle.fill('primary', this.appDarkMode))
+          .fontColor(DialogStyle.text('primary', this.appDarkMode))
           .onClick(() => {
             this.confirmAuthorSearch();
-          })
-      }
-      .width('100%')
-      .margin({ top: AppSpacing.XS })
-    }
-    .padding(AppSpacing.XXXL)
-  }
-
-  @Builder
-  changeSourceConfirmDialogContent() {
-    Column({ space: AppSpacing.LG }) {
-      Text('换源')
-        .fontSize(AppFontSize.SUBTITLE)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(this.primaryTextColor())
-        .width('100%')
-
-      Text(`是否为《${this.name || '这本书'}》搜索可切换的书源？`)
-        .fontSize(AppFontSize.BODY)
-        .fontColor(this.secondaryTextColor())
-        .width('100%')
-
-      Row({ space: AppSpacing.MD }) {
-        Button('取消')
-          .layoutWeight(1)
-          .height(42)
-          .fontSize(AppFontSize.BODY_LARGE)
-          .backgroundColor(this.inputColor())
-          .fontColor(this.primaryTextColor())
-          .onClick(() => {
-            this.closeChangeSourceDialog();
-          })
-
-        Button('换源')
-          .layoutWeight(1)
-          .height(42)
-          .fontSize(AppFontSize.BODY_LARGE)
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
-          .onClick(() => {
-            this.confirmChangeSource();
           })
       }
       .width('100%')
