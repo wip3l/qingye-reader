@@ -91,6 +91,38 @@ interface SystemPcmSegment {
   chunk: TtsChunk;
   pcm: ArrayBuffer;
   sampleRate: number;
+  /** 段内的句子与翻页提示点：一段可能是整个自然段，高亮和翻页按这里逐句推进。 */
+  focus: SystemFocusCue[];
+}
+
+interface SystemFocusCue {
+  chunk: TtsChunk;
+  frameOffset: number;
+}
+
+/** 一个整句的原文范围；paragraphEnd 表示它后面就是换段（或文本结尾）。 */
+interface SpeechSentence {
+  start: number;
+  end: number;
+  paragraphEnd: boolean;
+}
+
+/** 一段 PCM 里足够长的静音（句间停顿），帧号。 */
+interface PcmQuietRun {
+  start: number;
+  end: number;
+}
+
+/**
+ * 按“先整句、再合并”切朗读段时各段的长度。ramp 是开头几段各自的合并上限与整句上限，之后用
+ * pack/max。整句超过上限才在句中按标点均匀切开。crossParagraph 为 false 时换段一定断开。
+ */
+interface SpeechPackLimits {
+  rampPack: number[];
+  rampMax: number[];
+  pack: number;
+  max: number;
+  crossParagraph: boolean;
 }
 
 export class SystemTtsReader {
@@ -128,6 +160,16 @@ export class SystemTtsReader {
   private static readonly SPEECH_UNIT_CHARS: string = '％%‰°℃秒分时天年月日倍人个只件条米克吨元万亿';
   private static readonly SPEECH_LEADING_CHARS: string = '「『（(【[《〈<“”‘’"\'';
   private static readonly SPEECH_TRAILING_CHARS: string = '」』）)】]》〉>。！？；;!?…，,、：:';
+  // 系统音色按自然段合成：引擎自己处理段内句与句之间的语调和停顿，比逐句送更自然。开头两段短一些，
+  // 起播仍然只等两小段合成好；之后每段最多约 240 字（规范化后数字会变长，离引擎单次上限留出余量）。
+  private static readonly SYSTEM_TTS_RAMP_PACK: number[] = [30, 60, 160];
+  private static readonly SYSTEM_TTS_RAMP_MAX: number[] = [90, 90, 160];
+  private static readonly SYSTEM_TTS_PACK_LENGTH: number = 240;
+  // 整句超长时在句中切开，切出的每一块至少这么长，免得剩下几个字单独成句。
+  private static readonly SPEECH_MIN_PIECE_LENGTH: number = 10;
+  // 段内找句间停顿：10ms 一格，连续静音至少 120ms 才算一处停顿。
+  private static readonly SYSTEM_QUIET_WINDOW_MS: number = 10;
+  private static readonly SYSTEM_QUIET_MIN_MS: number = 120;
   private static readonly SYSTEM_TTS_START_BUFFER_SEGMENTS: number = 2;
   private static readonly SYSTEM_TTS_MAX_BUFFERED_SEGMENTS: number = 3;
   private static readonly DIRECT_PLAY_COMPLETION_GRACE_MS: number = 5000;
@@ -453,7 +495,7 @@ export class SystemTtsReader {
       (options?.localVoice || LocalTtsSelection.current());
     const splitChunks = this.optionCloudVoiceId ? this.splitCloudText(cleanText) :
       ((localVoice || customVoice) ? this.splitCustomText(cleanText, SystemTtsReader.CUSTOM_TTS_CHUNK_LENGTH) :
-        this.splitSystemText(cleanText, this.optionFocusBreakOffsets));
+        this.splitSystemText(cleanText));
     // A run of trailing punctuation (for example "......" or "……") can be split into a
     // punctuation-only chunk. Some Harmony TTS engines return no PCM/onStart for such a
     // chunk, which makes the reader believe the chapter tail was not spoken and retry/stop.
@@ -1618,10 +1660,34 @@ export class SystemTtsReader {
     this.currentAudioWritePromise = Promise.resolve();
     this.currentFocusRetryCount = 0;
     this.chunkIndex = Math.max(0, Math.min(this.currentFocusChunkIndex, this.chunks.length));
+    this.resplitRemainingForDirectPlay(this.chunkIndex);
     this.currentFocusChunkIndex = -1;
     this.clearSpeakWatchdog();
     this.speakNext(generation);
     return true;
+  }
+
+  /**
+   * 引擎直接出声时拿不到 PCM，段内没法放提示点：把还没读的部分改回逐句切分（并在翻页处切开），
+   * 免得一整段只在开头高亮一次、翻页要等下一段、暂停后从段首重读。
+   */
+  private resplitRemainingForDirectPlay(fromIndex: number): void {
+    if (fromIndex < 0 || fromIndex >= this.chunks.length || !this.sourceText) {
+      return;
+    }
+    const from = this.chunks[fromIndex].start;
+    const tail = this.sourceText.substring(from);
+    const breaks: number[] = [];
+    for (const offset of this.optionFocusBreakOffsets) {
+      if (offset > from) breaks.push(offset - from);
+    }
+    const parts = this.coalescePunctuationOnlyChunks(this.splitSystemSentenceText(tail, breaks), tail)
+      .map((chunk: TtsChunk): TtsChunk => {
+        return { text: chunk.text, start: chunk.start + from, end: chunk.end + from };
+      });
+    if (parts.length > 0) {
+      this.chunks = this.chunks.slice(0, fromIndex).concat(parts);
+    }
   }
 
   private notifyAudioStarted(): void {
@@ -1664,7 +1730,8 @@ export class SystemTtsReader {
       index: this.currentFocusChunkIndex,
       chunk: this.currentFocusChunk,
       pcm: playbackPcm,
-      sampleRate: this.currentAudioSampleRate
+      sampleRate: this.currentAudioSampleRate,
+      focus: this.buildSystemFocusCues(this.currentFocusChunk, playbackPcm, this.currentAudioSampleRate)
     });
     this.systemBufferedSegmentCount++;
     console.info(`[TTS] system pcm segment ready: index=${this.currentFocusChunkIndex},` +
@@ -1688,15 +1755,21 @@ export class SystemTtsReader {
     }
     while (this.systemReadySegments.length > 0) {
       const segment = this.systemReadySegments.shift() as SystemPcmSegment;
-      const writePromise = this.pcmPlayer.writeSegment(segment.pcm, segment.sampleRate, () => {
-        if (this.readGeneration !== generation || !this.active || this.ttsPcmPlayType !== 0) {
-          return;
-        }
-        if (this.onChunkStart) {
-          this.onChunkStart(segment.chunk, segment.index);
-        }
-        this.notifyAudioStarted();
+      const cues: PcmPlaybackCue[] = segment.focus.map((focus: SystemFocusCue): PcmPlaybackCue => {
+        return {
+          frameOffset: focus.frameOffset,
+          callback: () => {
+            if (this.readGeneration !== generation || !this.active || this.ttsPcmPlayType !== 0) {
+              return;
+            }
+            if (this.onChunkStart) {
+              this.onChunkStart(focus.chunk, segment.index);
+            }
+            this.notifyAudioStarted();
+          }
+        };
       });
+      const writePromise = this.pcmPlayer.writeTimedSegment(segment.pcm, segment.sampleRate, cues);
       writePromise.then(() => {
         if (this.readGeneration !== generation || !this.active || this.ttsPcmPlayType !== 0) {
           return;
@@ -1897,6 +1970,263 @@ export class SystemTtsReader {
       return pcm;
     }
     return pcm.slice(startFrame * 2, endFrame * 2);
+  }
+
+  /**
+   * 一段系统音色 PCM 里每句（以及跨页句子落在下一页的部分）从第几帧开始放。系统引擎不给逐字时间：
+   * 先按字数（标点折算成停顿）估出每句的起点，再吸附到附近的句间停顿上；翻页点在所在句子里按字数插值。
+   * 第一个提示点固定在第 0 帧，段内只有一句且不跨页时就和以前一样只有这一个。
+   */
+  private buildSystemFocusCues(chunk: TtsChunk, pcm: ArrayBuffer, sampleRate: number): SystemFocusCue[] {
+    const whole: SystemFocusCue[] = [{ chunk: chunk, frameOffset: 0 }];
+    const source = this.sourceText;
+    const totalFrames = Math.floor(pcm.byteLength / 2);
+    if (!source || totalFrames <= 0 || chunk.end > source.length ||
+      source.substring(chunk.start, chunk.end) !== chunk.text) {
+      return whole;
+    }
+    const sentences = this.splitSpeechSentences(source, chunk.start, chunk.end);
+    const anchors: number[] = [];
+    for (let index = 1; index < sentences.length; index++) {
+      anchors.push(sentences[index].start);
+    }
+    const pageStarts: number[] = [];
+    for (const rawOffset of this.optionFocusBreakOffsets) {
+      if (rawOffset <= chunk.start || rawOffset >= chunk.end) {
+        continue;
+      }
+      // 页首若是上一句的收尾引号/标点，归上一页那句；页首若是缩进空白，以正文第一个字为准。
+      let offset = this.extendTtsBreak(source, rawOffset, chunk.end);
+      while (offset < chunk.end && this.isTrimChar(source.charAt(offset))) {
+        offset++;
+      }
+      if (offset > chunk.start && offset < chunk.end && !anchors.includes(offset) && !pageStarts.includes(offset)) {
+        pageStarts.push(offset);
+      }
+    }
+    if (anchors.length === 0 && pageStarts.length === 0) {
+      return whole;
+    }
+    const weights: number[] = [0];
+    for (let index = chunk.start; index < chunk.end; index++) {
+      weights.push(weights[weights.length - 1] + this.speechWeightAt(source, index));
+    }
+    const totalWeight = weights[weights.length - 1];
+    if (totalWeight <= 0) {
+      return whole;
+    }
+    const estimates: number[] = anchors.map((offset: number): number =>
+      totalFrames * weights[offset - chunk.start] / totalWeight);
+    const anchorFrames = this.alignAnchorsToQuietRuns(this.findPcmQuietRuns(pcm, sampleRate), estimates,
+      sampleRate, totalFrames);
+    const boundaries = anchors.concat(pageStarts).sort((left: number, right: number) => left - right);
+    const result: SystemFocusCue[] = [];
+    let unitStart = chunk.start;
+    let unitFrame = 0;
+    for (let index = 0; index <= boundaries.length; index++) {
+      const unitEnd = index < boundaries.length ? boundaries[index] : chunk.end;
+      this.appendSystemFocusCue(result, source, unitStart, unitEnd, unitFrame);
+      if (index === boundaries.length) {
+        break;
+      }
+      unitStart = unitEnd;
+      unitFrame = this.frameAtSpeechOffset(unitEnd, chunk, anchors, anchorFrames, weights, totalFrames);
+    }
+    return result.length > 0 ? result : whole;
+  }
+
+  private appendSystemFocusCue(result: SystemFocusCue[], source: string, start: number, end: number,
+    frame: number): void {
+    const chunks: TtsChunk[] = [];
+    this.appendAbsoluteTextChunk(chunks, source, start, end);
+    if (chunks.length === 0) {
+      return;
+    }
+    const previous = result.length > 0 ? result[result.length - 1].frameOffset : -1;
+    result.push({ chunk: chunks[0], frameOffset: Math.max(Math.round(frame), previous + 1) });
+  }
+
+  /** 句子起点直接用吸附好的帧；翻页点在前后两个句子起点之间按字数插值。 */
+  private frameAtSpeechOffset(offset: number, chunk: TtsChunk, anchors: number[], anchorFrames: number[],
+    weights: number[], totalFrames: number): number {
+    let previousOffset = chunk.start;
+    let previousFrame = 0;
+    let nextOffset = chunk.end;
+    let nextFrame = totalFrames;
+    for (let index = 0; index < anchors.length; index++) {
+      if (anchors[index] === offset) {
+        return anchorFrames[index];
+      }
+      if (anchors[index] < offset) {
+        previousOffset = anchors[index];
+        previousFrame = anchorFrames[index];
+      } else {
+        nextOffset = anchors[index];
+        nextFrame = anchorFrames[index];
+        break;
+      }
+    }
+    const span = weights[nextOffset - chunk.start] - weights[previousOffset - chunk.start];
+    if (span <= 0 || nextFrame <= previousFrame) {
+      return previousFrame;
+    }
+    const ratio = (weights[offset - chunk.start] - weights[previousOffset - chunk.start]) / span;
+    return previousFrame + (nextFrame - previousFrame) * Math.max(0, Math.min(1, ratio));
+  }
+
+  /** 估算朗读时长用的字权重：一个汉字记 1，句末标点折成一次较长停顿，引号括号不占时间。 */
+  private speechWeightAt(text: string, index: number): number {
+    const value = text.charAt(index);
+    const code = text.charCodeAt(index);
+    if (value === '\n') return 1.6;
+    if (this.isTrimChar(value)) return 0;
+    if (value === '。' || value === '！' || value === '？' || value === '!' || value === '?' ||
+      value === '；' || value === ';' || value === '…') {
+      return 1.4;
+    }
+    if (value === '，' || value === ',' || value === '、' || value === '：' || value === ':' ||
+      value === '—' || value === '–') {
+      return 0.7;
+    }
+    if (this.isClosingPunctuation(value) || SystemTtsReader.SPEECH_LEADING_CHARS.includes(value)) return 0;
+    if (code >= 0xDC00 && code <= 0xDFFF) return 0;
+    if (code >= 0x30 && code <= 0x39) return 0.8;
+    if ((code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a)) return 0.35;
+    if (code < 0x80) return 0.2;
+    return 1;
+  }
+
+  /**
+   * 找 PCM 里连续至少 SYSTEM_QUIET_MIN_MS 的静音。阈值跟着这段的响度走（响亮部分的 4%），
+   * 不同音色、不同音量增益下都能用。开头和结尾的静音不算（那不是句间停顿）。
+   */
+  private findPcmQuietRuns(pcm: ArrayBuffer, sampleRate: number): PcmQuietRun[] {
+    const frames = Math.floor(pcm.byteLength / 2);
+    const rate = Math.max(8000, Math.round(sampleRate || 16000));
+    const windowFrames = Math.max(1, Math.round(rate * SystemTtsReader.SYSTEM_QUIET_WINDOW_MS / 1000));
+    const windowCount = Math.floor(frames / windowFrames);
+    if (windowCount < 4) {
+      return [];
+    }
+    const samples = new Int16Array(pcm, 0, frames);
+    const levels: number[] = [];
+    for (let window = 0; window < windowCount; window++) {
+      const base = window * windowFrames;
+      let total = 0;
+      let count = 0;
+      for (let index = 0; index < windowFrames; index += 2) {
+        total += Math.abs(samples[base + index]);
+        count++;
+      }
+      levels.push(count > 0 ? total / count : 0);
+    }
+    const sorted = levels.slice().sort((left: number, right: number) => left - right);
+    const loud = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.9))];
+    const threshold = Math.max(60, loud * 0.04);
+    const minWindows = Math.max(1, Math.round(SystemTtsReader.SYSTEM_QUIET_MIN_MS / SystemTtsReader.SYSTEM_QUIET_WINDOW_MS));
+    const runs: PcmQuietRun[] = [];
+    let runStart = -1;
+    for (let window = 0; window <= windowCount; window++) {
+      const quiet = window < windowCount && levels[window] <= threshold;
+      if (quiet) {
+        if (runStart < 0) runStart = window;
+        continue;
+      }
+      if (runStart >= 0 && window - runStart >= minWindows && runStart > 0 && window < windowCount) {
+        runs.push({ start: runStart * windowFrames, end: window * windowFrames });
+      }
+      runStart = -1;
+    }
+    return runs;
+  }
+
+  /**
+   * 把各句估算的起点按顺序对到停顿上（整体对齐，不是逐句就近）：语速不匀时估算会整体偏前或偏后，
+   * 逐句找最近的停顿容易错位，一错后面全错。动态规划在“按顺序、每处停顿最多用一次”的前提下让总代价
+   * 最小：离估算点越远代价越大，停顿越长越像句末代价越小，对不上停顿的句子记固定罚分并沿用估算位置。
+   * 对上的句子取停顿结束前一点（下一句刚要出声）。返回的帧严格递增。
+   */
+  private alignAnchorsToQuietRuns(runs: PcmQuietRun[], estimates: number[], sampleRate: number,
+    totalFrames: number): number[] {
+    const rate = Math.max(8000, Math.round(sampleRate || 16000));
+    const anchorCount = estimates.length;
+    const runCount = runs.length;
+    const reach = Math.max(2.5, totalFrames / rate * 0.35);
+    const unmatchedPenalty = 1;
+    const infinity = Number.MAX_VALUE / 4;
+    // cost[i][j]：前 i 句用前 j 处停顿的最小代价；choice 记来路：0 跳过停顿，1 对上，2 这句不对停顿。
+    const cost: number[][] = [];
+    const choice: number[][] = [];
+    for (let i = 0; i <= anchorCount; i++) {
+      cost.push(new Array<number>(runCount + 1).fill(infinity));
+      choice.push(new Array<number>(runCount + 1).fill(0));
+    }
+    for (let j = 0; j <= runCount; j++) {
+      cost[0][j] = 0;
+    }
+    for (let i = 1; i <= anchorCount; i++) {
+      cost[i][0] = cost[i - 1][0] + unmatchedPenalty;
+      choice[i][0] = 2;
+      for (let j = 1; j <= runCount; j++) {
+        let best = cost[i][j - 1];
+        let from = 0;
+        const run = runs[j - 1];
+        const distance = Math.abs((run.start + run.end) / 2 - estimates[i - 1]) / rate;
+        if (distance <= reach && cost[i - 1][j - 1] < infinity) {
+          const matched = cost[i - 1][j - 1] + distance - (run.end - run.start) / rate * 1.5;
+          if (matched < best) {
+            best = matched;
+            from = 1;
+          }
+        }
+        const skipped = cost[i - 1][j] + unmatchedPenalty;
+        if (skipped < best) {
+          best = skipped;
+          from = 2;
+        }
+        cost[i][j] = best;
+        choice[i][j] = from;
+      }
+    }
+    const matchedRun: number[] = new Array<number>(anchorCount).fill(-1);
+    let i = anchorCount;
+    let j = runCount;
+    while (i > 0) {
+      const from = choice[i][j];
+      if (j > 0 && from === 0) {
+        j--;
+      } else if (j > 0 && from === 1) {
+        matchedRun[i - 1] = j - 1;
+        i--;
+        j--;
+      } else {
+        i--;
+      }
+    }
+    const lead = Math.round(rate * 0.03);
+    const frames: number[] = [];
+    let previous = 0;
+    for (let index = 0; index < anchorCount; index++) {
+      let frame = 0;
+      if (matchedRun[index] >= 0) {
+        const run = runs[matchedRun[index]];
+        frame = Math.max(run.start, run.end - lead);
+      } else {
+        // 夹在前后两个对上的停顿之间，免得顺序颠倒。
+        let upper = totalFrames - 1;
+        for (let next = index + 1; next < anchorCount; next++) {
+          if (matchedRun[next] >= 0) {
+            upper = runs[matchedRun[next]].start - 1;
+            break;
+          }
+        }
+        frame = Math.min(Math.round(estimates[index]), upper);
+      }
+      frame = Math.max(frame, previous + 1);
+      frames.push(frame);
+      previous = frame;
+    }
+    return frames;
   }
 
   private systemTrailingPauseSeconds(text: string): number {
@@ -2250,8 +2580,8 @@ export class SystemTtsReader {
    * the requested range has nothing following it, so only that one still drops the comma.
    */
   private normalizeChunkForSpeech(text: string, protectTailPause: boolean = true): string {
-    const normalized = this.stripDecorativeSpeechSymbols(
-      this.normalizeMathNotationForSpeech(this.replaceUnsafeSpeechCharacters(text || '')))
+    const normalized = this.stripFootnoteMarkers(this.stripDecorativeSpeechSymbols(
+      this.normalizeMathNotationForSpeech(this.replaceUnsafeSpeechCharacters(text || ''))))
       .replace(/\r\n/g, '\n')
       .replace(/\s*\n+\s*/g, '。')
       .replace(/[ \t]{2,}/g, ' ')
@@ -2339,6 +2669,11 @@ export class SystemTtsReader {
     for (let index = 0; index <= source.length; index++) {
       offsets.push(this.normalizeChunkForSpeech(source.substring(0, index), protectTailPause).length);
     }
+    // 只有打完才会被去掉的内容（注释编号“[12]”）在打到一半时前缀反而更长；从后往前取最小，
+    // 让映射保持不减，那几个字都对到注释编号被去掉后的位置。
+    for (let index = offsets.length - 2; index >= 0; index--) {
+      offsets[index] = Math.min(offsets[index], offsets[index + 1]);
+    }
     return {
       text: this.normalizeChunkForSpeech(source, protectTailPause),
       sourceToSpeechOffsets: offsets
@@ -2409,6 +2744,15 @@ export class SystemTtsReader {
   private stripDecorativeSpeechSymbols(text: string): string {
     if (!text) return '';
     return text.replace(/[*＊※★☆◆◇■□●◎▲△▼▽♦♢❖✦✧]+/g, '');
+  }
+
+  /**
+   * 正文里的注释编号“[12]”“【3】”“〔4〕”会被读成“十二”“三”。只去掉方括号里只有 1～3 位数字的，
+   * “[第一章]”“【公告】”这类有字的照读。只作用于合成文本，原文偏移不变。
+   */
+  private stripFootnoteMarkers(text: string): string {
+    if (!text) return '';
+    return text.replace(/[\[【〔［]\s*\d{1,3}\s*[\]】〕］]/g, '');
   }
 
   /**
@@ -2830,7 +3174,203 @@ export class SystemTtsReader {
     return text || JSON.stringify(error);
   }
 
-  private splitSystemText(text: string, pageBreakOffsets: number[]): TtsChunk[] {
+  /**
+   * 系统音色的合成段：按自然段送，短段落可以并在一起，长段落在句末断开。不再为翻页切开句子，
+   * 段内的逐句高亮和翻页由 buildSystemFocusCues 在 PCM 里放提示点完成。
+   */
+  private splitSystemText(text: string): TtsChunk[] {
+    const chunks: TtsChunk[] = [];
+    this.appendPackedSpeechChunks(chunks, text, 0, text.length, {
+      rampPack: SystemTtsReader.SYSTEM_TTS_RAMP_PACK,
+      rampMax: SystemTtsReader.SYSTEM_TTS_RAMP_MAX,
+      pack: SystemTtsReader.SYSTEM_TTS_PACK_LENGTH,
+      max: SystemTtsReader.SYSTEM_TTS_PACK_LENGTH,
+      crossParagraph: true
+    });
+    return chunks;
+  }
+
+  /**
+   * 先把 [from, to) 断成整句，再按 limits 合并成朗读段追加到 result。段的序号接着 result 已有的
+   * 往下数，所以分几次追加（自定义音色按隐藏空白分区）时“开头几段短一些”仍只作用于真正的开头。
+   */
+  private appendPackedSpeechChunks(result: TtsChunk[], text: string, from: number, to: number,
+    limits: SpeechPackLimits): void {
+    const sentences = this.splitSpeechSentences(text, from, to);
+    let pendingStart = -1;
+    let pendingEnd = -1;
+    let index = 0;
+    while (index < sentences.length) {
+      // 一个自然段：[index, paragraphLast]
+      let paragraphLast = index;
+      while (paragraphLast < sentences.length - 1 && !sentences[paragraphLast].paragraphEnd) {
+        paragraphLast++;
+      }
+      const paragraphStart = sentences[index].start;
+      const paragraphEnd = sentences[paragraphLast].end;
+      if (pendingStart >= 0 && limits.crossParagraph &&
+        paragraphEnd - pendingStart <= this.speechPackLimit(limits, result.length)) {
+        pendingEnd = paragraphEnd;
+        index = paragraphLast + 1;
+        continue;
+      }
+      if (pendingStart >= 0) {
+        this.appendAbsoluteTextChunk(result, text, pendingStart, pendingEnd);
+        pendingStart = -1;
+      }
+      if (paragraphEnd - paragraphStart <= this.speechPackLimit(limits, result.length)) {
+        pendingStart = paragraphStart;
+        pendingEnd = paragraphEnd;
+      } else {
+        for (let cursor = index; cursor <= paragraphLast; cursor++) {
+          const sentence = sentences[cursor];
+          if (pendingStart >= 0 && sentence.end - pendingStart <= this.speechPackLimit(limits, result.length)) {
+            pendingEnd = sentence.end;
+            continue;
+          }
+          if (pendingStart >= 0) {
+            this.appendAbsoluteTextChunk(result, text, pendingStart, pendingEnd);
+            pendingStart = -1;
+          }
+          if (sentence.end - sentence.start > this.speechSentenceLimit(limits, result.length)) {
+            this.appendBalancedSpeechPieces(result, text, sentence.start, sentence.end,
+              this.speechSentenceLimit(limits, result.length));
+          } else {
+            pendingStart = sentence.start;
+            pendingEnd = sentence.end;
+          }
+        }
+      }
+      if (!limits.crossParagraph && pendingStart >= 0) {
+        this.appendAbsoluteTextChunk(result, text, pendingStart, pendingEnd);
+        pendingStart = -1;
+      }
+      index = paragraphLast + 1;
+    }
+    if (pendingStart >= 0) {
+      this.appendAbsoluteTextChunk(result, text, pendingStart, pendingEnd);
+    }
+  }
+
+  private speechPackLimit(limits: SpeechPackLimits, chunkIndex: number): number {
+    return chunkIndex < limits.rampPack.length ? limits.rampPack[chunkIndex] : limits.pack;
+  }
+
+  /** 整句不切开的上限；不低于合并上限，免得一句话比合并上限还短却被切。 */
+  private speechSentenceLimit(limits: SpeechPackLimits, chunkIndex: number): number {
+    const max = chunkIndex < limits.rampMax.length ? limits.rampMax[chunkIndex] : limits.max;
+    return Math.max(max, this.speechPackLimit(limits, chunkIndex));
+  }
+
+  /**
+   * 把 [from, to) 断成整句。句末是句号、问号、叹号、分号、换行；句末后面的引号括号跟着前一句；
+   * 句中的省略号（“小神……明白”）、小数点和网址里的点不算句末。
+   */
+  private splitSpeechSentences(text: string, from: number, to: number): SpeechSentence[] {
+    const result: SpeechSentence[] = [];
+    let start = from;
+    let index = from;
+    while (index < to) {
+      const value = text.charAt(index);
+      if (value === '\n') {
+        this.pushSpeechSentence(result, text, start, index, to);
+        if (result.length > 0) {
+          result[result.length - 1].paragraphEnd = true;
+        }
+        start = index + 1;
+        index++;
+        continue;
+      }
+      if (this.isSpeechSentenceEndAt(text, index)) {
+        const end = this.extendTtsBreak(text, index + 1, to);
+        this.pushSpeechSentence(result, text, start, end, to);
+        start = end;
+        index = Math.max(index + 1, end);
+        continue;
+      }
+      index++;
+    }
+    this.pushSpeechSentence(result, text, start, to, to);
+    if (result.length > 0) {
+      result[result.length - 1].paragraphEnd = true;
+    }
+    return result;
+  }
+
+  private isSpeechSentenceEndAt(text: string, index: number): boolean {
+    const value = text.charAt(index);
+    if (!this.isStrongSentenceEnd(value) || this.isNumericDecimalPoint(text, index) ||
+      this.isEllipsisInsideSentence(text, index)) {
+      return false;
+    }
+    // “baidu.com”“v1.2”里的点后面紧跟字母数字，不是句号。
+    return value !== '.' || !/[A-Za-z0-9]/.test(text.charAt(index + 1));
+  }
+
+  private pushSpeechSentence(result: SpeechSentence[], text: string, start: number, end: number,
+    limit: number): void {
+    let safeStart = start;
+    let safeEnd = end;
+    while (safeStart < safeEnd && this.isTrimChar(text.charAt(safeStart))) {
+      safeStart++;
+    }
+    while (safeEnd > safeStart && this.isTrimChar(text.charAt(safeEnd - 1))) {
+      safeEnd--;
+    }
+    if (safeEnd <= safeStart) {
+      return;
+    }
+    let next = end;
+    while (next < limit && text.charAt(next) !== '\n' && this.isTrimChar(text.charAt(next))) {
+      next++;
+    }
+    result.push({ start: safeStart, end: safeEnd, paragraphEnd: next >= limit || text.charAt(next) === '\n' });
+  }
+
+  /**
+   * 整句超过上限时在句中切开：先算要切成几块，再挑最接近等分位置的逗号、顿号、冒号或破折号
+   * （冒号、破折号优先），每块至少 SPEECH_MIN_PIECE_LENGTH 字。以前取窗口里第一个或最后一个逗号，
+   * 常切成一长一短。没有标点可切时才按字数硬切。
+   */
+  private appendBalancedSpeechPieces(result: TtsChunk[], text: string, start: number, end: number,
+    maxLength: number): void {
+    const minPiece = SystemTtsReader.SPEECH_MIN_PIECE_LENGTH;
+    let pieceStart = start;
+    while (end - pieceStart > maxLength) {
+      const pieceCount = Math.ceil((end - pieceStart) / maxLength);
+      const target = pieceStart + (end - pieceStart) / pieceCount;
+      const upper = Math.min(end - minPiece, pieceStart + maxLength);
+      let best = -1;
+      let bestScore = Number.MAX_VALUE;
+      for (let index = pieceStart + minPiece - 1; index < upper; index++) {
+        const value = text.charAt(index);
+        // 只在一串标点的最后一个后面切：“——”“……”不拆开。
+        if (text.charAt(index + 1) === value || !this.isCloudBreakAt(text, index, false)) {
+          continue;
+        }
+        const preferred = value === '：' || value === ':' || value === '—' || value === '–';
+        const score = Math.abs(index + 1 - target) - (preferred ? 6 : 0);
+        if (score < bestScore) {
+          bestScore = score;
+          best = index + 1;
+        }
+      }
+      let cut = best > pieceStart ? this.extendTtsBreak(text, best, end) :
+        this.safeHardCutIndex(text, Math.round(target), pieceStart);
+      if (cut <= pieceStart || cut >= end) {
+        cut = Math.min(end, pieceStart + maxLength);
+      }
+      this.appendAbsoluteTextChunk(result, text, pieceStart, cut);
+      pieceStart = cut;
+    }
+    this.appendAbsoluteTextChunk(result, text, pieceStart, end);
+  }
+
+  /**
+   * 逐句切分（每段 16～60 字，并在翻页处切开）。只在引擎拿不到 PCM、改由引擎直接出声时用：
+   * 那时没法在段内放提示点，高亮、翻页和暂停续读都只能落在段的开头。
+   */
+  private splitSystemSentenceText(text: string, pageBreakOffsets: number[]): TtsChunk[] {
     const chunks: TtsChunk[] = [];
     const preferredLength = 42;
     const minimumLength = 16;
@@ -2964,22 +3504,22 @@ export class SystemTtsReader {
     return chunks;
   }
 
+  /**
+   * 自定义/离线音色：同一自然段里的短句合并到 maxLength，换段一定断开；第一段短一些好早出声。
+   * 以前为了凑最小长度，会把“他愣住了。”拼进下一句，再从逗号处断开。
+   */
   private appendCustomTextRange(result: TtsChunk[], text: string, rangeStart: number,
     rangeEnd: number, maxLength: number): void {
-    let start = Math.max(0, Math.min(rangeStart, text.length));
-    const safeRangeEnd = Math.max(start, Math.min(rangeEnd, text.length));
-    while (start < safeRangeEnd) {
-      const chunkLength = result.length === 0 ?
-        Math.min(maxLength, SystemTtsReader.CUSTOM_TTS_FIRST_CHUNK_LENGTH) : maxLength;
-      let end = Math.min(safeRangeEnd, start + chunkLength);
-      const sentence = this.findSentenceBreak(text, start, end, chunkLength);
-      if (sentence > start && sentence <= safeRangeEnd) {
-        end = sentence;
-      }
-      end = this.extendTtsBreak(text, end, safeRangeEnd);
-      this.appendAbsoluteTextChunk(result, text, start, end);
-      start = end;
-    }
+    const start = Math.max(0, Math.min(rangeStart, text.length));
+    const end = Math.max(start, Math.min(rangeEnd, text.length));
+    const first = Math.min(maxLength, SystemTtsReader.CUSTOM_TTS_FIRST_CHUNK_LENGTH);
+    this.appendPackedSpeechChunks(result, text, start, end, {
+      rampPack: [first],
+      rampMax: [first],
+      pack: maxLength,
+      max: maxLength,
+      crossParagraph: false
+    });
   }
 
   private splitCloudText(text: string): TtsChunk[] {
