@@ -6107,7 +6107,7 @@ struct ReadBookPage {
   @Builder
   readerAutoScrollQuickActionButton() {
     ImmersiveBackButton({
-      icon: $r('sys.symbol.arrow_down'), iconOffsetX: 0,
+      icon: $r('sys.symbol.text_and_arrow_down'), iconOffsetX: 0,
       iconColor: this.readerControlIconColor(), darkMode: this.isReaderThemeDark(),
       buttonSize: 48, containerWidth: 48, containerHeight: 48, startInset: 0, compactLayout: true,
       accessibilityLabel: '开始自动滚动', onBack: () => { this.startReaderAutoScroll(); }
@@ -7276,7 +7276,7 @@ struct ReadBookPage {
   readerTtsQuickActionButton() {
     Stack({ alignContent: Alignment.Center }) {
       ImmersiveBackButton({
-        icon: $r('sys.symbol.play'),
+        icon: $r('sys.symbol.waveform_1'),
         iconOffsetX: 0,
         iconColor: this.readerControlIconColor(),
         darkMode: this.isReaderThemeDark(),

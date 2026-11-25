@@ -550,7 +550,7 @@ export struct EpubOriginalControls {
         .transition(ReaderChromeMotion.bottom(this.bottomInset() + this.bottomBarHeight() + ReaderTtsCapsule.HEIGHT))
     } else {
       Stack() {
-        ImmersiveBackButton({ icon: $r('sys.symbol.play'), iconOffsetX: 0,
+        ImmersiveBackButton({ icon: $r('sys.symbol.waveform_1'), iconOffsetX: 0,
           iconColor: ThemeRuntime.primaryTextColor(this.darkMode), darkMode: this.darkMode,
           buttonSize: 48, containerWidth: 48, containerHeight: 48, startInset: 0, compactLayout: true,
           accessibilityLabel: '开始朗读', onBack: (): void => this.onTtsOpen() })
