@@ -24,6 +24,8 @@ function harness(initial = -1) {
     console: { warn: (...args) => errors.push(args) },
     window: { getLastWindow: async () => mainWindow },
     setWindowBrightness: (target, next) => target.setWindowBrightness(next),
+    // 护眼设置与亮度存在同一文件，这里只验证亮度。
+    ReaderEyeCare: { load() {} },
     preferences: { getPreferences: async () => ({
       get: async (key, fallback) => disk.get(key) ?? fallback,
       put: async (key, next) => disk.set(key, next), flush: async () => {}
