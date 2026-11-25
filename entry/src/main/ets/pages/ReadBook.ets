@@ -13036,9 +13036,9 @@ struct ReadBookPage {
 
   /** 在剩余时间上加时，总时长一起加；没有进行中的定时就新开一个。 */
   extendTtsSleepTimer(minutes: number): void {
-    if (minutes <= 0) return;
+    if (minutes === 0) return;
     if (this.ttsSleepTimerId < 0 || this.ttsSleepTimerEndAt <= 0) {
-      this.setTtsSleepTimer(minutes);
+      if (minutes > 0) this.setTtsSleepTimer(minutes);
       return;
     }
     this.ttsSleepTimerEndAt += minutes * 60 * 1000;
@@ -13046,7 +13046,7 @@ struct ReadBookPage {
     this.ttsSleepTimerRemainingSeconds = Math.max(0, Math.ceil((this.ttsSleepTimerEndAt - Date.now()) / 1000));
     ReaderTtsFloatingSession.updateTimer(
       this.ttsFloatingSessionOwnerId, this.ttsSleepTimerMinutes, this.ttsSleepTimerRemainingSeconds);
-    HdsFeedback.showToast(`已延长 ${minutes} 分钟`);
+    HdsFeedback.showToast(minutes > 0 ? `已延长 ${minutes} 分钟` : `已缩短 ${-minutes} 分钟`);
   }
 
   clearTtsSleepTimer(): void {

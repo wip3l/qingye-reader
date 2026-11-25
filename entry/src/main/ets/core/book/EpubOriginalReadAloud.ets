@@ -605,18 +605,18 @@ export class EpubOriginalReadAloud {
     HdsFeedback.showToast(`将在 ${minutes} 分钟后停止朗读`);
   }
 
-  /** 在剩余时间上加时，总时长一起加；没有进行中的定时就新开一个。 */
+  /** 在剩余时间上加时（负数缩短），总时长一起变；没有进行中的定时就新开一个。 */
   private extendSleepTimer(minutes: number): void {
-    if (minutes <= 0) return;
+    if (minutes === 0) return;
     if (this.sleepTimer < 0 || this.sleepEndAt <= 0) {
-      this.setSleepTimer(minutes);
+      if (minutes > 0) this.setSleepTimer(minutes);
       return;
     }
     this.sleepEndAt += minutes * 60 * 1000;
     this.sleepMinutes += minutes;
     this.sleepRemaining = Math.max(0, Math.ceil((this.sleepEndAt - Date.now()) / 1000));
     ReaderTtsFloatingSession.updateTimer(this.ownerId, this.sleepMinutes, this.sleepRemaining);
-    HdsFeedback.showToast(`已延长 ${minutes} 分钟`);
+    HdsFeedback.showToast(minutes > 0 ? `已延长 ${minutes} 分钟` : `已缩短 ${-minutes} 分钟`);
   }
 
   private clearSleepTimer(publish: boolean): void {

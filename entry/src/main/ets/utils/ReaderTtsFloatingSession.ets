@@ -628,16 +628,24 @@ export class ReaderTtsFloatingSession {
   /**
    * 在剩余时间上再加几分钟。总时长一起加，播放面板的倒计时细环按“剩余 / 总时长”画，
    * 加时后比例不会突然跳满。没有进行中的定时就当作新开一个。
+   * 负数是缩短：剩余不够扣就直接关掉定时；没有定时时缩短不做任何事。
    */
   static extendTimer(minutes: number): void {
-    const add = Math.max(1, Math.round(minutes || 0));
+    const add = Math.round(minutes || 0);
+    if (add === 0) return;
     const current = AppStorage.get<number>('globalTtsTimerMinutes') || 0;
+    const remaining = AppStorage.get<number>('globalTtsTimerRemainingSeconds') || 0;
     const extend = ReaderTtsFloatingSession.timerExtendAction;
-    if (current <= 0 || !extend) {
+    if (add < 0) {
+      if (current <= 0 || remaining <= 0) return;
+      if (remaining + add * 60 <= 0 || !extend) {
+        ReaderTtsFloatingSession.setTimer(remaining + add * 60 <= 0 ? 0 : Math.ceil(remaining / 60) + add);
+        return;
+      }
+    } else if (current <= 0 || !extend) {
       ReaderTtsFloatingSession.setTimer(add);
       return;
     }
-    const remaining = AppStorage.get<number>('globalTtsTimerRemainingSeconds') || 0;
     AppStorage.setOrCreate('globalTtsTimerMinutes', current + add);
     AppStorage.setOrCreate('globalTtsTimerRemainingSeconds', remaining + add * 60);
     extend(add);

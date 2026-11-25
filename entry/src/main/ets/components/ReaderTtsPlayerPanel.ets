@@ -39,8 +39,36 @@ const SECONDARY_WATCH: string = 'watch';
 const SKIP_NOTICE_MS: number = 3000;
 /** 定时最后这么多秒按钮和状态行改用危险色，提醒快停了。 */
 const TIMER_WARN_SECONDS: number = 60;
-/** 定时面板“加时”一次加的分钟数。 */
-const TIMER_EXTEND_MINUTES: number = 15;
+/** 定时面板 − / + 一次加减的分钟数。 */
+const SLEEP_TIMER_STEP_MINUTES: number = 5;
+/** 定时滑条最长分钟数。 */
+const SLEEP_TIMER_MAX_MINUTES: number = 180;
+/** 滑条前半段 1 分一格到这里，后半段 5 分一格到最长，两段各占一半轨道。 */
+const SLEEP_TIMER_FINE_MINUTES: number = 60;
+/** 滑条位置的取值范围 0–120：0–60 对应 0–60 分，60–120 对应 60–180 分。 */
+const SLEEP_TIMER_SLIDER_MAX: number = SLEEP_TIMER_FINE_MINUTES * 2;
+const SLEEP_TIMER_TICKS: number[] = [0, 30, 60, 120, 180];
+const SLEEP_TIMER_TICK_WIDTH: number = 28;
+/** 刻度字两侧留白：步进按钮 30 + 间距 6 + 滑块半径约 10。 */
+const SLEEP_TIMER_TICK_INSET: number = 46;
+
+/** 滑条位置 → 分钟：前半段 1 分一格，后半段按 5 分取整。 */
+function sleepTimerPositionToMinutes(position: number): number {
+  const pos = Math.max(0, Math.min(SLEEP_TIMER_SLIDER_MAX, Number.isFinite(position) ? position : 0));
+  if (pos <= SLEEP_TIMER_FINE_MINUTES) return Math.round(pos);
+  const coarseRange = SLEEP_TIMER_MAX_MINUTES - SLEEP_TIMER_FINE_MINUTES;
+  const minutes = SLEEP_TIMER_FINE_MINUTES +
+    (pos - SLEEP_TIMER_FINE_MINUTES) / (SLEEP_TIMER_SLIDER_MAX - SLEEP_TIMER_FINE_MINUTES) * coarseRange;
+  return Math.min(SLEEP_TIMER_MAX_MINUTES, Math.round(minutes / 5) * 5);
+}
+
+/** 分钟 → 滑条位置，超过最长的按最长画。 */
+function sleepTimerMinutesToPosition(minutes: number): number {
+  const value = Math.max(0, Math.min(SLEEP_TIMER_MAX_MINUTES, Number.isFinite(minutes) ? minutes : 0));
+  if (value <= SLEEP_TIMER_FINE_MINUTES) return value;
+  return SLEEP_TIMER_FINE_MINUTES + (value - SLEEP_TIMER_FINE_MINUTES) /
+    (SLEEP_TIMER_MAX_MINUTES - SLEEP_TIMER_FINE_MINUTES) * (SLEEP_TIMER_SLIDER_MAX - SLEEP_TIMER_FINE_MINUTES);
+}
 
 /** 定时剩余时间：不足一小时 mm:ss，否则 h:mm:ss。 */
 function formatTimerRemaining(seconds: number): string {
@@ -145,6 +173,8 @@ export struct ReaderTtsPlayerPanel {
   @State gainDraft: number = -1;
   /** 拖动倍速滑条时的显示值；-1 表示没在拖。 */
   @State speedDraft: number = -1;
+  /** 拖动定时滑条时将要设的分钟数，没在拖时为 -1。 */
+  @State timerDraft: number = -1;
   @State audioVoiceMenuRevision: number = 0;
   // 听书封面区实际分到的高度和其中章节名、状态行的高度。定时/倍速/增益面板展开后封面区变矮，
   // 封面按这些量出来的值缩小；否则屏幕矮的机型上内容溢出，音色下拉会压到进度条上。
@@ -793,71 +823,109 @@ export struct ReaderTtsPlayerPanel {
     .onClick(() => this.onSecondaryTap(SECONDARY_TIMER))
   }
 
-  /** 开着定时时顶部一行显示剩余时间、几点停止，以及加时、关闭；下面的档位点哪个都从那一档重新计时。 */
+  /**
+   * 定时：和倍速同一套样式。标题行左边写几点停止、右边写剩余时间（拖动时是将要设的分钟数），
+   * 滑条 0–180 分（最左是关闭，前半段 1 分一格、后半段 5 分一格），拖动中只改显示、松手才开始计时；
+   * 开着定时时滑块跟着剩余时间走。两侧按钮在剩余时间上加减 5 分钟，下面是快捷档。
+   */
   @Builder
   timerOptions() {
     Column({ space: AppSpacing.SM }) {
-      if (this.timerActive()) {
-        this.timerStatusRow()
+      Row({ space: AppSpacing.SM }) {
+        Text('定时')
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryTextColor)
+        Text(this.timerEndText())
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor)
+          .fontFeature('"tnum" on')
+          .maxLines(1)
+          .layoutWeight(1)
+        Text(this.timerValueText())
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(this.timerValueOff() ? FontWeight.Regular : FontWeight.Bold)
+          .fontColor(this.timerValueOff() ? this.subTextColor :
+            (this.timerDraft < 0 && this.timerWarning() ? this.timerColor() : this.accentColor))
+          .fontFeature('"tnum" on')
+          .maxLines(1)
       }
+      .width('100%')
+
+      Row({ space: AppSpacing.SM }) {
+        this.timerStepButton(-1)
+        Slider({
+          value: sleepTimerMinutesToPosition(this.timerSliderMinutes()),
+          min: 0,
+          max: SLEEP_TIMER_SLIDER_MAX,
+          step: 1
+        })
+          .layoutWeight(1)
+          .selectedColor(this.accentColor)
+          .trackColor(ThemeRuntime.inputColor(this.darkMode))
+          .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+          .accessibilityText('定时')
+          .onChange((value: number, mode: SliderChangeMode) => {
+            const minutes = sleepTimerPositionToMinutes(value);
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.timerDraft = -1;
+              ReaderTtsFloatingSession.setTimer(minutes);
+            } else {
+              this.timerDraft = minutes;
+            }
+          })
+        this.timerStepButton(1)
+      }
+      .width('100%')
+
+      // 刻度字：两侧让出步进按钮和滑块半径，和滑条轨道大致对齐。
+      Stack({ alignContent: Alignment.TopStart }) {
+        ForEach(SLEEP_TIMER_TICKS, (minutes: number) => {
+          Text(minutes > 0 ? `${minutes}` : '关')
+            .width(SLEEP_TIMER_TICK_WIDTH)
+            .fontSize(9)
+            .fontColor(this.subTextColor)
+            .fontFeature('"tnum" on')
+            .textAlign(TextAlign.Center)
+            .position({ x: `${sleepTimerMinutesToPosition(minutes) / SLEEP_TIMER_SLIDER_MAX * 100}%` })
+            .markAnchor({ x: SLEEP_TIMER_TICK_WIDTH / 2 })
+        }, (minutes: number) => `${minutes}`)
+      }
+      .height(12)
+      .margin({ left: SLEEP_TIMER_TICK_INSET, right: SLEEP_TIMER_TICK_INSET, top: -AppSpacing.SM })
+      .accessibilityLevel('no')
+
       Row({ space: AppSpacing.SM }) {
         this.timerChip(0, '关闭')
         this.timerChip(15, '15分')
         this.timerChip(30, '30分')
         this.timerChip(60, '60分')
-        this.timerChip(90, '90分')
-        this.timerChip(120, '120分')
       }
       .width('100%')
     }
     .width('100%')
   }
 
+  /** direction：-1 少 5 分钟（不够扣就关掉），1 多 5 分钟（没开定时就开 5 分钟）。 */
   @Builder
-  timerStatusRow() {
-    Row({ space: AppSpacing.SM }) {
-      SymbolGlyph($r('sys.symbol.timer'))
-        .fontSize(18)
-        .fontColor([this.timerColor()])
-      Text('剩余')
-        .fontSize(AppFontSize.CAPTION)
-        .fontColor(this.subTextColor)
-      Text(formatTimerRemaining(this.globalTtsTimerRemainingSeconds))
-        .fontSize(AppFontSize.BODY_LARGE)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(this.timerWarning() ? this.timerColor() : this.primaryTextColor)
-        .fontFeature('"tnum" on')
-        .maxLines(1)
-      Text(`${this.timerEndClock()} 停止`)
-        .fontSize(AppFontSize.CAPTION)
-        .fontColor(this.subTextColor)
-        .fontFeature('"tnum" on')
-        .maxLines(1)
-        .layoutWeight(1)
-      this.timerStatusButton(`+${TIMER_EXTEND_MINUTES}分`, `延长 ${TIMER_EXTEND_MINUTES} 分钟`, true,
-        () => ReaderTtsFloatingSession.extendTimer(TIMER_EXTEND_MINUTES))
-      this.timerStatusButton('关闭', '关闭定时', false, () => ReaderTtsFloatingSession.setTimer(0))
+  timerStepButton(direction: number) {
+    Stack({ alignContent: Alignment.Center }) {
+      SymbolGlyph(direction < 0 ? $r('sys.symbol.minus') : $r('sys.symbol.plus'))
+        .fontSize(16)
+        .fontColor([this.timerStepEnabled(direction) ? this.primaryTextColor : this.subTextColor])
     }
-    .width('100%')
-    .height(44)
-    .padding({ left: AppSpacing.MD, right: AppSpacing.SM })
-    .borderRadius(ThemeRuntime.buttonRadius())
+    .width(30)
+    .height(30)
+    .borderRadius(15)
     .backgroundColor(ThemeRuntime.softFillColor(this.darkMode))
-  }
-
-  @Builder
-  timerStatusButton(label: string, accessibility: string, accent: boolean, action: () => void) {
-    Text(label)
-      .fontSize(AppFontSize.CAPTION)
-      .fontWeight(accent ? FontWeight.Medium : FontWeight.Regular)
-      .fontColor(accent ? this.accentColor : this.subTextColor)
-      .height(30)
-      .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
-      .borderRadius(15)
-      .backgroundColor(ThemeRuntime.cardColor(this.darkMode))
-      .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.92 })
-      .accessibilityText(accessibility)
-      .onClick(action)
+    .opacity(this.timerStepEnabled(direction) ? 1 : 0.5)
+    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.92 })
+    .accessibilityText(direction < 0 ? `定时减少 ${SLEEP_TIMER_STEP_MINUTES} 分钟` : `定时增加 ${SLEEP_TIMER_STEP_MINUTES} 分钟`)
+    .onClick(() => {
+      if (!this.timerStepEnabled(direction)) return;
+      this.timerDraft = -1;
+      ReaderTtsFloatingSession.extendTimer(direction * SLEEP_TIMER_STEP_MINUTES);
+    })
   }
 
   /**
@@ -1593,14 +1661,44 @@ export struct ReaderTtsPlayerPanel {
   }
 
   timerEndClock(): string {
-    const end = new Date(Date.now() + this.globalTtsTimerRemainingSeconds * 1000);
+    return this.clockAfterSeconds(this.globalTtsTimerRemainingSeconds);
+  }
+
+  clockAfterSeconds(seconds: number): string {
+    const end = new Date(Date.now() + seconds * 1000);
     const hours = end.getHours();
     const minutes = end.getMinutes();
     return `${hours < 10 ? '0' : ''}${hours}:${minutes < 10 ? '0' : ''}${minutes}`;
   }
 
   timerChipSelected(minutes: number): boolean {
-    return minutes === 0 && !this.timerActive();
+    return minutes === 0 && !this.timerActive() && this.timerDraft < 0;
+  }
+
+  /** 滑块所在的分钟数：拖动中是草稿，开着定时是剩余分钟（向上取整），否则 0。 */
+  timerSliderMinutes(): number {
+    if (this.timerDraft >= 0) return this.timerDraft;
+    return this.timerActive() ? Math.ceil(this.globalTtsTimerRemainingSeconds / 60) : 0;
+  }
+
+  timerValueOff(): boolean {
+    return this.timerDraft >= 0 ? this.timerDraft <= 0 : !this.timerActive();
+  }
+
+  timerValueText(): string {
+    if (this.timerDraft >= 0) return this.timerDraft > 0 ? `${this.timerDraft} 分` : '关闭';
+    return this.timerActive() ? `剩余 ${formatTimerRemaining(this.globalTtsTimerRemainingSeconds)}` : '关闭';
+  }
+
+  timerEndText(): string {
+    if (this.timerDraft > 0) return `${this.clockAfterSeconds(this.timerDraft * 60)} 停止`;
+    if (this.timerDraft < 0 && this.timerActive()) return `${this.timerEndClock()} 停止`;
+    return '';
+  }
+
+  timerStepEnabled(direction: number): boolean {
+    if (direction < 0) return this.timerActive();
+    return !this.timerActive() || this.globalTtsTimerRemainingSeconds < SLEEP_TIMER_MAX_MINUTES * 60;
   }
 
   secondaryLabel(kind: string): string {
@@ -1637,6 +1735,7 @@ export struct ReaderTtsPlayerPanel {
 
   onSecondaryTap(kind: string): void {
     if (kind === SECONDARY_TIMER) {
+      this.timerDraft = -1;
       this.optionsPanel = this.optionsPanel === 1 ? 0 : 1;
     } else if (kind === SECONDARY_SPEED) {
       this.speedDraft = -1;

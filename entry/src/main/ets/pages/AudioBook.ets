@@ -1257,18 +1257,18 @@ struct AudioBookPage {
     this.startSleepTimerUi();
   }
 
-  /** 在剩余时间上加时，总时长一起加；没有进行中的定时就新开一个。 */
+  /** 在剩余时间上加时（负数缩短），总时长一起变；没有进行中的定时就新开一个。 */
   extendSleepTimer(minutes: number): void {
-    if (minutes <= 0) return;
+    if (minutes === 0) return;
     if (this.sleepMinutes <= 0 || this.playback.sleepRemainingSeconds() <= 0) {
-      this.setSleepTimer(minutes);
+      if (minutes > 0) this.setSleepTimer(minutes);
       return;
     }
     this.playback.extendSleepTimer(minutes);
     this.sleepMinutes += minutes;
     this.sleepRemainingSeconds = this.playback.sleepRemainingSeconds();
     ReaderTtsFloatingSession.updateTimer(this.floatingSessionOwnerId, this.sleepMinutes, this.sleepRemainingSeconds);
-    HdsFeedback.showToast(`已延长 ${minutes} 分钟`);
+    HdsFeedback.showToast(minutes > 0 ? `已延长 ${minutes} 分钟` : `已缩短 ${-minutes} 分钟`);
   }
 
   startSleepTimerUi(): void {

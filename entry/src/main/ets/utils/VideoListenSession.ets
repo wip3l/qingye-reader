@@ -360,7 +360,7 @@ export class VideoListenSession implements RemoteAudioPlaybackListener {
   }
 
   extendTimer(minutes: number): void {
-    if (!this.active || minutes <= 0) return;
+    if (!this.active || minutes === 0) return;
     this.timerMinutes += minutes;
     this.playback.extendSleepTimer(minutes);
     this.syncTimer();

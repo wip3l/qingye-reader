@@ -387,11 +387,11 @@ export class RemoteAudioPlayback {
     }, 1000);
   }
 
-  /** 在进行中的定时上加时；没有定时就新开一个。 */
+  /** 在进行中的定时上加时（负数缩短）；没有定时就新开一个。 */
   extendSleepTimer(minutes: number): void {
-    if (minutes <= 0) return;
+    if (minutes === 0) return;
     if (this.sleepEndAt <= 0) {
-      this.setSleepTimer(minutes);
+      if (minutes > 0) this.setSleepTimer(minutes);
       return;
     }
     this.sleepEndAt += minutes * 60 * 1000;
