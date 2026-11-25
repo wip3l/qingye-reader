@@ -7,6 +7,8 @@ import { TtsAudioSession, TtsAudioSessionHintListener, TtsOutputLostListener } f
 
 // 和朗读共用应用的音频会话（两者不会同时播放）：借它让系统把“停止”改成“暂停”，并收到会话级通知。
 const AUDIO_SESSION_OWNER: string = 'audiobook';
+// 播完一章后音频会话留多久等下一章接上：取地址最多 30 秒，失败后还会刷新重取一次。
+const COMPLETED_SESSION_HOLD_MS: number = 70000;
 
 export interface RemoteAudioPlaybackListener {
   onStateChanged(state: string): void;
@@ -35,6 +37,7 @@ export class RemoteAudioPlayback {
   private interruptPausePromise: Promise<void> = Promise.resolve();
   private sleepTimerId: number = -1;
   private sleepEndAt: number = 0;
+  private completedReleaseTimerId: number = -1;
   /**
    * 续播或拖动定位还没完成时的目标位置。期间 timeUpdate 报的仍是旧位置（常常是 0），不能外传，
    * 否则页面会把它当成进度存下，下次打开就从章节开头播。
@@ -427,10 +430,29 @@ export class RemoteAudioPlayback {
     await TtsAudioSession.acquire(AUDIO_SESSION_OWNER);
   }
 
+  /**
+   * 播完一章先留着音频会话：页面接着取下一章地址、建新播放器，期间停用再激活会话，熄屏时音频通路更容易
+   * 转待机、后台播放被收回。一段时间内没有接着播（最后一章、取地址失败）再放掉。
+   */
+  private scheduleCompletedRelease(): void {
+    this.clearCompletedRelease();
+    this.completedReleaseTimerId = setTimeout((): void => {
+      this.completedReleaseTimerId = -1;
+      if (this.state === 'completed') TtsAudioSession.release(AUDIO_SESSION_OWNER);
+    }, COMPLETED_SESSION_HOLD_MS);
+  }
+
+  private clearCompletedRelease(): void {
+    if (this.completedReleaseTimerId >= 0) clearTimeout(this.completedReleaseTimerId);
+    this.completedReleaseTimerId = -1;
+  }
+
   private setState(state: string): void {
     if (this.state === state) return;
-    // 播完、出错时不再占着会话；被打断停住（stopped）时要留着，等恢复通知。
-    if (state === 'completed' || state === 'error') TtsAudioSession.release(AUDIO_SESSION_OWNER);
+    // 出错时不再占着会话；播完的稍后再放（见 scheduleCompletedRelease）；被打断停住（stopped）时要留着，等恢复通知。
+    if (state === 'completed') this.scheduleCompletedRelease();
+    else this.clearCompletedRelease();
+    if (state === 'error') TtsAudioSession.release(AUDIO_SESSION_OWNER);
     this.state = state || 'idle';
     this.eventTarget()?.onStateChanged(this.state);
   }

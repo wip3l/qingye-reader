@@ -50,6 +50,11 @@ import { PendingTrialBookCleanup } from '../utils/PendingTrialBookCleanup';
 
 /** 书源解析出音频地址的总时限。WebView 嗅探本身最多 15 秒，失败后还会回退 HTTP 规则。 */
 const AUDIO_URL_RESOLVE_TIMEOUT_MS = 30000;
+/**
+ * 本章还剩这么久（按倍速折成实际时间）时先取好下一章的音频地址。章末再取，两章之间要静音好几秒：
+ * 熄屏戴蓝牙耳机时音频通路很快转待机，后台任务一旦被挂起应用就被冻住，下一章要到解锁才接上。
+ */
+const NEXT_CHAPTER_PREFETCH_LEAD_MS = 60000;
 // 听书在 BackgroundPermit 里登记用的名字；整个进程只有一个听书播放器，所以各个听书页共用。
 const AUDIO_PERMIT_OWNER = 'audiobook';
 
@@ -173,6 +178,10 @@ struct AudioBookPage {
   private chapterScroller: ListScroller = new ListScroller();
   private loadingSerial: number = 0;
   private lastAvSessionPositionUpdateAt: number = 0;
+  /** 已提前取过地址的下一章（书地址#序号），每章只取一次。 */
+  private nextChapterPrefetchKey: string = '';
+  /** 本章播完、正在自动接下一章：系统媒体控件一直报“播放中”，不在两章之间报停止或缓冲。 */
+  private autoAdvancing: boolean = false;
   private lastMediaChapterCommandAt: number = 0;
   private floatingSessionOwnerId: string = '';
   private pendingPanelAction: string = '';
@@ -1055,6 +1064,15 @@ struct AudioBookPage {
     this.playbackState = state;
     this.statusText = this.stateLabel(state);
     this.syncFloatingStatus();
+    // 自动接下一章的空档（本章 completed → 取地址 → 新播放器 loading/prepared）不改系统媒体状态，
+    // 一直是“播放中”；报成停止会让系统认为播放结束，熄屏时更容易收回后台播放。
+    const advancing = this.autoAdvancing || (state === 'completed' && this.chapterIndex < this.chapters.length - 1);
+    if (state !== 'completed' && state !== 'loading' && state !== 'initialized' && state !== 'prepared') {
+      this.autoAdvancing = false;
+    }
+    if (advancing && (state === 'completed' || state === 'loading' || state === 'initialized' || state === 'prepared')) {
+      return;
+    }
     if (state === 'playing') {
       this.publishFloatingSession();
       this.updateAudioAvSessionState(avSession.PlaybackState.PLAYBACK_STATE_PLAY).catch(() => {});
@@ -1088,6 +1106,7 @@ struct AudioBookPage {
       this.durationMs = durationMs;
     }
     this.scheduleProgressSave();
+    this.prefetchNextChapterNearEnd(positionMs, durationMs);
     const now = Date.now();
     if (now - this.lastFloatingPositionUpdateAt >= 1000) {
       this.lastFloatingPositionUpdateAt = now;
@@ -1098,6 +1117,35 @@ struct AudioBookPage {
       this.updateAudioAvSessionState(this.isPlaying() ? avSession.PlaybackState.PLAYBACK_STATE_PLAY :
         avSession.PlaybackState.PLAYBACK_STATE_PAUSE).catch(() => {});
     }
+  }
+
+  /**
+   * 本章快播完时把下一章的音频地址取进引擎缓存，章末切章时直接命中，不再静音等书源。
+   * 下一章已下载到本地就不用取。只取不播；地址过期时切章后的播放出错会照常带 forceRefresh 重取。
+   */
+  private prefetchNextChapterNearEnd(positionMs: number, durationMs: number): void {
+    const book = this.book;
+    const next = this.chapterIndex + 1;
+    if (!book || book.origin === 'local' || durationMs <= 0 || !this.isPlaying() || next >= this.chapters.length) return;
+    const key = `${book.bookUrl}#${next}`;
+    if (this.nextChapterPrefetchKey === key) return;
+    let endMs = durationMs;
+    if (this.tailSkipDisabledChapter !== this.chapterIndex &&
+      AudioSkipRange.fits(durationMs, this.skipHeadSeconds, this.skipTailSeconds)) {
+      endMs = durationMs - this.skipTailSeconds * 1000;
+    }
+    if ((endMs - positionMs) / Math.max(0.5, this.speed) > NEXT_CHAPTER_PREFETCH_LEAD_MS) return;
+    this.nextChapterPrefetchKey = key;
+    const chapter = this.chapters[next];
+    (async (): Promise<void> => {
+      if (await AudioOfflineStore.localFile(book.bookUrl, next, chapter.url, chapter.title,
+        book.getVariable('custom') || '')) return;
+      const engine = ReadBookEngine.get();
+      if (engine.book?.bookUrl !== book.bookUrl || this.book !== book) return;
+      await engine.peekContent(next);
+    })().catch((error: Error) => {
+      console.warn('提前获取下一章音频地址失败:', error);
+    });
   }
 
   /**
@@ -1208,6 +1256,7 @@ struct AudioBookPage {
   onPlaybackCompleted(): void {
     this.saveProgressNow(true);
     if (this.chapterIndex < this.chapters.length - 1) {
+      this.autoAdvancing = true;
       this.selectChapter(this.chapterIndex + 1);
     } else {
       this.statusText = '已播放完全部章节';
@@ -1221,6 +1270,10 @@ struct AudioBookPage {
       this.playbackRetryCount++;
       this.playCurrentChapter(this.latestPositionMs, true);
       return;
+    }
+    if (this.autoAdvancing) {
+      this.autoAdvancing = false;
+      this.updateAudioAvSessionState(avSession.PlaybackState.PLAYBACK_STATE_PAUSE).catch(() => {});
     }
     this.playbackState = 'error';
     this.statusText = `播放失败：${message}`;
