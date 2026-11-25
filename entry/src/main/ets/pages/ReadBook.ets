@@ -1125,6 +1125,7 @@ struct ReadBookPage {
   @StorageLink('readerMarginBottom') @Watch('onReadLayoutChanged') readerMarginBottom: number = 18;
   @StorageLink('readerCommentBubbleSize') @Watch('onReadLayoutChanged') readerCommentBubbleSize: number = ReaderCommentBubbleSize.DEFAULT;
   @StorageLink('readerCommentCard') @Watch('onReadLayoutChanged') readerCommentCard: string = ReaderCommentCardSettings.DEFAULT;
+  @StorageProp('readerCommentPanelHeight') readerCommentPanelHeightSetting: number = ReaderCommentCardSettings.PANEL_DEFAULT;
   @StorageLink('readerLightThemeIndex') @Watch('onReaderThemeChanged') readerLightThemeIndex: number = 0;
   @StorageLink('readerDarkThemeIndex') @Watch('onReaderThemeChanged') readerDarkThemeIndex: number = 0;
   @StorageLink('readerLightCustomThemeBackgroundColor') @Watch('onReaderThemeChanged') readerLightCustomThemeBackgroundColor: string = ReaderThemeHelper.LIGHT_CUSTOM_BACKGROUND_COLOR;
@@ -4529,12 +4530,15 @@ struct ReadBookPage {
   }
 
   /**
-   * 段评弹层停 60% 与全屏两档，仅顶部拖动区调整高度，网页手势只滚动评论。
+   * 段评弹层（评论网页与原生书源的内联评论页一样）停“阅读设置 › 段评 › 面板高度”所选高度与全屏两档，
+   * 选铺满时只有全屏一档。仅顶部拖动区调整高度，网页手势只滚动评论。
    */
   readerCommentSheetOptions(): SheetOptions {
+    const full = ReaderCommentCardSettings.isPanelFull(this.readerCommentPanelHeightSetting);
+    const height = `${ReaderCommentCardSettings.normalizePanelHeight(this.readerCommentPanelHeightSetting)}%`;
     return {
-      height: this.readerInlinePageMode ? `${Math.round(this.readerInlinePage.height * 100)}%` : '60%',
-      detents: [this.readerInlinePageMode ? `${Math.round(this.readerInlinePage.height * 100)}%` : '60%', SheetSize.LARGE],
+      height: full ? SheetSize.LARGE : height,
+      detents: full ? [SheetSize.LARGE] : [height, SheetSize.LARGE],
       // 使用系统拖动条承接弹层手势；普通 Row 命中区不会自动驱动弹层高度。
       dragBar: true,
       showClose: this.readerInlinePageMode,

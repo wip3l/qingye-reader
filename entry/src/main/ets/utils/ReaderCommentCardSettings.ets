@@ -27,8 +27,35 @@ export class ReaderCommentCardSettings {
   static readonly MAX_LABELS: string[] = ['1 张', '2 张', '不限'];
   static readonly LINE_LABELS: string[] = ['一行', '两行'];
   static readonly CHAPTER_LABELS: string[] = ['关闭', '气泡', '卡片'];
+  /**
+   * 点评论气泡打开的评论面板高度，占屏幕高度的百分比，35～90 每格 5；PANEL_FULL 表示直接全屏打开。
+   * 单独存一个键，改动不触发阅读页重新排版。评论网页和原生书源的内联评论页都按它打开。
+   */
+  static readonly PANEL_HEIGHT_KEY: string = 'readerCommentPanelHeight';
+  static readonly PANEL_MIN: number = 35;
+  static readonly PANEL_MAX: number = 90;
+  static readonly PANEL_FULL: number = 95;
+  static readonly PANEL_STEP: number = 5;
+  static readonly PANEL_DEFAULT: number = 60;
   private static revision: number = 0;
+  private static panelRevision: number = 0;
   private static writes: Promise<void> = Promise.resolve();
+
+  static normalizePanelHeight(value: number): number {
+    if (!Number.isFinite(value)) return ReaderCommentCardSettings.PANEL_DEFAULT;
+    const step = ReaderCommentCardSettings.PANEL_STEP;
+    const rounded = Math.round(value / step) * step;
+    return Math.max(ReaderCommentCardSettings.PANEL_MIN, Math.min(ReaderCommentCardSettings.PANEL_FULL, rounded));
+  }
+
+  static isPanelFull(value: number): boolean {
+    return ReaderCommentCardSettings.normalizePanelHeight(value) >= ReaderCommentCardSettings.PANEL_FULL;
+  }
+
+  static panelHeightLabel(value: number): string {
+    const height = ReaderCommentCardSettings.normalizePanelHeight(value);
+    return height >= ReaderCommentCardSettings.PANEL_FULL ? '铺满' : `${height}%`;
+  }
 
   static style(raw: string): number {
     const value = Number.parseInt(ReaderCommentCardSettings.normalize(raw).split(',')[0], 10);
@@ -78,6 +105,30 @@ export class ReaderCommentCardSettings {
     if (revision !== ReaderCommentCardSettings.revision) return;
     AppStorage.setOrCreate(ReaderCommentCardSettings.KEY,
       ReaderCommentCardSettings.normalize(typeof value === 'string' ? value : ''));
+  }
+
+  static async loadPanelHeight(context: Context): Promise<void> {
+    const revision = ReaderCommentCardSettings.panelRevision;
+    const store = await preferences.getPreferences(context, ReaderCommentCardSettings.STORE_NAME);
+    const value = await store.get(ReaderCommentCardSettings.PANEL_HEIGHT_KEY, ReaderCommentCardSettings.PANEL_DEFAULT);
+    if (revision !== ReaderCommentCardSettings.panelRevision) return;
+    AppStorage.setOrCreate(ReaderCommentCardSettings.PANEL_HEIGHT_KEY,
+      ReaderCommentCardSettings.normalizePanelHeight(typeof value === 'number' ? value : Number.NaN));
+  }
+
+  static savePanelHeight(context: Context, value: number): Promise<void> {
+    const next = ReaderCommentCardSettings.normalizePanelHeight(value);
+    ++ReaderCommentCardSettings.panelRevision;
+    AppStorage.setOrCreate(ReaderCommentCardSettings.PANEL_HEIGHT_KEY, next);
+    const write = ReaderCommentCardSettings.writes.then(async (): Promise<void> => {
+      const store = await preferences.getPreferences(context, ReaderCommentCardSettings.STORE_NAME);
+      await store.put(ReaderCommentCardSettings.PANEL_HEIGHT_KEY, next);
+      await store.flush();
+    });
+    ReaderCommentCardSettings.writes = write.catch((error: Error): void => {
+      console.warn('保存评论面板高度失败:', error);
+    });
+    return write;
   }
 
   static save(context: Context, value: string): Promise<void> {

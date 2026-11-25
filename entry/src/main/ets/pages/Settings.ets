@@ -151,6 +151,8 @@ struct SettingsPage {
   @StorageProp('ttsSpeed') ttsSpeed: number = 1;
   @StorageLink('readerLongPressSelectText') readerLongPressSelectText: boolean = true;
   @StorageLink('readerCommentCard') readerCommentCard: string = ReaderCommentCardSettings.DEFAULT;
+  /** 评论面板高度；拖动滑块时只改本地值，松手才保存。 */
+  @StorageProp('readerCommentPanelHeight') readerCommentPanelHeight: number = ReaderCommentCardSettings.PANEL_DEFAULT;
   @StorageLink('readerScreenTimeoutMinutes') readerScreenTimeoutMinutes: number =
     ReaderSettingsStore.SCREEN_TIMEOUT_ALWAYS_ON;
   @StorageLink('readerExtendToStatusBar') readerExtendToStatusBar: boolean = false;
@@ -808,7 +810,8 @@ struct SettingsPage {
           this.commentCardOptions(ReaderCommentCardSettings.CHAPTER_LABELS),
           ReaderCommentCardSettings.chapter(this.readerCommentCard), (index: number) => {
             this.setReaderCommentCard(-1, -1, -1, -1, index);
-          }, 'settings_comment_chapter_select', false)
+          }, 'settings_comment_chapter_select')
+        this.commentPanelHeightItem()
       }
       .width('calc(100% - 24vp)')
       .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -2276,6 +2279,70 @@ struct SettingsPage {
 
   commentCardOptions(labels: string[]): SelectOption[] {
     return labels.map((label: string): SelectOption => ({ value: label }));
+  }
+
+  /** 段评分组末尾的“面板高度”：标题行右侧是当前值，下面是小预览和滑块，拖到最右为铺满。 */
+  @Builder
+  commentPanelHeightItem() {
+    Column() {
+      SettingRow({ title: '面板高度', description: '点评论气泡打开的面板高度；打开后仍可上拉到全屏', showDivider: false }) {
+        Text(ReaderCommentCardSettings.panelHeightLabel(this.readerCommentPanelHeight))
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.accentColor())
+          .fontFeature('"tnum" on')
+      }
+      Row({ space: AppSpacing.MD }) {
+        // 小预览：竖着的屏幕，底部色块是面板盖住的部分。
+        Stack({ alignContent: Alignment.Bottom }) {
+          Column()
+            .width('100%')
+            .height(ReaderCommentCardSettings.isPanelFull(this.readerCommentPanelHeight) ? '92%' :
+              `${ReaderCommentCardSettings.normalizePanelHeight(this.readerCommentPanelHeight)}%`)
+            .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+            .border({ width: { top: 1.5 }, color: this.accentColor() })
+            .animation({ duration: 160, curve: Curve.EaseOut })
+        }
+        .width(24)
+        .height(42)
+        .borderRadius(6)
+        .border({ width: 1.5, color: this.subTextColor() })
+        .backgroundColor(this.inputColor())
+        .clip(true)
+        .accessibilityLevel('no')
+        Column({ space: 2 }) {
+          Slider({ value: this.readerCommentPanelHeight, min: ReaderCommentCardSettings.PANEL_MIN,
+            max: ReaderCommentCardSettings.PANEL_FULL, step: ReaderCommentCardSettings.PANEL_STEP })
+            .id('settings_comment_panel_height_slider')
+            .width('100%')
+            .selectedColor(this.accentColor())
+            .blockColor(this.accentColor())
+            // 只能拖动滑块调整，点到条上不跳值，防止上下滑动设置页时误触。
+            .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+            .accessibilityText('面板高度')
+            .onChange((value: number, mode: SliderChangeMode) => {
+              this.readerCommentPanelHeight = ReaderCommentCardSettings.normalizePanelHeight(value);
+              if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                ReaderCommentCardSettings.savePanelHeight(getContext(this), value).catch((error: Error) => {
+                  console.warn('保存评论面板高度失败:', error);
+                });
+              }
+            })
+          Row() {
+            ForEach(['35%', '50%', '65%', '80%', '铺满'], (label: string) => {
+              Text(label).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+            }, (label: string) => label)
+          }
+          .width('100%')
+          .padding({ left: AppSpacing.SM, right: AppSpacing.SM })
+          .justifyContent(FlexAlign.SpaceBetween)
+        }
+        .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: AppSpacing.MD })
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
   }
 
   /** 传 -1 的项保持不变。 */

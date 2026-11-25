@@ -21,6 +21,7 @@ import { NativeSourceService, NativeCommentPage, HttpClient, ReaderActionMarker,
 import { NativeCommentPageView } from '../components/NativeCommentPageView';
 import { BookSourceStageRuntimeHost } from '../components/BookSourceStageRuntimeHost';
 import { saveDocuments, writeTextFile } from '../platform/Files';
+import { ReaderCommentCardSettings } from '../utils/ReaderCommentCardSettings';
 
 class BookSourceDebugExportReport {
   reportVersion: number = 1;
@@ -46,6 +47,7 @@ class BookSourceDebugClipboardReport {
 @Component
 struct BookSourceDebugPage {
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
+  @StorageProp('readerCommentPanelHeight') readerCommentPanelHeight: number = ReaderCommentCardSettings.PANEL_DEFAULT;
   @State source: BookSource = new BookSource();
   @State sourceUrl: string = '';
   @State keyword: string = '';
@@ -125,11 +127,19 @@ struct BookSourceDebugPage {
     .height('100%')
     .backgroundColor(this.pageColor())
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    // 内联评论页预览与阅读页一样按“阅读设置 › 段评 › 面板高度”打开。
     .bindSheet($$this.inlinePreviewVisible, this.inlinePreviewContent(), {
-      height: `${Math.round(this.inlinePreview.height * 100)}%`,
-      detents: [`${Math.round(this.inlinePreview.height * 100)}%`, SheetSize.LARGE], showClose: true,
+      height: this.inlinePreviewHeight(),
+      detents: ReaderCommentCardSettings.isPanelFull(this.readerCommentPanelHeight) ? [SheetSize.LARGE] :
+        [this.inlinePreviewHeight(), SheetSize.LARGE], showClose: true,
       backgroundColor: this.appDarkMode ? '#18191B' : '#FFFFFF'
     })
+  }
+
+  inlinePreviewHeight(): SheetSize | string {
+    const height = this.readerCommentPanelHeight;
+    return ReaderCommentCardSettings.isPanelFull(height) ? SheetSize.LARGE :
+      `${ReaderCommentCardSettings.normalizePanelHeight(height)}%`;
   }
 
   @Builder

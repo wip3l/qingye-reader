@@ -344,6 +344,12 @@ export default class EntryAbility extends UIAbility {
     ReaderCommentCardSettings.load(this.context).catch((error: Error) => {
       console.warn('恢复热评卡片设置失败:', error);
     });
+    if (!AppStorage.has(ReaderCommentCardSettings.PANEL_HEIGHT_KEY)) {
+      AppStorage.setOrCreate(ReaderCommentCardSettings.PANEL_HEIGHT_KEY, ReaderCommentCardSettings.PANEL_DEFAULT);
+    }
+    ReaderCommentCardSettings.loadPanelHeight(this.context).catch((error: Error) => {
+      console.warn('恢复评论面板高度失败:', error);
+    });
     this.immersiveLightBootstrapPromise = ImmersiveLightSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复沉浸光感设置失败:', error);
     });
