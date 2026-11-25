@@ -295,7 +295,7 @@ export struct PdfReaderControls {
     ReaderBrightnessControl({
       value: this.brightnessValue, lastManualValue: this.lastManualBrightness,
       panelHeight: this.brightnessHeight(), ready: this.brightnessReady,
-      dark: this.darkMode, panelColor: this.solidPanelColor(),
+      dark: this.darkMode, onLeft: this.holdingHandSide < 0, panelColor: this.solidPanelColor(),
       textColor: ThemeRuntime.primaryTextColor(this.darkMode),
       accentColor: ThemeRuntime.accentColor(this.darkMode), trackColor: ThemeRuntime.dividerColor(this.darkMode),
       thumbColor: this.solidPanelColor(),

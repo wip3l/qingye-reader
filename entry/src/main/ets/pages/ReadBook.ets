@@ -4,6 +4,7 @@ import { HomeRoute } from '../utils/HomeRoute';
 import { ReaderBrightnessControl } from '../components/reader/ReaderBrightnessControl';
 import { ReaderSpreadSpine, READER_SPREAD_SPINE_WIDTH } from '../components/reader/ReaderSpreadSpine';
 import { ReaderBrightnessSession } from '../utils/ReaderBrightnessSession';
+import { ReaderEyeCareFilter } from '../components/reader/ReaderEyeCareFilter';
 import { ReaderQuickJumpContent } from '../components/reader/ReaderQuickJumpContent';
 import { READER_QUICK_JUMP_CAPSULE_HEIGHT, ReaderQuickJumpCapsule } from '../components/reader/ReaderQuickJumpCapsule';
 import {
@@ -4524,6 +4525,8 @@ struct ReadBookPage {
           .height('100%')
           .visibility(this.shelfCoverVisible ? Visibility.Visible : Visibility.Hidden)
       }
+      // 护眼滤层在最上面，正文、菜单、面板一起变暖；随开书放大、关书缩回一起动。
+      ReaderEyeCareFilter({ dark: this.isReaderThemeDark() })
     }
     .width('100%')
     .height('100%')
@@ -6085,7 +6088,7 @@ struct ReadBookPage {
     ReaderBrightnessControl({
       value: this.readerBrightness, lastManualValue: this.readerLastManualBrightness,
       panelHeight: this.readerBrightnessControlHeight(), ready: this.readerBrightnessReady,
-      dark: this.isReaderThemeDark(), panelColor: this.readerPanelColor(),
+      dark: this.isReaderThemeDark(), onLeft: this.readerHoldingHandSide < 0, panelColor: this.readerPanelColor(),
       textColor: this.readerPanelTextColor(),
       accentColor: this.accentColor(), trackColor: this.readerChapterTrackColor(),
       thumbColor: this.readerSolidPanelColor(),

@@ -34,6 +34,7 @@ import { PopupMenuAction } from '../components/common/PopupMenuAction';
 import { ReaderLayoutElementSettingsPanel } from '../components/reader/ReaderLayoutElementSettingsPanel';
 import { ReaderQuickJumpModel } from '../core/reader/ReaderQuickJumpModel';
 import { ReaderBrightnessSession } from '../utils/ReaderBrightnessSession';
+import { ReaderEyeCareFilter } from '../components/reader/ReaderEyeCareFilter';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
@@ -4684,6 +4685,8 @@ struct EpubOriginalReadBookPage {
           .visibility(this.shelfCoverVisible ? Visibility.Visible : Visibility.Hidden)
           .hitTestBehavior(HitTestMode.None)
       }
+      // 护眼滤层在最上面，正文、菜单、面板一起变暖。
+      ReaderEyeCareFilter({ dark: this.darkMode })
     }
     .width('100%')
     .height('100%')

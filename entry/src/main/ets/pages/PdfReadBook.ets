@@ -12,6 +12,7 @@ import { PdfReaderView } from '../components/reader/PdfReaderView';
 import { PdfReaderControls } from '../components/reader/PdfReaderControls';
 import { ReaderLayoutElementSettingsPanel } from '../components/reader/ReaderLayoutElementSettingsPanel';
 import { ReaderBrightnessSession } from '../utils/ReaderBrightnessSession';
+import { ReaderEyeCareFilter } from '../components/reader/ReaderEyeCareFilter';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
@@ -1642,6 +1643,8 @@ struct PdfReadBookPage {
           .visibility(this.shelfCoverVisible ? Visibility.Visible : Visibility.Hidden)
           .hitTestBehavior(HitTestMode.None)
       }
+      // 护眼滤层在最上面，页面、菜单、面板一起变暖。
+      ReaderEyeCareFilter({ dark: this.darkMode })
     }.width('100%').height('100%').backgroundColor(ThemeRuntime.pageColor(this.darkMode))
       .id('pdf_reader_root')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])

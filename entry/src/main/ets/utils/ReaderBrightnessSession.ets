@@ -1,6 +1,7 @@
 import { window } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { setWindowBrightness } from '../platform/WindowBrightness';
+import { ReaderEyeCare } from './ReaderEyeCare';
 
 /**
  * Device-local brightness, shared by reader instances, never written into a theme or synced to another device.
@@ -31,6 +32,8 @@ export class ReaderBrightnessSession {
     this.active = true;
     this.loaded = false;
     this.context = context;
+    // 护眼开关与亮度存在同一个文件里，随亮度一起读出，亮度条和滤层从 AppStorage 订阅。
+    ReaderEyeCare.load(context);
     this.onError = onError;
     this.reportedError = false;
     const revision = ++this.revision;
