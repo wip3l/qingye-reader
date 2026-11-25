@@ -8,6 +8,7 @@ import {
   SHELF_OPENING_BACKDROP_KEY, SHELF_OPENING_COVER_KEY, SHELF_OPENING_PAGE_SNAPSHOT_KEY, ShelfOpeningCover
 } from '../reader/ReaderShelfCoverOpening';
 import { ReaderOpenSnapshot, ReaderOpenSnapshotStore } from '../../core/reader/ReaderOpenSnapshotStore';
+import { ReaderEyeCare } from '../../utils/ReaderEyeCare';
 import { SharedElementBounds } from '../../utils/SharedElementBounds';
 import { DeleteParticles, DeleteParticleLayer, DeleteParticleBurst } from '../common/DeleteParticles';
 import { BookshelfCoverBadges } from '../BookshelfCoverBadges';
@@ -786,6 +787,8 @@ export struct BookshelfPage {
     this.shelfComponentActive = true;
     ShelfCoverLocator.register(this.shelfCoverLocate, this.shelfBackdropSnapshot);
     ReaderOpenSnapshotStore.prepare(getContext(this)).catch((): void => {});
+    // 开书时要据此判断关书截图里有没有护眼滤层，先读好。
+    ReaderEyeCare.load(getContext(this));
     this.shelfAppliedSearchKeyword = BookshelfPage.normalizeShelfSearchText(this.shelfSearchKeyword);
     this.reloadDisplaySettings();
     this.seedShelfViewportWidth();

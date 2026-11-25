@@ -52,6 +52,32 @@ export class ReaderEyeCare {
     return ReaderEyeCare.loading;
   }
 
+  /** 关书截图里没有滤层（实时滤层照常盖在上面）。 */
+  static readonly SNAPSHOT_PLAIN: number = 0;
+  /** 关书截图里已带着与现在相同的滤层：盖图期间藏起实时滤层，免得叠两层发黄。 */
+  static readonly SNAPSHOT_TINTED: number = 1;
+  /** 截图里的滤层与现在不同（或说不清）：不用这张图。 */
+  static readonly SNAPSHOT_MISMATCH: number = -1;
+
+  /**
+   * 关书截图截的是整个阅读层，护眼滤层也在里面。渲染身份末尾加上这一段，下次打开时据此判断图里有没有滤层。
+   */
+  static snapshotTag(): string {
+    return ReaderEyeCare.isOn() ? `eye${ReaderEyeCare.level()}` : 'eye-off';
+  }
+
+  static snapshotTint(identity: string): number {
+    const tag = identity.substring(identity.lastIndexOf('|') + 1);
+    if (tag === 'eye-off') return ReaderEyeCare.SNAPSHOT_PLAIN;
+    if (/^eye\d+$/.test(tag)) {
+      return ReaderEyeCare.loaded && tag === ReaderEyeCare.snapshotTag() ?
+        ReaderEyeCare.SNAPSHOT_TINTED : ReaderEyeCare.SNAPSHOT_MISMATCH;
+    }
+    // 加这一段之前存下的图：护眼关着时当作没有滤层，开着时说不清就不用。
+    return ReaderEyeCare.loaded && !ReaderEyeCare.isOn() ? ReaderEyeCare.SNAPSHOT_PLAIN :
+      ReaderEyeCare.SNAPSHOT_MISMATCH;
+  }
+
   static isOn(): boolean {
     return AppStorage.get<boolean>(ReaderEyeCare.KEY_ON) === true;
   }

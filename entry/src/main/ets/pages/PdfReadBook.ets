@@ -13,6 +13,7 @@ import { PdfReaderControls } from '../components/reader/PdfReaderControls';
 import { ReaderLayoutElementSettingsPanel } from '../components/reader/ReaderLayoutElementSettingsPanel';
 import { ReaderBrightnessSession } from '../utils/ReaderBrightnessSession';
 import { ReaderEyeCareFilter } from '../components/reader/ReaderEyeCareFilter';
+import { ReaderEyeCare } from '../utils/ReaderEyeCare';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
@@ -218,6 +219,8 @@ struct PdfReadBookPage {
    * 正文就绪时比对渲染身份，相同就在下一帧撤掉（像素一致，看不出换），不同立即撤掉；最多盖 4 秒。
    */
   @State shelfOpeningPageSnapshot: image.PixelMap | null = null;
+  /** 上面那张图里已带着与现在相同的护眼滤层。 */
+  @State shelfOpeningPageSnapshotTinted: boolean = false;
   private shelfOpeningPageSnapshotIdentity: string = '';
   private shelfOpeningPageSnapshotTimer: number = -1;
   private customizedPreferences: Set<string> = new Set<string>();
@@ -861,7 +864,12 @@ struct PdfReadBookPage {
     if (!pixelMap || !this.shelfOpenAnimating) return;
     const separator = meta.indexOf('\n');
     if (separator < 0 || meta.substring(0, separator) !== this.bookUrl) return;
-    this.shelfOpeningPageSnapshotIdentity = meta.substring(separator + 1);
+    const identity = meta.substring(separator + 1);
+    // 关书截图可能已带着当时的护眼滤层：与现在一致就在盖图期间藏起实时滤层，免得叠两层发黄；不一致就不用这张图。
+    const eyeCareTint = ReaderEyeCare.snapshotTint(identity);
+    if (eyeCareTint === ReaderEyeCare.SNAPSHOT_MISMATCH) return;
+    this.shelfOpeningPageSnapshotTinted = eyeCareTint === ReaderEyeCare.SNAPSHOT_TINTED;
+    this.shelfOpeningPageSnapshotIdentity = identity;
     this.shelfOpeningPageSnapshot = pixelMap;
     this.shelfOpeningPageSnapshotTimer = setTimeout((): void => {
       this.shelfOpeningPageSnapshotTimer = -1;
@@ -896,7 +904,8 @@ struct PdfReadBookPage {
 
   /** 这一页此刻的渲染身份：关书时随图存下，下次打开正文就绪时比对。 */
   private readerOpenSnapshotIdentity(): string {
-    return `${this.pageIndex}|${this.continuous}|${this.doublePage}|${this.fitPage}|${this.wideWindow}|${this.darkMode}`;
+    return `${this.pageIndex}|${this.continuous}|${this.doublePage}|${this.fitPage}|${this.wideWindow}|${this.darkMode}|` +
+      `${ReaderEyeCare.snapshotTag()}`;
   }
 
   /** 关书时把当前页整张离屏截下来（与首页截图并行），下次从书架打开先盖它。 */
@@ -1644,7 +1653,8 @@ struct PdfReadBookPage {
           .hitTestBehavior(HitTestMode.None)
       }
       // 护眼滤层在最上面，页面、菜单、面板一起变暖。
-      ReaderEyeCareFilter({ dark: this.darkMode })
+      ReaderEyeCareFilter({ dark: this.darkMode,
+        suppressed: this.shelfOpeningPageSnapshot !== null && this.shelfOpeningPageSnapshotTinted })
     }.width('100%').height('100%').backgroundColor(ThemeRuntime.pageColor(this.darkMode))
       .id('pdf_reader_root')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])

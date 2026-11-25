@@ -5,6 +5,7 @@ import { ReaderBrightnessControl } from '../components/reader/ReaderBrightnessCo
 import { ReaderSpreadSpine, READER_SPREAD_SPINE_WIDTH } from '../components/reader/ReaderSpreadSpine';
 import { ReaderBrightnessSession } from '../utils/ReaderBrightnessSession';
 import { ReaderEyeCareFilter } from '../components/reader/ReaderEyeCareFilter';
+import { ReaderEyeCare } from '../utils/ReaderEyeCare';
 import { ReaderQuickJumpContent } from '../components/reader/ReaderQuickJumpContent';
 import { READER_QUICK_JUMP_CAPSULE_HEIGHT, ReaderQuickJumpCapsule } from '../components/reader/ReaderQuickJumpCapsule';
 import {
@@ -1402,6 +1403,8 @@ struct ReadBookPage {
    * 正文就绪时比对渲染身份，相同就在下一帧撤掉（像素一致，看不出换），不同立即撤掉；最多盖 4 秒。
    */
   @State shelfOpeningPageSnapshot: image.PixelMap | null = null;
+  /** 上面那张图里已带着与现在相同的护眼滤层。 */
+  @State shelfOpeningPageSnapshotTinted: boolean = false;
   private shelfOpeningPageSnapshotIdentity: string = '';
   private shelfOpeningPageSnapshotTimer: number = -1;
   /** 打开动画预计结束的时刻：相邻章节预加载排到这之后，免得排版抢主线程让放大掉帧。 */
@@ -4526,7 +4529,8 @@ struct ReadBookPage {
           .visibility(this.shelfCoverVisible ? Visibility.Visible : Visibility.Hidden)
       }
       // 护眼滤层在最上面，正文、菜单、面板一起变暖；随开书放大、关书缩回一起动。
-      ReaderEyeCareFilter({ dark: this.isReaderThemeDark() })
+      ReaderEyeCareFilter({ dark: this.isReaderThemeDark(),
+        suppressed: this.shelfOpeningPageSnapshot !== null && this.shelfOpeningPageSnapshotTinted })
     }
     .width('100%')
     .height('100%')
@@ -23382,7 +23386,12 @@ ${leading}` : leading;
     if (!pixelMap || !this.shelfOpenAnimating) return;
     const separator = meta.indexOf('\n');
     if (separator < 0 || meta.substring(0, separator) !== this.bookUrl) return;
-    this.shelfOpeningPageSnapshotIdentity = meta.substring(separator + 1);
+    const identity = meta.substring(separator + 1);
+    // 关书截图可能已带着当时的护眼滤层：与现在一致就在盖图期间藏起实时滤层，免得叠两层发黄；不一致就不用这张图。
+    const eyeCareTint = ReaderEyeCare.snapshotTint(identity);
+    if (eyeCareTint === ReaderEyeCare.SNAPSHOT_MISMATCH) return;
+    this.shelfOpeningPageSnapshotTinted = eyeCareTint === ReaderEyeCare.SNAPSHOT_TINTED;
+    this.shelfOpeningPageSnapshotIdentity = identity;
     this.shelfOpeningPageSnapshot = pixelMap;
     this.shelfOpeningPageSnapshotTimer = setTimeout((): void => {
       this.shelfOpeningPageSnapshotTimer = -1;
@@ -23419,7 +23428,7 @@ ${leading}` : leading;
   readerOpenSnapshotIdentity(): string {
     return `${this.buildReaderPaginationCacheKey(this.currentChapterIndex, this.pagedContentText)}|` +
       `${this.currentPageIndex}|${this.appDarkMode}|${this.currentReaderThemeIndex()}|` +
-      `${this.readerHeaderEnabled}|${this.readerFooterEnabled}`;
+      `${this.readerHeaderEnabled}|${this.readerFooterEnabled}|${ReaderEyeCare.snapshotTag()}`;
   }
 
   /** 关书时把当前页整张离屏截下来（与首页截图并行），下次从书架打开先盖它。 */
