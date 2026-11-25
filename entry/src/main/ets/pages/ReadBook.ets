@@ -330,6 +330,14 @@ const READER_ANNOTATION_MARKER_PREFIX: string = 'reader-annotation:';
 
 /** 一章的划线在该章当前文本里的位置；文本或划线数据变了就重算。 */
 /** 镜像阅读页翻页后让后台朗读页换到的位置；连续翻页时只保留最后一次。 */
+interface TtsDeferredFocus {
+  chunk: TtsChunk;
+  token: number;
+  generation: number;
+  chapterIndex: number;
+  sourceIdentity: string;
+}
+
 interface TtsFloatingPositionRequest {
   chapterIndex: number;
   pageIndex: number;
@@ -825,8 +833,17 @@ struct ReadBookPage {
   private ttsDetachCountdownTimerId: number = -1;
   /** 按不跟随处理的手动翻页正在进行：这期间到来的朗读句子只更新高亮，不触发朗读自动翻页。 */
   private ttsHoldingTurn: boolean = false;
+  /** 按不跟随处理的翻页进行中到来的最近一句：动画期间先不处理，落定后再更新高亮、悬浮朗读与媒体信息。 */
+  private ttsDeferredFocus: TtsDeferredFocus | null = null;
   /** 滚动阅读里朗读最后一次自动滚动的时间，用来分辨滚动停下是用户滑的还是朗读跟随滚的。 */
   private ttsContinuousAutoScrolledAt: number = 0;
+  /**
+   * 跨章不跟随：本页朗读还在读这一章（不是正在显示的那章），-1 表示没有。朗读只认它开读时那一章的文字，
+   * 句子回调照常到来，这期间只记位置（ttsCrossOffset*），正文里不画高亮，读完那章再决定怎么接下一章。
+   */
+  private ttsCrossChapterIndex: number = -1;
+  private ttsCrossOffsetStart: number = -1;
+  private ttsCrossOffsetEnd: number = -1;
   private ttsPageTurnSerial: number = 0;
   private ttsPendingTargetPageIndex: number = -1;
   private ttsPendingHighlightChunk: TtsChunk | null = null;
@@ -1275,7 +1292,7 @@ struct ReadBookPage {
   @StorageLink('ttsStyle') ttsStyle: string = '';
   @StorageLink('ttsLanguage') ttsLanguage: string = 'zh-CN';
   @StorageLink('ttsSpeed') ttsSpeed: number = 1;
-  @StorageProp('ttsTurnFollow') ttsTurnFollow: string = TtsTurnFollow.NOW;
+  @StorageProp('ttsTurnFollow') ttsTurnFollow: string = TtsTurnFollow.DEFAULT;
   @StorageLink('ttsInstalledVoiceKeys') ttsInstalledVoiceKeys: string = '';
   @StorageLink('ttsCustomVoiceId') ttsCustomVoiceId: string = '';
   @StorageLink('ttsCustomVoices') @Watch('onTtsCustomVoicesChanged') ttsCustomVoices: string = '';
@@ -6433,7 +6450,7 @@ struct ReadBookPage {
       countdownKey: this.ttsDetachCountdownKey,
       countdownMs: TtsTurnFollow.DELAY_MS,
       darkMode: this.isReaderThemeDark(),
-      fallbackColor: this.readerPanelColor(),
+      panelColor: this.readerPanelColor(),
       textColor: this.readerPanelTextColor(),
       dividerColor: this.readerPanelBorderColor(),
       onBack: () => { this.returnToTtsSpokenPage(); },
@@ -6444,6 +6461,8 @@ struct ReadBookPage {
         x: ((this.pageViewWidth > 0 ? this.pageViewWidth : 360) - ReaderTtsHoldCapsule.WIDTH) / 2,
         y: this.readerTtsHoldCapsuleTop()
       })
+      // 翻页（含手指拖动）时先藏起来：材质盖在翻动的正文上要每帧重算。只改可见性，不卸载、不重新布局。
+      .visibility(this.pageSlideDirection !== 0 || this.pageTurnAnimating ? Visibility.Hidden : Visibility.Visible)
       .transition(this.ttsMiniPlayerTransition())
   }
 
@@ -8959,7 +8978,12 @@ struct ReadBookPage {
     const sourceChapterIndex = this.currentChapterIndex;
     // 手动越过章节时朗读改从新位置继续，与上下拉切章一致；后台浮窗朗读则移到新位置。
     const mirroredTts = this.isMirroringActiveTtsForCurrentBook();
-    const ownTtsActive = !mirroredTts && (this.isTtsSpeaking || this.ttsReader?.isSpeaking());
+    // 朗读不跟随：读者自己滑进别的章节时朗读接着读原处，换章后出“回到朗读处 | 从本页听”。
+    const userScrolled = this.readerContinuousPointerAt > this.ttsContinuousAutoScrolledAt &&
+      Date.now() - this.readerContinuousPointerAt < 6000;
+    const holdTts = userScrolled && TtsTurnFollow.normalize(this.ttsTurnFollow) !== TtsTurnFollow.NOW &&
+      (mirroredTts ? this.activeMirroredTtsChapterIndex() >= 0 : this.canHoldOwnTtsAcrossNavigation());
+    const ownTtsActive = !holdTts && !mirroredTts && (this.isTtsSpeaking || this.ttsReader?.isSpeaking());
     const resumeTtsAfterSwitch = ownTtsActive && !this.isTtsPaused;
     if (resumeTtsAfterSwitch) {
       this.stopTtsReaderForChapterSwitch();
@@ -8991,7 +9015,9 @@ struct ReadBookPage {
       // 继续往同一方向读时下一个相邻章节马上就要用到，趁读者还在这一章就接上。
       this.ensureReaderContinuousNeighbors(this.readerContinuousLastListStart, this.readerContinuousLastListEnd, true);
     }
-    if (resumeTtsAfterSwitch) {
+    if (holdTts) {
+      this.refreshTtsViewDetached(true);
+    } else if (resumeTtsAfterSwitch) {
       await this.startTtsReadingFromCurrentPosition(false);
     } else if (mirroredTts) {
       try {
@@ -15584,6 +15610,13 @@ struct ReadBookPage {
   }
 
   updateTtsFloatingSession(): void {
+    if (this.ttsCrossChapterIndex >= 0) {
+      // 跨章时正文、句子都属于另一章：只更新标题与暂停状态，面板里的文字留在最后一次同步的样子。
+      ReaderTtsFloatingSession.update(this.ttsFloatingSessionOwnerId, this.book?.name || '正在朗读',
+        this.getChapterTitle(this.ttsCrossChapterIndex), this.isTtsPaused);
+      ReaderTtsFloatingSession.updateCatalogIndex(this.ttsFloatingSessionOwnerId, this.ttsCrossChapterIndex);
+      return;
+    }
     ReaderTtsFloatingSession.update(
       this.ttsFloatingSessionOwnerId,
       this.book?.name || '正在朗读',
@@ -15680,7 +15713,7 @@ struct ReadBookPage {
   async startTtsReadingFromCurrentPosition(showToast: boolean,
     manualPageTurnResume: boolean = false, manualPageTurnResumeSerial: number = -1,
     readingStartOffset: number = -1, preserveExistingFocus: boolean = false,
-    keepViewDetached: boolean = false): Promise<void> {
+    keepViewDetached: boolean = false, startBeforeVisiblePage: boolean = false): Promise<void> {
     // 只有章末补读沿用不跟随状态；其余开读都从用户眼前（或指定）的位置读起。
     if (!keepViewDetached) this.clearTtsViewDetached();
     this.pauseReaderAutoScroll('朗读中，已暂停');
@@ -15700,7 +15733,8 @@ struct ReadBookPage {
     // the first visible line instead.
     const visibleOffset = readingStartOffset < 0 && this.usesReaderContinuousV2() ?
       this.readerContinuousV2FirstVisibleSourceOffset() : -1;
-    const text = this.getTtsReadingText(readingStartOffset >= 0 ? readingStartOffset : visibleOffset);
+    const text = this.getTtsReadingText(readingStartOffset >= 0 ? readingStartOffset : visibleOffset,
+      startBeforeVisiblePage);
     if (!text) {
       this.finishTtsReading();
       if (showToast) {
@@ -15812,10 +15846,6 @@ struct ReadBookPage {
           }
         },
         onChunkStart: (chunk: TtsChunk) => {
-          if (!this.isCurrentTtsFocusSession(token, focusGeneration,
-            focusChapterIndex, focusSourceIdentity)) {
-            return;
-          }
           this.followTtsChunk(chunk, token, focusGeneration, focusChapterIndex, focusSourceIdentity);
         },
         onAudioStart: () => {
@@ -16032,16 +16062,23 @@ struct ReadBookPage {
    * 只管同一章内的翻页。朗读只能读正在显示的那一章，跨章翻页仍按原来的做法从新页读起；
    * 暂停后翻过页、引擎里已没有暂停着的语音时也沿用原来的做法。
    */
-  shouldHoldTtsOnManualTurn(direction: number, mirroring: boolean): boolean {
-    if (TtsTurnFollow.normalize(this.ttsTurnFollow) === TtsTurnFollow.NOW || this.usesReaderContinuousV2() ||
-      this.getLocalPageTurnTargetPageIndex(direction) < 0) return false;
-    if (mirroring) {
-      return !this.mirroredTtsManualTurnPending && this.activeMirroredTtsChapterIndex() === this.currentChapterIndex;
-    }
-    if (this.ttsManualPageTurnResumePending || this.ttsChapterSwitching) return false;
+  shouldHoldTtsOnManualTurn(_direction: number, mirroring: boolean): boolean {
+    if (TtsTurnFollow.normalize(this.ttsTurnFollow) === TtsTurnFollow.NOW || this.usesReaderContinuousV2()) return false;
+    if (mirroring) return !this.mirroredTtsManualTurnPending && this.activeMirroredTtsChapterIndex() >= 0;
+    return this.canHoldOwnTtsAcrossNavigation();
+  }
+
+  /**
+   * 本页朗读能不能在读者翻走（含跨章）时接着读原处：会话有效、引擎里还握着语音，且读的是正在显示的这章，
+   * 或者本来就已跨章（读者在别的章节之间继续翻）。
+   */
+  canHoldOwnTtsAcrossNavigation(): boolean {
+    if (this.ttsManualPageTurnResumePending || this.ttsChapterSwitching || !this.ttsAutoContinue) return false;
     if (!this.isTtsSpeaking && this.ttsReader?.isSpeaking() !== true) return false;
     if (this.isTtsPaused && this.ttsReader?.isSpeaking() !== true) return false;
-    return this.ttsFocusChapterIndex < 0 || this.ttsFocusChapterIndex === this.currentChapterIndex;
+    const chapterIndex = this.ttsFocusChapterIndex;
+    return chapterIndex >= 0 &&
+      (chapterIndex === this.currentChapterIndex || chapterIndex === this.ttsCrossChapterIndex);
   }
 
   isTtsHoldPaused(): boolean {
@@ -16067,8 +16104,107 @@ struct ReadBookPage {
     return this.normalizeReaderSpreadPageIndex(pageIndex);
   }
 
+  /** 句子回调属于仍有效的朗读会话，只是读的是别的章节（读者翻去了别的章）。 */
+  isCrossChapterTtsFocusSession(token: number, generation: number, chapterIndex: number): boolean {
+    return token === this.ttsReadToken && generation === this.ttsFocusGeneration &&
+      chapterIndex === this.ttsFocusChapterIndex && chapterIndex !== this.currentChapterIndex &&
+      this.isTtsSpeaking && this.ttsAutoContinue;
+  }
+
+  /** 朗读在别的章节念到新的一句：只记位置（续播、回到朗读处、章末判断都用它），不碰正文。 */
+  trackCrossChapterTtsChunk(chunk: TtsChunk): void {
+    const start = this.readerV2TtsSourceOffset(chunk.start);
+    const end = this.readerV2TtsSourceOffset(chunk.end);
+    if (this.ttsLastAppliedSourceOffset >= 0 && start < this.ttsLastAppliedSourceOffset) return;
+    this.ttsLastAppliedSourceOffset = start;
+    this.ttsLastFocusChunk = chunk;
+    this.ttsCrossOffsetStart = start;
+    this.ttsCrossOffsetEnd = Math.max(start, end);
+    this.persistTtsReadPosition(start, Math.max(start, end), this.ttsFocusChapterIndex);
+  }
+
+  /**
+   * 朗读（本页或后台镜像）是否在读别的章节。本页朗读刚跨章时记下正在读的位置，并收起正文里的高亮
+   * （它的偏移属于另一章，留着会在这一章同样的位置画出来）；回到那一章时把句子回调与高亮接回来。
+   */
+  syncTtsCrossChapterState(): boolean {
+    if (this.isMirroringActiveTtsForCurrentBook()) {
+      const mirroredChapter = this.activeMirroredTtsChapterIndex();
+      if (mirroredChapter < 0 || mirroredChapter === this.currentChapterIndex) return false;
+      this.clearMirroredTtsFocus();
+      return true;
+    }
+    const chapterIndex = this.ttsFocusChapterIndex;
+    if (chapterIndex < 0 || (!this.isTtsSpeaking && this.ttsReader?.isSpeaking() !== true)) {
+      this.ttsCrossChapterIndex = -1;
+      return false;
+    }
+    if (chapterIndex !== this.currentChapterIndex) {
+      if (this.ttsCrossChapterIndex !== chapterIndex) {
+        this.ttsCrossChapterIndex = chapterIndex;
+        const chunk = this.ttsLastFocusChunk;
+        this.ttsCrossOffsetStart = chunk ? this.readerV2TtsSourceOffset(chunk.start) :
+          (this.readerV2TtsSourceStart >= 0 ? this.readerV2TtsSourceStart : this.ttsTextStartOffset);
+        this.ttsCrossOffsetEnd = chunk ? Math.max(this.ttsCrossOffsetStart, this.readerV2TtsSourceOffset(chunk.end)) :
+          this.ttsCrossOffsetStart;
+        this.ttsHighlightStart = -1;
+        this.ttsHighlightEnd = -1;
+        this.readerV2TtsSourceStart = -1;
+        this.readerV2TtsSourceEnd = -1;
+        this.publishTtsHighlightRenderChange();
+      }
+      return true;
+    }
+    if (this.ttsCrossChapterIndex >= 0) {
+      this.ttsCrossChapterIndex = -1;
+      // 回到朗读那一章：章节内容没变就把句子回调接回来，高亮落回正在读的那句（页面在别处时不重画）。
+      if (this.ttsFocusSourceIdentity === this.currentTtsSourceIdentity()) {
+        this.ttsFocusContentLoadSerial = this.contentLoadSerial;
+        const chunk = this.ttsLastFocusChunk;
+        if (chunk) {
+          const pageIndex = this.resolveTtsChunkPageIndex(chunk);
+          if (pageIndex >= 0 && pageIndex < this.contentPages.length) {
+            this.ttsLastFocusPageIndex = pageIndex;
+            this.updateTtsChunkHighlight(chunk, pageIndex, false,
+              this.normalizeReaderSpreadPageIndex(pageIndex) === this.currentPageIndex);
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  /** 朗读读完了它那一章，而读者此时在别的章节：读者正好在下一章就从那章开头接着读、页面不动，否则页面跟去下一章。 */
+  async continueTtsAfterCrossChapter(token: number, ttsChapterIndex: number): Promise<void> {
+    const nextChapterIndex = ttsChapterIndex + 1;
+    if (nextChapterIndex >= this.chapters.length) {
+      await this.ttsReader?.drainQueuedTail();
+      if (token !== this.ttsReadToken || !this.ttsAutoContinue) return;
+      this.finishTtsReading();
+      return;
+    }
+    if (this.currentChapterIndex === nextChapterIndex && this.contentPages.length > 0) {
+      console.info(`[TTS] cross-chapter handoff: chapter=${ttsChapterIndex}->${nextChapterIndex},` +
+        `viewPage=${this.currentPageIndex}`);
+      this.ttsCrossChapterIndex = -1;
+      await this.startTtsReadingFromCurrentPosition(false, false, -1, 0, false, true, true);
+      if (token + 1 !== this.ttsReadToken) return;
+      this.refreshTtsViewDetached(false);
+      return;
+    }
+    console.info(`[TTS] cross-chapter handoff follows: chapter=${ttsChapterIndex}->${nextChapterIndex},` +
+      `view=${this.currentChapterIndex}`);
+    this.clearTtsViewDetached();
+    await this.playPositionFromFloatingSession(nextChapterIndex, 0, 0);
+  }
+
   /** 翻页落定（或朗读位置变化）后重新判断是否翻离了朗读页；restartCountdown 时“停留 3 秒后”重新计时。 */
   refreshTtsViewDetached(restartCountdown: boolean): void {
+    if (this.syncTtsCrossChapterState()) {
+      if (!this.ttsViewDetached) this.ttsViewDetached = true;
+      if (restartCountdown) this.restartTtsDetachCountdown();
+      return;
+    }
     const spokenPageIndex = this.ttsSpokenPageIndex();
     if (spokenPageIndex < 0 || spokenPageIndex === this.currentPageIndex) {
       const wasDetached = this.ttsViewDetached;
@@ -16082,6 +16218,7 @@ struct ReadBookPage {
 
   clearTtsViewDetached(): void {
     this.cancelTtsDetachCountdown();
+    this.ttsCrossChapterIndex = -1;
     if (this.ttsViewDetached) this.ttsViewDetached = false;
   }
 
@@ -16145,14 +16282,49 @@ struct ReadBookPage {
     this.scheduleTtsResumeAfterManualPageTurn();
   }
 
+  /**
+   * 跨章时“回到朗读处”：打开朗读那一章、翻到正在读的那一页，从这一句重新开读（暂停着就停在这句）。
+   * 打开另一章要重新起播，中间有很短的停顿。快速跳转做不了（滚动阅读等）时改走悬浮朗读的定位。
+   */
+  returnToCrossChapterTts(): void {
+    const chapterIndex = this.ttsFocusChapterIndex;
+    const offset = Math.max(0, this.ttsCrossChapterIndex === chapterIndex ? this.ttsCrossOffsetStart : 0);
+    const resume = !this.isTtsHoldPaused();
+    this.clearTtsViewDetached();
+    this.performReaderQuickJump(chapterIndex, -1, offset, true, resume)
+      .then((moved: boolean) => {
+        if (moved) return;
+        if (resume) {
+          this.playPositionFromFloatingSession(chapterIndex, 0, offset).catch((error: Error) => {
+            console.warn('回到朗读处失败:', error);
+          });
+        } else {
+          this.refreshTtsViewDetached(false);
+        }
+      })
+      .catch((error: Error) => {
+        console.warn('回到朗读处失败:', error);
+        this.refreshTtsViewDetached(false);
+      });
+  }
+
   /** 胶囊“回到朗读处”：页面回到朗读正在读的那一页，恢复跟随翻页。 */
   returnToTtsSpokenPage(): void {
     if (this.isPageTurning || this.pageTurnQueue.hasPending()) return;
+    if (!this.isMirroringActiveTtsForCurrentBook() && this.ttsFocusChapterIndex >= 0 &&
+      this.ttsFocusChapterIndex !== this.currentChapterIndex) {
+      this.returnToCrossChapterTts();
+      return;
+    }
     this.clearTtsViewDetached();
     if (this.isMirroringActiveTtsForCurrentBook()) {
       this.syncMirroredTtsFocus()
         .then(() => this.scheduleCurrentTtsFocusRepublishAfterPageTurn())
         .catch(() => {});
+      return;
+    }
+    if (this.ttsFocusChapterIndex >= 0 && this.ttsFocusChapterIndex !== this.currentChapterIndex) {
+      this.returnToCrossChapterTts();
       return;
     }
     if (this.usesReaderContinuousV2()) {
@@ -16288,6 +16460,12 @@ struct ReadBookPage {
       return;
     }
     if (this.ttsChapterSwitching) {
+      return;
+    }
+    // 读者翻去了别的章节、朗读还在读原来那章：章末不能按正在显示的章节补读或进下一章。
+    const ttsChapterIndex = this.ttsFocusChapterIndex;
+    if (ttsChapterIndex >= 0 && ttsChapterIndex !== this.currentChapterIndex) {
+      await this.continueTtsAfterCrossChapter(token, ttsChapterIndex);
       return;
     }
     // onFinished is not a sufficient chapter-boundary proof on every TTS route. A delayed/early completion event
@@ -16839,10 +17017,12 @@ struct ReadBookPage {
       this.ttsFocusContentLoadSerial === this.contentLoadSerial && this.isTtsSpeaking && this.ttsAutoContinue;
   }
 
-  getTtsReadingText(startOffset: number = -1): string {
+  /** allowBeforePage：从当前页之前开读（跨章接续时从章首读起，读者停在后面某页）。 */
+  getTtsReadingText(startOffset: number = -1, allowBeforePage: boolean = false): string {
     const source = this.pagedContentText || this.getPagedSourceText();
     const pageStart = this.getCurrentPageStartOffset();
-    let start = startOffset >= pageStart ? Math.min(Math.round(startOffset), source.length) : pageStart;
+    let start = startOffset >= pageStart || (allowBeforePage && startOffset >= 0) ?
+      Math.min(Math.round(startOffset), source.length) : pageStart;
     const containingMarker = ReaderActionMarker.findRawRangeContaining(source, start);
     if (containingMarker.length >= 2) start = containingMarker[1];
     this.ttsTextStartOffset = start;
@@ -16987,10 +17167,27 @@ ${leading}` : leading;
     // another timer lets pagination/layout work overtake the focus update, so the previous sentence can remain
     // highlighted after the next sentence is already audible.
     if (!this.isCurrentTtsFocusSession(token, generation, chapterIndex, sourceIdentity)) {
+      if (this.isCrossChapterTtsFocusSession(token, generation, chapterIndex)) this.trackCrossChapterTtsChunk(chunk);
+      return;
+    }
+    if (this.ttsHoldingTurn) {
+      // 朗读不跟随时翻页不打断朗读：动画期间只记下最近一句，免得高亮、悬浮朗读和媒体信息的更新挤进动画帧。
+      this.ttsDeferredFocus = {
+        chunk: chunk, token: token, generation: generation, chapterIndex: chapterIndex, sourceIdentity: sourceIdentity
+      };
       return;
     }
     this.applyTtsChunkFocus(chunk);
     this.updateTtsFloatingSession();
+  }
+
+  /** 翻页落定后补上动画期间记下的那一句。 */
+  flushTtsDeferredFocus(): void {
+    const deferred = this.ttsDeferredFocus;
+    this.ttsDeferredFocus = null;
+    if (!deferred) return;
+    this.followTtsChunk(deferred.chunk, deferred.token, deferred.generation, deferred.chapterIndex,
+      deferred.sourceIdentity);
   }
 
   applyTtsChunkFocus(chunk: TtsChunk): void {
@@ -17004,10 +17201,14 @@ ${leading}` : leading;
     const firstFocusInSession = !this.ttsLastFocusChunk;
     this.ttsLastFocusChunk = chunk;
     this.ttsLastFocusPageIndex = pageIndex;
+    // 不跟随翻页时句子在看不见的那一页：只记下位置，不重建高亮层，免得翻页动画中途多一次重绘。
+    // 用户回到那一页（或朗读读到用户这页）时由 scheduleCurrentTtsFocusRepublishAfterPageTurn 补上。
+    const focusOffscreen = !this.usesReaderContinuousV2() && (this.ttsViewDetached || this.ttsHoldingTurn) &&
+      spreadPageIndex !== this.currentPageIndex;
     // Publish the destination range before mounting the incoming page. Both legacy text and V2 rectangles filter
     // the range by page, so it cannot leak onto the outgoing leaf; it does let the new sentence appear highlighted
     // during the turn instead of waiting until the animation has finished while audio continues playing.
-    this.updateTtsChunkHighlight(chunk, pageIndex);
+    this.updateTtsChunkHighlight(chunk, pageIndex, true, !focusOffscreen);
     if (this.usesReaderContinuousV2()) {
       this.followReaderContinuousTtsFocus(firstFocusInSession);
       return;
@@ -17060,6 +17261,7 @@ ${leading}` : leading;
     if (!this.isTtsSpeaking || !this.ttsAutoContinue || this.contentPages.length === 0) {
       return;
     }
+    if (this.ttsFocusChapterIndex >= 0 && this.ttsFocusChapterIndex !== this.currentChapterIndex) return;
     if (this.ttsManualPageTurnResumePending || this.isPageTurning || this.ttsAutoTurningPage ||
       this.ttsChapterSwitching) return;
     if (!this.ttsLastFocusChunk && !this.restorePersistedTtsFocus()) return;
@@ -17110,7 +17312,8 @@ ${leading}` : leading;
     return this.findPageIndexByOffset(absoluteStart);
   }
 
-  updateTtsChunkHighlight(chunk: TtsChunk, pageIndex: number, persistPosition: boolean = true): void {
+  updateTtsChunkHighlight(chunk: TtsChunk, pageIndex: number, persistPosition: boolean = true,
+    publish: boolean = true): void {
     const absoluteStart = this.readerV2TtsSourceOffset(chunk.start);
     const absoluteEnd = this.readerV2TtsSourceOffset(chunk.end);
     const pageStart = this.getPageStartOffset(pageIndex);
@@ -17128,6 +17331,7 @@ ${leading}` : leading;
     this.readerV2TtsSourceEnd = absoluteEnd;
     this.refreshReaderV2TtsOverlay();
     if (persistPosition) this.persistTtsReadPosition(absoluteStart, absoluteEnd);
+    if (!publish) return;
     this.publishTtsHighlightRenderChange();
     if (this.isPageTurning || this.ttsAutoTurningPage || this.ttsManualPageTurnResumePending) {
       this.scheduleTtsFocusRepublishAfterPageTurn(this.currentChapterIndex, pageIndex,
@@ -17219,7 +17423,7 @@ ${leading}` : leading;
     if (this.ttsViewDetached) {
       // 不跟随翻页：分页补完后页码会变，只更新高亮并重新判断，不把页面拉回朗读处。
       this.ttsLastFocusPageIndex = pageIndex;
-      this.updateTtsChunkHighlight(chunk, pageIndex, false);
+      this.updateTtsChunkHighlight(chunk, pageIndex, false, targetPageIndex === this.currentPageIndex);
       this.refreshTtsViewDetached(false);
       return;
     }
@@ -17236,16 +17440,19 @@ ${leading}` : leading;
     this.scheduleCurrentTtsFocusRepublishAfterPageTurn();
   }
 
-  persistTtsReadPosition(absoluteStart: number, absoluteEnd: number): void {
+  persistTtsReadPosition(absoluteStart: number, absoluteEnd: number,
+    chapterIndex: number = this.currentChapterIndex): void {
     if (!this.book) return;
-    const sourceLength = (this.pagedContentText || this.getPagedSourceText()).length;
+    // 跨章时朗读那一章不在内存里，量不到长度，不夹取。
+    const sourceLength = chapterIndex === this.currentChapterIndex ?
+      (this.pagedContentText || this.getPagedSourceText()).length : Number.MAX_SAFE_INTEGER;
     const start = Math.max(0, Math.min(Math.round(absoluteStart), sourceLength));
     const end = Math.max(start, Math.min(Math.round(absoluteEnd), sourceLength));
-    this.book.putVariable('ttsReadChapterIndex', `${this.currentChapterIndex}`);
+    this.book.putVariable('ttsReadChapterIndex', `${chapterIndex}`);
     this.book.putVariable('ttsReadOffsetStart', `${start}`);
     this.book.putVariable('ttsReadOffsetEnd', `${end}`);
     ReaderTtsFloatingSession.updatePosition(
-      this.ttsFloatingSessionOwnerId, this.currentChapterIndex, start, end);
+      this.ttsFloatingSessionOwnerId, chapterIndex, start, end);
     if (this.ttsProgressSaveTimerId >= 0) return;
     this.ttsProgressSaveTimerId = setTimeout(() => {
       this.ttsProgressSaveTimerId = -1;
@@ -17349,8 +17556,11 @@ ${leading}` : leading;
       return;
     }
     if (chapterIndex !== this.currentChapterIndex) {
-      // 后台朗读换章了：页面只能跟着换，不跟随翻页的状态随之结束（与本页朗读换章一致）。
-      this.clearTtsViewDetached();
+      // 不跟随翻页：读者在别的章节，后台朗读接着读它那章，页面不跟过去（高亮属于那一章，先收起）。
+      if (this.ttsViewDetached) {
+        this.clearMirroredTtsFocus();
+        return;
+      }
       const loaded = await this.loadContent(true, chapterIndex);
       if (serial !== this.mirroredTtsFocusSyncSerial) return;
       if (!loaded || this.currentChapterIndex !== chapterIndex) {
@@ -22968,6 +23178,11 @@ ${leading}` : leading;
       !this.shouldRenderTtsFocus() || this.readerTextSelectionActive) return;
     if (this.readerContinuousPointerAt <= this.ttsContinuousAutoScrolledAt ||
       Date.now() - this.readerContinuousPointerAt > 6000) return;
+    if (this.syncTtsCrossChapterState()) {
+      this.ttsViewDetached = true;
+      this.restartTtsDetachCountdown();
+      return;
+    }
     const range = this.readerContinuousTtsFocusWindowRange();
     if (range.length === 4) {
       if (range[1] > range[2] && range[0] < range[3]) return;
@@ -24824,6 +25039,7 @@ ${leading}` : leading;
     }
     this.runQueuedPageTurnLater();
     if (holdTtsAfterTurn) {
+      this.flushTtsDeferredFocus();
       // 排队中的下一次翻页落定时会再判断一次，这里不急着计时。
       if (!this.pageTurnQueue.hasPending()) this.refreshTtsViewDetached(true);
     } else if (resumeMirroredTtsAfterTurn) {

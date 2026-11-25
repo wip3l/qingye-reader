@@ -570,7 +570,7 @@ struct EpubOriginalReadBookPage {
   private ttsFocusSerial: number = 0;
   /** 朗读自己发起的翻页，提交时不当成用户翻页。 */
   private ttsTurnAt: number = 0;
-  @StorageProp('ttsTurnFollow') ttsTurnFollow: string = TtsTurnFollow.NOW;
+  @StorageProp('ttsTurnFollow') ttsTurnFollow: string = TtsTurnFollow.DEFAULT;
   /** 朗读设为不跟随/停留 3 秒后，用户在同一章内翻离了朗读那一页：朗读不再带着翻页，底部出胶囊。 */
   @State ttsViewDetached: boolean = false;
   /** “停留 3 秒后”的计时，胶囊据此画外圈；0 表示没在计时。 */
@@ -579,6 +579,12 @@ struct EpubOriginalReadBookPage {
   private ttsDetachCountdownTimer: number = -1;
   /** 按不跟随处理的翻页正在进行：这期间朗读的高亮不触发自动翻页。 */
   private ttsHoldingTurn: boolean = false;
+  /** 最近一次按不跟随处理的翻页开始的时间；翻进别的章节换槽位时据此认出是翻页，不是跳转。 */
+  private ttsHoldTurnAt: number = 0;
+  /** 翻页（含手指拖动）进行中：朗读胶囊这时藏起来，材质不用跟着翻动的正文每帧重算。 */
+  @State ttsCapsuleTurnHidden: boolean = false;
+  /** 不跟随的翻页进行中到来的最近一句高亮，落定后再标到网页里。 */
+  private ttsDeferredMark: number[] | null = null;
   /** 朗读正在念的那句所在页；没有时 -1。 */
   private ttsSpokenPage: number = -1;
   private ttsChapterWaiter: EpubTtsChapterWaiter | null = null;
@@ -2399,6 +2405,8 @@ struct EpubOriginalReadBookPage {
       // 朗读等的就是这一章：交回朗读接着念；否则是用户换了章、改了版式，朗读从新位置重开。
       const waiter = this.ttsChapterWaiter;
       if (waiter && waiter.index === slot.chapter) this.resolveTtsChapter(true);
+      // 朗读不跟随：翻页翻进了别的章节，朗读接着念原来那章。
+      else if (Date.now() - this.ttsHoldTurnAt < 3000 && this.shouldHoldTtsOnTurn()) this.refreshTtsViewDetached(true);
       else this.ttsUserMoved();
     };
     if (transition === 'cut') {
@@ -2672,15 +2680,20 @@ struct EpubOriginalReadBookPage {
 
   private onTurnActiveChanged(active: boolean): void {
     this.turnActive = active;
+    if (this.ttsCapsuleTurnHidden !== active) this.ttsCapsuleTurnHidden = active;
     if (active) {
       if (!(this.ttsTurnAt > 0 && Date.now() - this.ttsTurnAt < 3000) && this.shouldHoldTtsOnTurn()) {
         this.ttsHoldingTurn = true;
+        this.ttsHoldTurnAt = Date.now();
         this.cancelTtsDetachCountdown();
       }
       return;
     }
     if (this.ttsHoldingTurn) {
       this.ttsHoldingTurn = false;
+      const mark = this.ttsDeferredMark;
+      this.ttsDeferredMark = null;
+      if (mark && this.ttsActive) this.ttsFocus(mark[0], mark[1]);
       // 翻页没翻成（拖了又放回）时也要重新判断，计时接着走。
       this.refreshTtsViewDetached(true);
     }
@@ -4041,6 +4054,10 @@ struct EpubOriginalReadBookPage {
 
   /** 高亮正在念的那句；翻页模式下它到了下一页就翻过去（用户能看到时播翻页动画）。 */
   private ttsFocus(start: number, end: number): void {
+    if (this.ttsHoldingTurn) {
+      this.ttsDeferredMark = [start, end];
+      return;
+    }
     const slot = this.front();
     if (!this.alive || !slot.attached) return;
     const serial = ++this.ttsFocusSerial;
@@ -4096,17 +4113,20 @@ struct EpubOriginalReadBookPage {
     this.readAloud?.userMoved();
   }
 
-  /** 这次翻页是否按“不跟随/停留 3 秒后”处理：只管翻页模式下同一章内、引擎还握着语音的情况。 */
+  /** 这次翻页是否按“不跟随/停留 3 秒后”处理：翻页模式下、引擎还握着语音（含读者已在别的章节）。 */
   private shouldHoldTtsOnTurn(): boolean {
     const tts = this.readAloud;
     return TtsTurnFollow.normalize(this.ttsTurnFollow) !== TtsTurnFollow.NOW && this.paged && !!tts &&
-      tts.holdsSpeechIn(this.chapterIndex);
+      tts.speechChapter() >= 0;
   }
 
   private refreshTtsViewDetached(restartCountdown: boolean): void {
     const tts = this.readAloud;
-    const away = !!tts && tts.holdsSpeechIn(this.chapterIndex) && this.ttsSpokenPage >= 0 &&
-      this.ttsSpokenPage !== this.pageIndex;
+    const speechChapter = tts ? tts.speechChapter() : -1;
+    // 朗读在念别的章节：那一章的页码对这一章没有意义。
+    if (speechChapter >= 0 && speechChapter !== this.chapterIndex) this.ttsSpokenPage = -1;
+    const away = speechChapter >= 0 && (speechChapter !== this.chapterIndex ||
+      (this.ttsSpokenPage >= 0 && this.ttsSpokenPage !== this.pageIndex));
     if (!away) {
       this.clearTtsViewDetached();
       return;
@@ -4155,9 +4175,18 @@ struct EpubOriginalReadBookPage {
     }
   }
 
-  /** 胶囊“回到朗读处”：翻回朗读正在念的那一页，恢复跟随。 */
+  /** 胶囊“回到朗读处”：翻回朗读正在念的那一页（在别的章节时先打开那一章），恢复跟随。 */
   private ttsReturnToSpoken(): void {
     if (this.turnActive || this.transitioning) return;
+    const tts = this.readAloud;
+    const speechChapter = tts ? tts.speechChapter() : -1;
+    if (tts && speechChapter >= 0 && speechChapter !== this.chapterIndex) {
+      this.clearTtsViewDetached();
+      this.ttsOpenChapter(speechChapter).then((opened: boolean): void => {
+        if (opened) tts.refocus();
+      });
+      return;
+    }
     const page = this.ttsSpokenPage;
     this.clearTtsViewDetached();
     if (page >= 0 && page !== this.pageIndex) this.run(`__legado.goPage(${page}, false)`);
@@ -4183,13 +4212,14 @@ struct EpubOriginalReadBookPage {
       countdownKey: this.ttsDetachCountdownKey,
       countdownMs: TtsTurnFollow.DELAY_MS,
       darkMode: this.darkMode,
-      fallbackColor: this.solidPanelColor(),
+      panelColor: this.solidPanelColor(),
       textColor: ThemeRuntime.primaryTextColor(this.darkMode),
       dividerColor: this.darkMode ? '#26FFFFFF' : '#14000000',
       onBack: (): void => this.ttsReturnToSpoken(),
       onListenHere: (): void => this.ttsListenHere()
     })
       .position({ x: (this.viewWidth - ReaderTtsHoldCapsule.WIDTH) / 2, y: this.ttsHoldCapsuleTop() })
+      .visibility(this.ttsCapsuleTurnHidden ? Visibility.Hidden : Visibility.Visible)
       .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ y: 8 }))
         .animation({ duration: 180, curve: Curve.EaseOut }))
   }
@@ -4210,6 +4240,8 @@ struct EpubOriginalReadBookPage {
   /** 朗读换章：换到那一章开头，等它显示出来（用户看得到时与翻章一样滑过去）。 */
   private ttsOpenChapter(index: number): Promise<boolean> {
     if (!this.alive || !this.ready || index < 0 || index >= this.chapters.length) return Promise.resolve(false);
+    // 朗读把页面带去别的章节（读者不在下一章时朗读换章、目录选章、回到朗读处）：不跟随状态随之结束。
+    this.clearTtsViewDetached();
     return new Promise<boolean>((resolve) => {
       this.resolveTtsChapter(false);
       const waiter = new EpubTtsChapterWaiter(index, resolve);

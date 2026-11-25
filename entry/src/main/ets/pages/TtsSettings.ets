@@ -52,7 +52,7 @@ struct TtsSettingsPage {
   @StorageLink('ttsStyle') ttsStyle: string = '';
   @StorageLink('ttsLanguage') ttsLanguage: string = 'zh-CN';
   @StorageLink('ttsSpeed') ttsSpeed: number = 1;
-  @StorageProp('ttsTurnFollow') ttsTurnFollow: string = 'now';
+  @StorageProp('ttsTurnFollow') ttsTurnFollow: string = 'off';
   @StorageLink('ttsInstalledVoiceKeys') ttsInstalledVoiceKeys: string = '';
   @StorageLink('ttsCustomVoiceId') @Watch('onCustomVoiceSelectionChanged') ttsCustomVoiceId: string = '';
   @StorageLink('ttsCustomVoices') @Watch('onCustomVoicesStorageChanged') ttsCustomVoices: string = '';

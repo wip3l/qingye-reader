@@ -653,8 +653,11 @@ export class SystemTtsReader {
           this.systemCurrentPcmSequences.length + 1);
         this.systemCurrentPcmBytes += audioData.byteLength;
         this.armSpeakWatchdog(generation, this.currentFocusChunkIndex);
-        console.info(`[TTS] pcm data buffered: sequence=${response ? response.sequence : -1},` +
-          `bytes=${audioData.byteLength},total=${this.systemCurrentPcmBytes}`);
+        // 引擎每句会回调几十段数据，都在主线程上；只记第一段，逐段打日志会和翻页动画抢帧。
+        if (this.systemCurrentPcmBuffers.length === 1) {
+          console.info(`[TTS] pcm data buffered: sequence=${response ? response.sequence : -1},` +
+            `bytes=${audioData.byteLength}`);
+        }
       }
     });
   }

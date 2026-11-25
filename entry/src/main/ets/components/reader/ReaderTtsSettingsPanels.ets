@@ -42,7 +42,7 @@ export struct ReaderTtsQuickSettingsPanel {
   // 音量增益是进程内的全局设置，直接读写，不经页面转发。
   @StorageProp('ttsLoudnessGain') ttsLoudnessGain: number = 0;
   @StorageProp('ttsLoudnessGainSupported') ttsLoudnessGainSupported: boolean = true;
-  @StorageProp('ttsTurnFollow') ttsTurnFollow: string = 'now';
+  @StorageProp('ttsTurnFollow') ttsTurnFollow: string = 'off';
   /** 拖动滑条时的显示值；-1 表示没在拖。 */
   @State gainDraft: number = -1;
 

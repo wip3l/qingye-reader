@@ -424,12 +424,14 @@ export class EpubOriginalReadAloud {
   // ---- 引擎回报 ----
 
   private onChunk(chunk: TtsChunk, token: number): void {
-    if (token !== this.token || this.chapter !== this.host.chapterIndex()) return;
+    if (token !== this.token) return;
     const start = this.begin + chunk.start;
     const end = this.begin + chunk.end;
     this.focusStart = start;
     this.focusEnd = end;
     this.spokenEnd = Math.max(this.spokenEnd, end);
+    // 读者翻去了别的章节（朗读设为不跟随）：照常记位置，只是不往正在显示的那章里标高亮。
+    if (this.chapter !== this.host.chapterIndex()) return;
     this.host.focus(start, end, this.text);
     this.publishDetails();
   }
@@ -439,7 +441,9 @@ export class EpubOriginalReadAloud {
     // 有的朗读通道会提前报完成：章末没确认念到就从最后一句重读，不吞掉没念的结尾。
     // 全部语音已写进渲染器才报的完成（见 SystemTtsReader.finishWhenQueued）：结尾还在放，不算提前完成。
     const queuedTail = this.engine?.finishedWithQueuedTail() === true;
-    if (!queuedTail && this.expectedEnd >= 0 && this.spokenEnd < this.expectedEnd - 4) {
+    // 读者在别的章节时补读不了（补读按正在显示的章节取文字），直接接下一章。
+    if (!queuedTail && this.expectedEnd >= 0 && this.spokenEnd < this.expectedEnd - 4 &&
+      this.chapter === this.host.chapterIndex()) {
       if (this.tailRetries < TAIL_RETRIES) {
         this.tailRetries++;
         console.warn(`[EpubTts] finished before chapter tail: spoken=${this.spokenEnd}, expected=${this.expectedEnd}`);
@@ -468,7 +472,8 @@ export class EpubOriginalReadAloud {
     let opened = false;
     try {
       this.mediaSession().updatePlaybackState(avSession.PlaybackState.PLAYBACK_STATE_BUFFERING).catch((): void => {});
-      opened = await this.openChapterOnHost(next);
+      // 读者已经翻到下一章（朗读不跟随）：直接从那章开头接着念，页面不动。
+      opened = this.host.chapterIndex() === next ? true : await this.openChapterOnHost(next);
     } finally {
       this.switching = false;
     }
@@ -522,8 +527,19 @@ export class EpubOriginalReadAloud {
    * 而不是调 userMoved 从新位置重开。
    */
   holdsSpeechIn(chapter: number): boolean {
-    return this.active() && this.speaking && this.moveTimer < 0 && !this.switching &&
-      this.chapter >= 0 && this.chapter === chapter;
+    return this.speechChapter() >= 0 && this.chapter === chapter;
+  }
+
+  /** 引擎里握着语音的那一章；没有时 -1。读者翻去别的章节时它可以和正在显示的章节不同。 */
+  speechChapter(): number {
+    return this.active() && this.speaking && this.moveTimer < 0 && !this.switching && this.chapter >= 0 ?
+      this.chapter : -1;
+  }
+
+  /** 页面换回朗读那一章后，把正在念的那句重新标出来（并让页面翻到那里）。 */
+  refocus(): void {
+    if (this.chapter !== this.host.chapterIndex() || this.focusStart < 0) return;
+    this.host.focus(this.focusStart, this.focusEnd, this.text);
   }
 
   private cancelMoveRestart(): void {

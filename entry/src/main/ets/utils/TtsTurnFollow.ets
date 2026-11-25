@@ -2,9 +2,9 @@ import { preferences } from '@kit.ArkData';
 
 /**
  * 朗读中手动翻页后，朗读要不要跟到新页（存本机，三档）：
- * - now：立即跟随，从翻到的这一页页首重新读（原有做法，默认）；
+ * - now：立即跟随，从翻到的这一页页首重新读（原有做法）；
  * - delay：先不打断，在一页停留 DELAY_MS 没再翻页才跟过来，期间可回到朗读处；
- * - off：不跟随，朗读接着读原处，要换位置时点“从本页听”。
+ * - off：不跟随，朗读接着读原处，要换位置时点“从本页听”（默认）。
  * 不跟随期间阅读页底部显示“回到朗读处 | 从本页听”胶囊。
  * 这个键单独存取（同 LocalTtsSelection），免得整体保存朗读设置的页面把它覆盖掉。
  */
@@ -13,6 +13,7 @@ export class TtsTurnFollow {
   static readonly DELAY: string = 'delay';
   static readonly OFF: string = 'off';
   static readonly STORAGE_KEY: string = 'ttsTurnFollow';
+  static readonly DEFAULT: string = TtsTurnFollow.OFF;
   static readonly DELAY_MS: number = 3000;
   static readonly LABELS: string[] = ['立即跟随', '停留 3 秒后', '不跟随'];
   private static readonly VALUES: string[] = [TtsTurnFollow.NOW, TtsTurnFollow.DELAY, TtsTurnFollow.OFF];
@@ -21,16 +22,16 @@ export class TtsTurnFollow {
   static async load(context: Context): Promise<void> {
     try {
       const store = await preferences.getPreferences(context, TtsTurnFollow.STORE_NAME);
-      const value = await store.get(TtsTurnFollow.STORAGE_KEY, TtsTurnFollow.NOW) as string;
+      const value = await store.get(TtsTurnFollow.STORAGE_KEY, TtsTurnFollow.DEFAULT) as string;
       AppStorage.setOrCreate(TtsTurnFollow.STORAGE_KEY, TtsTurnFollow.normalize(value));
     } catch (error) {
       console.warn('[TTS] load turn follow mode failed:', error);
-      AppStorage.setOrCreate(TtsTurnFollow.STORAGE_KEY, TtsTurnFollow.NOW);
+      AppStorage.setOrCreate(TtsTurnFollow.STORAGE_KEY, TtsTurnFollow.DEFAULT);
     }
   }
 
   static normalize(value: string): string {
-    return TtsTurnFollow.VALUES.indexOf(value) >= 0 ? value : TtsTurnFollow.NOW;
+    return TtsTurnFollow.VALUES.indexOf(value) >= 0 ? value : TtsTurnFollow.DEFAULT;
   }
 
   static current(): string {
@@ -42,7 +43,7 @@ export class TtsTurnFollow {
   }
 
   static valueAt(index: number): string {
-    return TtsTurnFollow.VALUES[index] ?? TtsTurnFollow.NOW;
+    return TtsTurnFollow.VALUES[index] ?? TtsTurnFollow.DEFAULT;
   }
 
   static description(value: string): string {
