@@ -17,6 +17,9 @@ import { CloudAutoSync, CloudRemoteFont } from '../account/CloudAutoSync';
 import { CloudDownloadQueue } from '../account/CloudDownloadQueue';
 import { copyFile, selectDocuments } from '../platform/Files';
 
+/** 一次最多选多少个字体文件。 */
+const CUSTOM_FONT_IMPORT_MAX_FILES: number = 100;
+
 class ReaderCustomFontItem {
   familyName: string = '';
   filePath: string = '';
@@ -50,6 +53,8 @@ struct CustomFontManagerPage {
   @State deleteParticleBursts: DeleteParticleBurst[] = [];
   @State refreshingCloudFonts: boolean = false;
   @State cloudFontError: string = '';
+  /** 多选上传进行中，期间再点上传不响应。 */
+  @State fontImporting: boolean = false;
   @StorageLink('cloudDownloadQueueRaw') @Watch('onCloudDownloadQueueChanged') cloudDownloadQueueRaw: string = '[]';
   @StorageLink('cloudDownloadStatus') cloudDownloadStatus: string = '';
   private fontComponentActive: boolean = false;
@@ -298,42 +303,89 @@ struct CustomFontManagerPage {
   }
 
   async pickCustomFont(): Promise<void> {
+    if (this.fontImporting) {
+      return;
+    }
+    let result: string[] = [];
     try {
       const options: picker.DocumentSelectOptions = new picker.DocumentSelectOptions();
       options.fileSuffixFilters = ['字体文件|.ttf', '字体文件|.otf', '字体文件|.ttc'];
-      options.maxSelectNumber = 1;
-      const result = await selectDocuments(getContext(this), options);
-      if (!result || result.length === 0) {
-        return;
-      }
-      const sourceUri = result[0];
-      const context = getContext(this);
-      const dir = `${context.filesDir}/reader_fonts`;
+      options.maxSelectNumber = CUSTOM_FONT_IMPORT_MAX_FILES;
+      result = await selectDocuments(getContext(this), options);
+    } catch (e) {
+      console.error('选择字体失败:', e);
+      HdsFeedback.showToast('上传字体失败');
+      return;
+    }
+    if (!result || result.length === 0) {
+      return;
+    }
+    this.fontImporting = true;
+    const context = getContext(this);
+    const dir = `${context.filesDir}/reader_fonts`;
+    const added: ReaderCustomFontItem[] = [];
+    let failed = 0;
+    let registerFailed = 0;
+    try {
       await this.ensureDir(dir);
-      const sourceName = await this.resolvePickedFontName(sourceUri);
-      const destName = await this.uniqueFontFileName(dir, this.asciiStoredFontName(sourceName, Date.now()));
-      const destPath = `${dir}/${destName}`;
-      const copySource = sourceUri.startsWith('/') ? fileUri.getUriFromPath(sourceUri) : sourceUri;
-      await copyFile(copySource, fileUri.getUriFromPath(destPath));
-      const familyName = this.familyNameForPath(destPath);
-
-      const item = new ReaderCustomFontItem();
-      item.familyName = familyName;
-      item.filePath = destPath;
-      item.sourceName = ReaderFontHelper.resolveDisplayName(sourceName, destPath);
-      const next = this.customFonts.slice();
-      next.push(item);
-      this.saveCustomFonts(next);
-      CloudAutoSync.schedule(getContext(this));
-      if (this.registerCustomFont(item)) {
-        HdsFeedback.showToast('已上传字体，可返回阅读设置选择');
-      } else {
-        HdsFeedback.showToast('字体已保存，但注册失败');
+      for (let i = 0; i < result.length; i++) {
+        const sourceUri = result[i];
+        let destPath = '';
+        try {
+          const sourceName = await this.resolvePickedFontName(sourceUri);
+          // Salt with the index too: several picks finish within the same millisecond.
+          const destName = await this.uniqueFontFileName(dir, this.asciiStoredFontName(sourceName, Date.now() + i));
+          destPath = `${dir}/${destName}`;
+          const copySource = sourceUri.startsWith('/') ? fileUri.getUriFromPath(sourceUri) : sourceUri;
+          await copyFile(copySource, fileUri.getUriFromPath(destPath));
+          const item = new ReaderCustomFontItem();
+          item.familyName = this.familyNameForPath(destPath);
+          item.filePath = destPath;
+          item.sourceName = ReaderFontHelper.resolveDisplayName(sourceName, destPath);
+          if (!this.registerCustomFont(item)) {
+            registerFailed++;
+          }
+          added.push(item);
+        } catch (e) {
+          console.error('上传字体失败:', sourceUri, e);
+          failed++;
+          if (destPath) {
+            try {
+              fs.unlinkSync(destPath);
+            } catch (cleanupError) {
+              // The copy never created the file.
+            }
+          }
+        }
       }
     } catch (e) {
       console.error('上传字体失败:', e);
-      HdsFeedback.showToast('上传字体失败');
+      failed = result.length - added.length;
+    } finally {
+      this.fontImporting = false;
     }
+    if (added.length > 0) {
+      this.saveCustomFonts(this.customFonts.concat(added));
+      CloudAutoSync.schedule(context);
+    }
+    HdsFeedback.showToast(this.importResultMessage(result.length, added.length, failed, registerFailed));
+  }
+
+  importResultMessage(total: number, added: number, failed: number, registerFailed: number): string {
+    if (added === 0) {
+      return total > 1 ? `${total} 个字体都没能上传` : '上传字体失败';
+    }
+    if (total === 1) {
+      return registerFailed > 0 ? '字体已保存，但注册失败' : '已上传字体，可返回阅读设置选择';
+    }
+    let message = `已上传 ${added} 个字体`;
+    if (failed > 0) {
+      message += `，${failed} 个失败`;
+    }
+    if (registerFailed > 0) {
+      message += `，${registerFailed} 个注册失败`;
+    }
+    return message;
   }
 
   async deleteCustomFont(item: ReaderCustomFontItem): Promise<void> {
@@ -670,7 +722,7 @@ struct CustomFontManagerPage {
         Text('上传字体')
           .fontSize(AppFontSize.BODY_LARGE)
           .fontColor(this.primaryTextColor())
-        Text('支持 ttf / otf / ttc，上传后会出现在阅读设置的字体下拉框中')
+        Text(this.fontImporting ? '正在上传…' : '支持 ttf / otf / ttc，可一次选多个，上传后会出现在阅读设置的字体下拉框中')
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
           .margin({ top: AppSpacing.XS })
