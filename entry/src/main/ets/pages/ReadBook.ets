@@ -17,6 +17,7 @@ import {
 } from '../components/reader/ReaderShelfCoverOpening';
 import { ReaderCacheCoordinator } from '../core/book/ReaderCacheCoordinator';
 import { BookCoverResolver } from '../utils/BookCoverResolver';
+import { BookDisplayHelper } from '../utils/BookDisplayHelper';
 import { ReaderFrontPage, ReaderFrontPageSpec } from '../core/reader/ReaderFrontPage';
 import { ReaderFrontPageText } from '../core/reader/ReaderFrontPageText';
 import { ReaderChapterEnd, ReaderChapterEndSpec } from '../core/reader/ReaderChapterEnd';
@@ -371,9 +372,14 @@ class ReaderAnnotationChapterRanges {
   ranges: BookAnnotationRange[] = [];
 }
 const READER_IDLE_WORK_RETRY_MS = 120;
-/** 等书封扉页封面超时的占位结果（真实路径不会是这个值）。 */
-const READER_FRONT_COVER_PENDING = '\u0000pending';
 const READER_FRONT_COVER_WAIT_MS = 300;
+
+/** 书封扉页用的本机文件：封面图与主题书框；pending 表示等超时了还没准备好。 */
+class ReaderFrontCoverFiles {
+  cover: string = '';
+  frame: string = '';
+  pending: boolean = false;
+}
 // 翻页动画进行中，后台分页的每次同步排版（2–7ms）只在帧内还剩这么多空闲时才开始；一直没有就最多等 32ms。
 const READER_PAGINATION_MOTION_IDLE_MS = 5;
 // 连续快翻时卷页动画的时长比例，以及动画中途被下一次翻页催促时走完整页的时长。
@@ -1248,8 +1254,10 @@ struct ReadBookPage {
   @StorageLink('readerQuickBookmarkEnabled') readerQuickBookmarkEnabled: boolean = true;
   @StorageLink('readerScrollTapTurn') readerScrollTapTurn: boolean = false;
   @StorageLink('readerFrontPageEnabled') @Watch('onReaderFrontPageEnabledChanged') readerFrontPageEnabled: boolean = true;
-  /** 书封扉页上用的本机封面文件；空串画文字封面。 */
+  /** 书封扉页上用的本机封面文件；空串画首字色块。 */
   private readerFrontCoverPath: string = '';
+  /** 书封扉页上叠的本机主题书框文件；空串不叠。 */
+  private readerFrontFramePath: string = '';
   private readerFrontCoverSerial: number = 0;
   private readerFrontSpecInputs: string = '';
   private readerFrontSpecCache: ReaderFrontPageSpec | null = null;
@@ -2291,8 +2299,9 @@ struct ReadBookPage {
       this.chapters = engine.chapters;
       this.initializeReaderComicMode();
       await this.initializeReaderTextConvert();
-      // 书封扉页的封面：没读过的书一打开就停在扉页，稍等一下封面（多半已在书架缓存里），免得先闪文字封面。
+      // 书封扉页的封面：没读过的书一打开就停在扉页，稍等一下封面（多半已在书架缓存里），免得先闪首字色块。
       this.readerFrontCoverPath = '';
+      this.readerFrontFramePath = '';
       if (this.readerFrontPageEnabled && !this.isReaderComicModeActive()) {
         await this.resolveReaderFrontCover(Book.hasStartedReading(this.book) ? 0 : READER_FRONT_COVER_WAIT_MS);
       }
@@ -8499,8 +8508,8 @@ struct ReadBookPage {
     const intro = this.book.getDisplayIntro() || '';
     const accent = ReaderV2Color.parse(this.accentColor(), 0xFF2E5A88);
     const inputs = [this.book.bookUrl, this.book.name, this.book.author, this.book.kind, this.book.wordCount,
-      `${this.chapters.length}`, `${intro.length}`, intro.substring(0, 32), `${accent}`, this.readerFrontCoverPath]
-      .join('\u0001');
+      `${this.chapters.length}`, `${intro.length}`, intro.substring(0, 32), `${accent}`, this.readerFrontCoverPath,
+      this.readerFrontFramePath].join('\u0001');
     if (this.readerFrontSpecCache && inputs === this.readerFrontSpecInputs) return this.readerFrontSpecCache;
     const spec = new ReaderFrontPageSpec();
     spec.title = (this.book.name || '').trim();
@@ -8509,6 +8518,9 @@ struct ReadBookPage {
     spec.tags = ReaderFrontPageText.tags(this.book.kind);
     spec.intro = intro;
     spec.coverPath = this.readerFrontCoverPath;
+    spec.framePath = this.readerFrontFramePath;
+    // 首字色块与书架同一套按书名取色。
+    spec.coverColor = ReaderV2Color.parse(BookDisplayHelper.initialCoverColor(this.book.name), 0xFF007DFF);
     spec.accentColor = accent;
     this.readerFrontSpecInputs = inputs;
     this.readerFrontSpecCache = spec;
@@ -8578,30 +8590,45 @@ struct ReadBookPage {
   }
 
   /**
-   * 找扉页用的封面：与书架同一套规则（自定义封面、主题封面、图集），转成本机文件。waitMs 内拿到就直接用，
-   * 拿不到先画文字封面，到了再把已排好的扉页就地换图。
+   * 找扉页用的封面：跟书架上这本书显示的一样（同一张图，多图取轮播正停着的那张，同一个主题书框，没有封面时首字色块），
+   * 转成本机文件。书架没挂载或书不在书架上时按书架同一套规则自己取（自定义封面、主题封面、图集，跟随应用深浅色）。
+   * waitMs 内拿到就直接用，拿不到先画首字色块，到了再把已排好的扉页就地换图。
    */
   async resolveReaderFrontCover(waitMs: number): Promise<void> {
     const book = this.book;
     if (!book || !this.readerFrontPageEnabled) return;
     const serial = ++this.readerFrontCoverSerial;
-    const raw = BookCoverResolver.first(book, this.isReaderThemeDark());
+    const look = ShelfCoverLocator.look(book.bookUrl);
+    const rawCover: ResourceStr = look ? look.cover : BookCoverResolver.first(book);
+    const rawFrame: ResourceStr = look ? look.frame : ThemeBookCoverSettings.frameIf(this.appDarkMode);
     const context = getContext(this);
-    const task: Promise<string> = BookCoverResolver.prepareFile(context, raw)
-      .catch((error: Error): string => {
-        console.warn('准备书封扉页封面失败:', error);
+    const prepare = (raw: ResourceStr, label: string): Promise<string> =>
+      BookCoverResolver.prepareFile(context, raw).catch((error: Error): string => {
+        console.warn(`准备书封扉页${label}失败:`, error);
         return '';
       });
-    const apply = (path: string): void => {
-      if (serial !== this.readerFrontCoverSerial || this.book !== book || path === this.readerFrontCoverPath) return;
-      this.applyReaderFrontCover(path);
+    const task: Promise<ReaderFrontCoverFiles> = Promise.all([prepare(rawCover, '封面'), prepare(rawFrame, '书框')])
+      .then((paths: string[]): ReaderFrontCoverFiles => {
+        const files = new ReaderFrontCoverFiles();
+        files.cover = paths[0];
+        files.frame = paths[1];
+        return files;
+      });
+    const apply = (files: ReaderFrontCoverFiles): void => {
+      if (serial !== this.readerFrontCoverSerial || this.book !== book) return;
+      if (files.cover === this.readerFrontCoverPath && files.frame === this.readerFrontFramePath) return;
+      this.applyReaderFrontCover(files.cover, files.frame);
     };
     if (waitMs > 0) {
-      const timeout = new Promise<string>((resolve: (value: string) => void): void => {
-        setTimeout((): void => resolve(READER_FRONT_COVER_PENDING), waitMs);
+      const timeout = new Promise<ReaderFrontCoverFiles>((resolve: (value: ReaderFrontCoverFiles) => void): void => {
+        setTimeout((): void => {
+          const pending = new ReaderFrontCoverFiles();
+          pending.pending = true;
+          resolve(pending);
+        }, waitMs);
       });
       const early = await Promise.race([task, timeout]);
-      if (early !== READER_FRONT_COVER_PENDING) {
+      if (!early.pending) {
         apply(early);
         return;
       }
@@ -8609,9 +8636,10 @@ struct ReadBookPage {
     task.then(apply);
   }
 
-  /** 换上新的封面文件：已排好的扉页（翻页的扉页、滚动阅读第一块里的扉页）就地换图，再重画。 */
-  applyReaderFrontCover(path: string): void {
+  /** 换上新的封面与书框文件：已排好的扉页（翻页的扉页、滚动阅读第一块里的扉页）就地换图，再重画。 */
+  applyReaderFrontCover(path: string, frame: string): void {
     this.readerFrontCoverPath = path;
+    this.readerFrontFramePath = frame;
     const spec = this.readerFrontPageSpecFor(0);
     if (!spec) return;
     const update = (page: ReaderV2PageLayout | undefined): void => {
@@ -8620,12 +8648,13 @@ struct ReadBookPage {
       for (const decoration of page.decorations) {
         if (decoration.kind === ReaderFrontPage.KIND_COVER) {
           decoration.image = path;
+          decoration.frame = frame;
           changed = true;
         }
       }
       // 换了封面图的页要换标识，常驻页和翻页纹理才不会沿用旧图。
       if (changed && page.frontPage) {
-        page.identity = `${page.identity.replace(/_cover_[0-9a-z]*$/, '')}_cover_${ReaderFrontPage.hash(path)}`;
+        page.identity = `${page.identity.replace(/_cover_[0-9a-z]*$/, '')}_cover_${ReaderFrontPage.coverHash(path, frame)}`;
       }
     };
     for (const pageSet of this.readerV2PageSetCache.values()) update(pageSet.pages[0]);

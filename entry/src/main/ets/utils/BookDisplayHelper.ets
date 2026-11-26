@@ -236,6 +236,17 @@ export class BookDisplayHelper {
     return cleaned[index];
   }
 
+  /** 没有封面时书架画的首字色块的底色（按书名取色），阅读页扉页的书封跟着用。 */
+  static initialCoverColor(name: string): string {
+    if (!name) return '#007DFF';
+    const colors = ['#007DFF', '#E53935', '#43A047', '#EF6C00', '#8E24AA', '#00ACC1', '#D81B60', '#5E35B1'];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return colors[Math.abs(hash) % colors.length];
+  }
+
   static getTagTextColor(index: number, darkMode: boolean): string {
     const dark = ['#8FB4FF', '#7DD89B', '#FFCA80', '#D6A4FF', '#80D8E8', '#FF9EA8'];
     const light = ['#3568D4', '#0A7D36', '#A15C00', '#7434A4', '#006C7A', '#B32636'];

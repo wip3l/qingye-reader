@@ -1,6 +1,6 @@
 import { WebParseSettingsStore } from '../../utils/WebParseSettingsStore';
 import { SharedElementMotion } from '../../utils/SharedElementMotion';
-import { ShelfCoverLocator } from '../../utils/ShelfCoverLocator';
+import { ShelfCoverLocator, ShelfCoverLook } from '../../utils/ShelfCoverLocator';
 import { ShelfBookPerspective, ShelfBookShape } from '../../utils/ShelfBookPerspective';
 import { PdfPagePosition } from '../../core/book/pdf/PdfModels';
 import {
@@ -795,6 +795,7 @@ export struct BookshelfPage {
   private shelfJitterSeeds: Map<string, number> = new Map();
 
   private readonly shelfCoverLocate = (bookUrl: string): ShelfOpeningCover | null => this.locateShelfCover(bookUrl);
+  private readonly shelfCoverLookup = (bookUrl: string): ShelfCoverLook | null => this.shelfCoverLook(bookUrl);
   /** 首页根节点整张截图（含标签栏），阅读页放大、缩回时垫在后面；被盖住的页面照样能离屏截图。 */
   private readonly shelfBackdropSnapshot = (): Promise<image.PixelMap> =>
     this.getUIContext().getComponentSnapshot().get('home_root', { scale: 1, waitUntilRenderFinished: true });
@@ -817,7 +818,7 @@ export struct BookshelfPage {
 
   aboutToAppear() {
     this.shelfComponentActive = true;
-    ShelfCoverLocator.register(this.shelfCoverLocate, this.shelfBackdropSnapshot);
+    ShelfCoverLocator.register(this.shelfCoverLocate, this.shelfBackdropSnapshot, this.shelfCoverLookup);
     ReaderOpenSnapshotStore.prepare(getContext(this)).catch((): void => {});
     // 开书时要据此判断关书截图里有没有护眼滤层，先读好。
     ReaderEyeCare.load(getContext(this));
@@ -5910,13 +5911,7 @@ export struct BookshelfPage {
   }
 
   getBookColor(name: string): string {
-    if (!name) return '#007DFF';
-    const colors = ['#007DFF', '#E53935', '#43A047', '#EF6C00', '#8E24AA', '#00ACC1', '#D81B60', '#5E35B1'];
-    let hash = 0;
-    for (let i = 0; i < name.length; i++) {
-      hash = name.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return colors[Math.abs(hash) % colors.length];
+    return BookDisplayHelper.initialCoverColor(name);
   }
 
   getDisplayTags(book: Book): string[] {
@@ -7997,6 +7992,15 @@ export struct BookshelfPage {
     if (!book) return null;
     const cover = this.shelfOpeningCover(book, -1, -1);
     return cover.boundsWidth > 0 && cover.boundsHeight > 0 ? cover : null;
+  }
+
+  /** 阅读页扉页的书封跟书架一致：同一张图（多图取轮播正停着的那张）、同一个主题书框，没有封面时为空。 */
+  shelfCoverLook(bookUrl: string): ShelfCoverLook | null {
+    const book = this.allBooks.find((item: Book): boolean => item.bookUrl === bookUrl);
+    if (!book) return null;
+    const cover: ResourceStr = this.shouldUseThemeBookCoverFor(book) ? this.themeCoverShown(book) :
+      this.galleryCoverShown(book);
+    return { cover: cover, frame: this.activeThemeShelfFrame() };
   }
 
   /** 阅读页翻开的封面与书架上看到的一致：开着主题边框时带书框，多图取轮播正停着的那张，没有封面时用首字色块。 */

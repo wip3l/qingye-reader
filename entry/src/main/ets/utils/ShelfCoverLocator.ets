@@ -7,20 +7,41 @@ import { ShelfOpeningCover } from '../components/reader/ReaderShelfCoverOpening'
  * shrinking page (a covered router page is not rendered, but it can still be snapshotted offscreen). The shelf
  * registers both while it is mounted. A process-wide module: page-file statics are recreated per page instance.
  */
+/** 书架上这本书现在显示的封面：多图取轮播正停着的那张；cover 为空串表示书架画的是首字色块。 */
+export interface ShelfCoverLook {
+  cover: ResourceStr;
+  /** 主题书框，没有时为空串。 */
+  frame: ResourceStr;
+}
+
 export class ShelfCoverLocator {
   private static measure: ((bookUrl: string) => ShelfOpeningCover | null) | null = null;
   private static snapshot: (() => Promise<image.PixelMap>) | null = null;
+  private static lookup: ((bookUrl: string) => ShelfCoverLook | null) | null = null;
 
   static register(measure: (bookUrl: string) => ShelfOpeningCover | null,
-    snapshot: (() => Promise<image.PixelMap>) | null = null): void {
+    snapshot: (() => Promise<image.PixelMap>) | null = null,
+    lookup: ((bookUrl: string) => ShelfCoverLook | null) | null = null): void {
     ShelfCoverLocator.measure = measure;
     ShelfCoverLocator.snapshot = snapshot;
+    ShelfCoverLocator.lookup = lookup;
   }
 
   static unregister(measure: (bookUrl: string) => ShelfOpeningCover | null): void {
     if (ShelfCoverLocator.measure !== measure) return;
     ShelfCoverLocator.measure = null;
     ShelfCoverLocator.snapshot = null;
+    ShelfCoverLocator.lookup = null;
+  }
+
+  /** 书架上这本书现在显示的封面（不管在不在屏幕内）；书架没挂载或书不在书架上时为 null。 */
+  static look(bookUrl: string): ShelfCoverLook | null {
+    if (!ShelfCoverLocator.lookup || !bookUrl) return null;
+    try {
+      return ShelfCoverLocator.lookup(bookUrl);
+    } catch (_) {
+      return null;
+    }
   }
 
   /** The cover's current window bounds (vp), or null when the shelf is not mounted or the cover is not on screen. */

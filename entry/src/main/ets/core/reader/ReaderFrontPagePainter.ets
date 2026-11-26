@@ -16,7 +16,7 @@ export class ReaderFrontPagePainter {
     const spineRadius = Math.max(1, width * 0.02);
     const edgeRadius = Math.max(2, width * 0.04);
     const shape = ReaderFrontPagePainter.bookShape(rect, spineRadius, edgeRadius);
-    const base = ReaderFrontPagePainter.coverBase(decoration.color);
+    const base = (0xFF000000 | (decoration.color & 0x00FFFFFF)) >>> 0;
 
     // 落地投影：一层大而淡的环境阴影，一层贴边的接触阴影。投影画在实心底色上，图片随后盖住底色。
     const ambient = new drawing.Brush();
@@ -40,7 +40,7 @@ export class ReaderFrontPagePainter {
     clip.addRoundRect(shape);
     canvas.clipPath(clip, drawing.ClipOp.INTERSECT, true);
     const drawn = ReaderFrontPagePainter.coverImage(canvas, decoration.image, rect);
-    if (!drawn) ReaderFrontPagePainter.generatedCover(canvas, rect, base);
+    if (!drawn) ReaderFrontPagePainter.initialCover(canvas, rect, base);
     // 书脊折痕与左上角的纸面反光。
     ReaderFrontPagePainter.gradientRect(canvas, rect.left, rect.top, rect.left + width * 0.1, rect.bottom,
       { x: rect.left, y: rect.top }, { x: rect.left + width * 0.1, y: rect.top },
@@ -48,6 +48,8 @@ export class ReaderFrontPagePainter {
     ReaderFrontPagePainter.gradientRect(canvas, rect.left, rect.top, rect.right, rect.bottom,
       { x: rect.left, y: rect.top }, { x: rect.left + width * 0.55, y: rect.top + height * 0.38 },
       [0x24FFFFFF, 0x00FFFFFF], [0, 1]);
+    // 主题书框和书架一样不论封面来源都套，拉伸铺满。
+    ReaderFrontPagePainter.frameImage(canvas, decoration.frame, rect);
     canvas.restore();
     return drawn;
   }
@@ -156,21 +158,28 @@ export class ReaderFrontPagePainter {
     return true;
   }
 
-  /** 文字封面的底：强调色压暗的斜向渐变，加一圈内框线。 */
-  private static generatedCover(canvas: drawing.Canvas, rect: ReaderV2Rect, base: number): void {
-    const width = rect.right - rect.left;
-    const height = rect.bottom - rect.top;
-    ReaderFrontPagePainter.gradientRect(canvas, rect.left, rect.top, rect.right, rect.bottom,
-      { x: rect.left, y: rect.top }, { x: rect.right, y: rect.bottom },
-      [ReaderFrontPagePainter.shade(base, 1.18), base, ReaderFrontPagePainter.shade(base, 0.74)], [0, 0.55, 1]);
-    const inset = Math.min(width, height) * 0.07;
-    const pen = new drawing.Pen();
-    pen.setAntiAlias(true);
-    pen.setStrokeWidth(Math.max(1, width * 0.006));
-    pen.setColor(ReaderFrontPagePainter.argb(0x59F1ECE2));
-    canvas.attachPen(pen);
-    canvas.drawRect(rect.left + inset, rect.top + inset, rect.right - inset, rect.bottom - inset);
-    canvas.detachPen();
+  /** 没有封面图时的底：和书架首字色块一样的纯色（首字由 KIND_COVER_TEXT 画）。 */
+  private static initialCover(canvas: drawing.Canvas, rect: ReaderV2Rect, base: number): void {
+    const brush = new drawing.Brush();
+    brush.setAntiAlias(true);
+    brush.setColor(ReaderFrontPagePainter.argb(base));
+    canvas.attachBrush(brush);
+    canvas.drawRect(rect.left, rect.top, rect.right, rect.bottom);
+    canvas.detachBrush();
+  }
+
+  private static frameImage(canvas: drawing.Canvas, path: string, rect: ReaderV2Rect): void {
+    if (!path) return;
+    const width = Math.max(1, Math.round(rect.right - rect.left));
+    const height = Math.max(1, Math.round(rect.bottom - rect.top));
+    const bitmap = ReaderRasterAssets.fileImage(path, width, height);
+    if (!bitmap) return;
+    const brush = new drawing.Brush();
+    brush.setAntiAlias(true);
+    canvas.attachBrush(brush);
+    canvas.drawImageRect(bitmap, { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+      new drawing.SamplingOptions(drawing.FilterMode.FILTER_MODE_LINEAR));
+    canvas.detachBrush();
   }
 
   private static bookShape(rect: ReaderV2Rect, spineRadius: number, edgeRadius: number): drawing.RoundRect {
@@ -198,20 +207,6 @@ export class ReaderFrontPagePainter {
       brush.setShadowLayer(drawing.ShadowLayer.create(blur, 0, offsetY, color >>> 0));
     } catch (_) {
     }
-  }
-
-  /** 文字封面的底色：强调色压到偏深的书皮色，浅色强调色也能托住白字。 */
-  private static coverBase(accent: number): number {
-    const value = accent >>> 0;
-    const mix = (channel: number): number => Math.round(channel * 0.62 + 0x14 * 0.38);
-    return (0xFF000000 | (mix((value >>> 16) & 0xFF) << 16) | (mix((value >>> 8) & 0xFF) << 8) |
-      mix(value & 0xFF)) >>> 0;
-  }
-
-  private static shade(color: number, factor: number): number {
-    const value = color >>> 0;
-    const channel = (shift: number): number => Math.max(0, Math.min(255, Math.round(((value >>> shift) & 0xFF) * factor)));
-    return (0xFF000000 | (channel(16) << 16) | (channel(8) << 8) | channel(0)) >>> 0;
   }
 
   private static argb(value: number): common2D.Color {

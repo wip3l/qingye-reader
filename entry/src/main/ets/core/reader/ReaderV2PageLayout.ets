@@ -137,6 +137,8 @@ export class ReaderV2PageDecoration {
   group: string = '';
   /** 书封投影按深色阅读主题加重。 */
   shadowDark: boolean = false;
+  /** 书封上叠的主题书框（拉伸铺满书封），没有时为空串。 */
+  frame: string = '';
   /** 首字的字形，画在 (glyphX, glyphY)。 */
   glyph: graphicsText.Paragraph | null = null;
   glyphX: number = 0;

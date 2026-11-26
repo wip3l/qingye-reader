@@ -91,6 +91,18 @@ const identityBefore = spec.identity();
 spec.coverPath = '/data/cover.jpg';
 assert.equal(spec.layoutIdentity(), before, '封面后到不改分页缓存键');
 assert.notEqual(spec.identity(), identityBefore, '封面换了页标识要变');
+const identityNoFrame = spec.identity();
+spec.framePath = '/data/frame.png';
+assert.equal(spec.layoutIdentity(), before, '书框后到不改分页缓存键');
+assert.notEqual(spec.identity(), identityNoFrame, '书框换了页标识要变');
+assert.equal(spec.identity().endsWith(`_cover_${Front.coverHash(spec.coverPath, spec.framePath)}`), true,
+  '页标识末尾的封面段与就地换图时拼的一致');
+spec.coverColor = 0xFFE53935;
+assert.notEqual(spec.layoutIdentity(), before, '首字色块换色要重排');
+assert.equal(Front.initial('长夜书灯'), '长');
+assert.equal(Front.initial(''), '书');
+assert.equal(Front.initial('𠀀字'), '𠀀', '首字按码点取，不拆代理对');
+spec.coverColor = 0xFF007DFF;
 spec.intro = '另一段简介';
 assert.notEqual(spec.layoutIdentity(), before, '简介变了要重排');
 assert.equal(Front.cleanIntro('<p>第一段</p><br/>\n　　第二段&nbsp;&amp;  \n\n'), '第一段 第二段 &');

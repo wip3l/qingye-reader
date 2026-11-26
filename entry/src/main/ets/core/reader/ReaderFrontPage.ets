@@ -8,8 +8,8 @@ import { ReaderFontWeight } from './ReaderFontWeight';
  * 书封扉页：第一章之前的一页，画书封、书名、作者、墨线菱形、章数字数、标签、简介和“翻页开始阅读”。
  *
  * 整页只有装饰（ReaderV2PageDecoration），没有文字片段：不参与选字、划线、朗读和进度换算，页首页尾偏移都是 0。
- * 常驻页和翻页纹理都经 ReaderV2PagePainter 画，两边像素一致。书封用本机文件铺满书形（居中裁切），
- * 取不到封面时画按强调色生成的文字封面。
+ * 常驻页和翻页纹理都经 ReaderV2PagePainter 画，两边像素一致。书封跟书架上这本书显示的一样：同一张图铺满书形
+ * （居中裁切）、叠同一个主题书框；书架画首字色块时（或图画不出来时）这里也画首字色块。
  */
 export class ReaderFrontPageSpec {
   title: string = '';
@@ -18,25 +18,29 @@ export class ReaderFrontPageSpec {
   meta: string = '';
   tags: string[] = [];
   intro: string = '';
-  /** 本机封面文件；空串画文字封面。 */
+  /** 本机封面文件；空串画首字色块。 */
   coverPath: string = '';
-  /** 墨线、标签与文字封面用的强调色（ARGB）。 */
+  /** 本机主题书框文件；空串不叠书框。 */
+  framePath: string = '';
+  /** 首字色块的底色（ARGB），与书架同一套按书名取色。 */
+  coverColor: number = 0xFF007DFF;
+  /** 墨线与标签用的强调色（ARGB）。 */
   accentColor: number = 0xFF2E5A88;
 
   identity(): string {
-    return `${this.layoutIdentity()}_cover_${ReaderFrontPage.hash(this.coverPath)}`;
+    return `${this.layoutIdentity()}_cover_${ReaderFrontPage.coverHash(this.coverPath, this.framePath)}`;
   }
 
-  /** 不含封面路径：封面后到时只换图不重排，分页缓存键用这个。 */
+  /** 不含封面与书框路径：封面后到时只换图不重排，分页缓存键用这个。 */
   layoutIdentity(): string {
     return ReaderFrontPage.hash([this.title, this.author, this.meta, this.tags.join('|'), this.intro,
-      `${this.accentColor >>> 0}`].join('\u0001'));
+      `${this.accentColor >>> 0}`, `${this.coverColor >>> 0}`].join('\u0001'));
   }
 }
 
 export class ReaderFrontPage {
   static readonly KIND_COVER: string = 'frontCover';
-  /** 书封上的书名、作者：只在封面图画不出来时画。 */
+  /** 书封上的首字：只在封面图画不出来时画。 */
   static readonly KIND_COVER_TEXT: string = 'frontCoverText';
   static readonly KIND_RULE: string = 'frontRule';
   static readonly KIND_CHIP: string = 'frontChip';
@@ -124,7 +128,8 @@ export class ReaderFrontPage {
     const cover = new ReaderV2PageDecoration();
     cover.kind = ReaderFrontPage.KIND_COVER;
     cover.image = spec.coverPath;
-    cover.color = accent;
+    cover.frame = spec.framePath;
+    cover.color = spec.coverColor >>> 0;
     cover.shadowDark = !ReaderFrontPage.isLight(ink);
     cover.rect = new ReaderV2Rect(centerX - coverWidth / 2, y, centerX + coverWidth / 2, y + coverHeight);
     result.push(cover);
@@ -167,6 +172,11 @@ export class ReaderFrontPage {
     return value.toString(36);
   }
 
+  /** 页标识里代表书封图与书框的一段（见 ReadBook.applyReaderFrontCover）。 */
+  static coverHash(coverPath: string, framePath: string): string {
+    return ReaderFrontPage.hash(framePath ? `${coverPath}\u0001${framePath}` : coverPath);
+  }
+
   /** 去掉网页标签和多余空白，段落之间不留空行。 */
   static cleanIntro(intro: string): string {
     return (intro || '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '')
@@ -187,45 +197,27 @@ export class ReaderFrontPage {
     return red * 0.299 + green * 0.587 + blue * 0.114 > 140;
   }
 
-  /** 文字封面：竖排书名（每行一个字）和底部作者，只在封面图画不出来时显示。 */
+  /** 书封首字：和书架的首字色块一样，白色书名第一个字居中，只在封面图画不出来时显示。 */
   private static coverText(result: ReaderV2PageDecoration[], spec: ReaderFrontPageSpec,
     snapshot: ReaderV2LayoutSnapshot, rect: ReaderV2Rect): void {
     const width = rect.width();
     const height = rect.height();
-    const light = 0xFFF1ECE2;
-    const title = (spec.title || '未命名书籍').replace(/\s+/g, '');
-    const chars = Array.from(title);
-    const cjk = chars.every((char: string): boolean => /[\u3400-\u9FFF\uF900-\uFAFF\u3000-\u303F\uFF00-\uFFEF]/.test(char));
-    const usable = height * 0.62;
-    let glyph: graphicsText.Paragraph;
-    if (cjk && chars.length <= 10) {
-      const size = Math.min(width * 0.2, usable / Math.max(1, chars.length) / 1.12);
-      // 版宽只容一个字，每个字自成一行，相当于竖排。
-      glyph = ReaderFrontPage.text(chars.join('\n'), size, light, snapshot.titleFontFamily, 600,
-        graphicsText.TextAlign.CENTER, size * 1.6, 0, 0, size * 0.12);
-    } else {
-      const size = Math.min(width * 0.13, height * 0.08);
-      glyph = ReaderFrontPage.text(title, size, light, snapshot.titleFontFamily, 600,
-        graphicsText.TextAlign.CENTER, width * 0.76, 4, 0);
-    }
-    const titleDecoration = new ReaderV2PageDecoration();
-    titleDecoration.kind = ReaderFrontPage.KIND_COVER_TEXT;
-    titleDecoration.rect = rect;
-    titleDecoration.glyph = glyph;
-    titleDecoration.glyphX = rect.left + (width - glyph.getMaxWidth()) / 2;
-    titleDecoration.glyphY = rect.top + height * 0.13;
-    result.push(titleDecoration);
-    if (!spec.author) return;
-    const authorSize = Math.max(6, width * 0.075);
-    const author = ReaderFrontPage.text(spec.author, authorSize, ReaderFrontPage.withAlpha(light, 0.82),
-      snapshot.bodyFontFamily, 400, graphicsText.TextAlign.CENTER, width * 0.8, 1, authorSize * 0.2);
-    const authorDecoration = new ReaderV2PageDecoration();
-    authorDecoration.kind = ReaderFrontPage.KIND_COVER_TEXT;
-    authorDecoration.rect = rect;
-    authorDecoration.glyph = author;
-    authorDecoration.glyphX = rect.left + width * 0.1;
-    authorDecoration.glyphY = rect.bottom - height * 0.11 - author.getHeight();
-    result.push(authorDecoration);
+    // 书架首字 28vp 配一百来 vp 宽的封面，按同样的比例放大。
+    const size = Math.max(8, width * 0.27);
+    const glyph = ReaderFrontPage.text(ReaderFrontPage.initial(spec.title), size, 0xFFFFFFFF,
+      snapshot.bodyFontFamily, 400, graphicsText.TextAlign.CENTER, width, 1, 0);
+    const decoration = new ReaderV2PageDecoration();
+    decoration.kind = ReaderFrontPage.KIND_COVER_TEXT;
+    decoration.rect = rect;
+    decoration.glyph = glyph;
+    decoration.glyphX = rect.left;
+    decoration.glyphY = rect.top + (height - glyph.getHeight()) / 2;
+    result.push(decoration);
+  }
+
+  /** 书架首字色块上的字：书名第一个字，没有书名时为“书”。 */
+  static initial(title: string): string {
+    return title ? Array.from(title)[0] : '书';
   }
 
   private static chips(tags: string[], snapshot: ReaderV2LayoutSnapshot, font: number, accent: number,

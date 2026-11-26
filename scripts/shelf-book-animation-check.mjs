@@ -149,8 +149,19 @@ Locator.register(measure, async () => { throw new Error('offscreen capture refus
 assert.equal(await Locator.backdrop(), null, 'a refused snapshot yields null instead of throwing');
 Locator.unregister(measure); assert.equal(await Locator.backdrop(), null, 'no snapshot once the shelf is gone');
 const shelfPageSource = read('components/home/BookshelfPage.ets');
-assert.match(shelfPageSource, /ShelfCoverLocator\.register\(this\.shelfCoverLocate, this\.shelfBackdropSnapshot\)/,
-  'the shelf registers its locator and home-page snapshot on appear');
+assert.match(shelfPageSource,
+  /ShelfCoverLocator\.register\(this\.shelfCoverLocate, this\.shelfBackdropSnapshot, this\.shelfCoverLookup\)/,
+  'the shelf registers its locator, home-page snapshot and cover lookup on appear');
+// 阅读页扉页问书架这本书现在显示哪张封面：书架没挂载或抛错时为 null，挂载时原样转交。
+assert.equal(Locator.look('book-a'), null, 'no cover lookup once the shelf is gone');
+const shownCover = { cover: '/covers/a.jpg', frame: '' };
+Locator.register(measure, null, (bookUrl) => bookUrl === 'book-a' ? shownCover : null);
+assert.equal(Locator.look('book-a'), shownCover, 'the shelf cover comes through the lookup');
+assert.equal(Locator.look('book-b'), null, 'a book not on the shelf has no shelf cover');
+Locator.register(measure, null, () => { throw new Error('gone'); });
+assert.equal(Locator.look('book-a'), null, 'a throwing lookup yields null');
+Locator.unregister(measure);
+assert.equal(Locator.look('book-a'), null, 'unregistering clears the lookup');
 assert.match(shelfPageSource, /ShelfCoverLocator\.unregister\(this\.shelfCoverLocate\)/, 'the shelf unregisters on disappear');
 
 const shelf = hostFor(read('components/home/BookshelfPage.ets'),
