@@ -458,7 +458,7 @@ function commentBubble(count: string, e: Effective, fontSize = 19): HTMLElement 
 
 /**
  * 章节标题连同章首饰图，尺寸同应用 ReaderV2ChapterHeadLayout：左侧时高 = 一行标题的行框（字号 × 1.25）× 倍数、
- * 最宽占版心 30%；上方、下方时高 = 字号 × 0.9 × 倍数。序号行颜色要读者开了标题分段才生效，预览里染在“第十七章”上示意。
+ * 最宽占版心 30%；上方、下方时高 = 最大那行的字号 × 0.9 × 倍数（这里标题只有一行）。序号行颜色要读者开了标题分段才生效，预览里染在“第十七章”上示意。
  */
 function chapterTitle(e: Effective, fontPx: number, columnWidth: number): HTMLElement {
   const head = e.head;

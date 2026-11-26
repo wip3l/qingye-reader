@@ -35,7 +35,9 @@ export class ReaderV2ChapterHeadLayout {
     const aspect = Math.max(0.05, Math.min(20, head.aspect > 0 ? head.aspect : 1));
     const scale = Math.max(0.5, Math.min(10, head.scale > 0 ? head.scale : 1));
     if (head.placement === 'top' || head.placement === 'bottom') {
-      let height = font * 0.9 * scale;
+      // 按标题里最大那一行的字号算：分段时第二行（章名）常被放大，只按第一行（序号）算会出现“章名大、饰图小”。
+      const largest = titleBlocks > 1 ? font * Math.max(1, snapshot.titleSecondaryScale) : font;
+      let height = largest * 0.9 * scale;
       let width = height * aspect;
       if (width > columnWidth) {
         width = columnWidth;

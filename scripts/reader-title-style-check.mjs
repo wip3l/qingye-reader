@@ -89,6 +89,7 @@ try {
     ReaderActionMarker: modules.ReaderActionMarker, ReaderImageMarker: modules.ReaderImageMarker,
     ReaderMixedPageLayout: modules.ReaderMixedPageLayout,
     CooperativeScheduler: { reportSynchronousOperation() {} },
+    ReaderPunctuationMetrics: { spaceOf: () => null },
     graphicsText: {
       FontWeight: Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`W${(i + 1) * 100}`, i])),
       TextAlign: { CENTER: 'center', LEFT: 'left', RIGHT: 'right', JUSTIFY: 'justify' },
@@ -97,7 +98,7 @@ try {
       FontCollection: { getGlobalInstance: () => ({}) }, ParagraphBuilder
     }
   });
-  vm.runInContext(['core/reader/ReaderV2Document.ets','core/reader/ReaderV2LayoutSnapshot.ets',
+  vm.runInContext(['core/reader/ReaderPunctuationSqueeze.ts','core/reader/ReaderV2Document.ets','core/reader/ReaderV2LayoutSnapshot.ets',
     'core/reader/ReaderV2PageLayout.ets','core/reader/ReaderV2ChapterHead.ets','core/reader/ReaderV2Paginator.ets']
     .map(file => compile(read(file))).join('\n') + '\n' + compile(`
     class TitleReader extends ReaderHarness {
@@ -369,7 +370,8 @@ try {
   assert.equal(Paginator.baseTextStyle(document.blocks[1], sideSnapshot).color.red,
     Paginator.baseTextStyle(document.blocks[1], snapshot).color.red, 'the main title line keeps the text colour');
   const [, top] = withHead('top', 2);
-  const topHeight = 22 * 0.9 * 2, topGap = 22 * 0.3;
+  // 上方、下方饰图按最大那一行（章名 = 22 × 1.5）的字号算，空隙仍按标题字号。
+  const topHeight = 22 * 1.5 * 0.9 * 2, topGap = 22 * 0.3;
   assert(Math.abs(top.fragments[0].paragraphY - first.paragraphY - topHeight - topGap) < 0.01, 'room above the title');
   assert(Math.abs(top.decorations[0].rect.bottom - (top.fragments[0].paragraphY - topGap)) < 0.01);
   assert.equal(top.fragments[0].paragraphX, first.paragraphX, 'no side reserve for a top ornament');
@@ -377,7 +379,7 @@ try {
   const bottomTitleEnd = bottom.fragments[1].paragraphY + bottom.fragments[1].paragraphHeight;
   assert(Math.abs(bottom.decorations[0].rect.top - bottomTitleEnd - topGap) < 0.01);
   assert(bottom.fragments[2].paragraphY - bottomTitleEnd >=
-    continuous.fragments[2].paragraphY - (second.paragraphY + second.paragraphHeight) + 22 * 0.9 + topGap - 0.01,
+    continuous.fragments[2].paragraphY - (second.paragraphY + second.paragraphHeight) + 22 * 1.5 * 0.9 + topGap - 0.01,
     'body starts below a bottom ornament');
   console.log('PASS: chapter-head ornament reserves its space beside, above or below the title and tints the number line');
 

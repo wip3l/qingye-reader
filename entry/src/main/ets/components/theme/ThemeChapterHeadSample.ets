@@ -8,7 +8,7 @@ import { ReaderRasterAssets } from '../../core/reader/ReaderRasterAssets';
 /**
  * 主题预览（编辑器预览、主题详情的阅读页）里的章首装饰：标题饰图、序号行颜色、首字装饰。
  * 阅读页用自绘排版（ReaderV2ChapterHeadLayout、ReaderV2Paginator 的首字），这里用 ArkUI 组件按同一套比例画个样子：
- * - 饰图左侧时高 = 整组标题按每块一行估出的高度 × 倍数，宽最多占 30%；上方、下方时高 = 标题字号 × 0.9 × 倍数。
+ * - 饰图左侧时高 = 整组标题按每块一行估出的高度 × 倍数，宽最多占 30%；上方、下方时高 = 最大那行（标题名）的字号 × 0.9 × 倍数。
  * - 有序号行颜色时把标题画成分段的样子：序号一行用这个颜色、字号是标题名的 1/1.4（阅读页分段标题的默认比例）。
  * - 首字方框 = (行数 − 1) × 行距 + 首行文字高 − 0.1 字号，首段前几行让出方框宽 + 0.3 字号。
  *   放大样式方框一样大，段落整体下移 (行数 − 1) 行，方框底边对齐第一行文字，只有第一行让出位置。
@@ -61,7 +61,7 @@ export class ThemeChapterHeadSampleMetrics {
     const scale = ThemeChapterHeadSampleMetrics.scale(head);
     if (ThemeChapterHeadSampleMetrics.side(head)) return Math.max(textHeight, textHeight * scale);
     const base = ThemeChapterHeadSampleMetrics.baseSize(titleSize, number);
-    return textHeight + base * 0.9 * scale + base * 0.3;
+    return textHeight + titleSize * 0.9 * scale + base * 0.3;
   }
 
   /** 正文第一个字能不能做首字（和阅读页一样只认汉字）。 */
@@ -168,7 +168,7 @@ export struct ThemeChapterHeadTitle {
     const scale = ThemeChapterHeadSampleMetrics.scale(this.head);
     const side = ThemeChapterHeadSampleMetrics.side(this.head);
     let height = side ? ThemeChapterHeadSampleMetrics.textHeight(this.titleSize, this.showsNumber()) * scale :
-      this.base() * 0.9 * scale;
+      this.titleSize * 0.9 * scale;
     let width = height * aspect;
     const maxWidth = this.boxWidth > 0 ? this.boxWidth * (side ? 0.3 : 1) : width;
     if (width > maxWidth) {
