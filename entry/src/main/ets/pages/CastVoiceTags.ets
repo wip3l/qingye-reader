@@ -193,8 +193,9 @@ struct CastVoiceTagsPage {
             onTap: (): void => this.open(item),
             onPlay: (): void => { this.togglePreview(item); }
           })
-        }, (item: CastVoiceItem): string => item.key + '|' + CastVoicePolicy.tagLabel(item.tag) +
-          (item.unsupported ? 'u' : '') + (this.previewing === item.key ? 'p' : ''))
+        }, (item: CastVoiceItem, index: number): string => item.key + '|' + CastVoicePolicy.tagLabel(item.tag) +
+          (item.unsupported ? 'u' : '') + (this.previewing === item.key ? 'p' : '') +
+          (index < this.group(source).length - 1 ? 'd' : ''))
       }.width('100%').backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
     }
   }

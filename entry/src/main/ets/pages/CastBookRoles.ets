@@ -112,7 +112,7 @@ struct CastBookRolesPage {
         view.ref = match.ref;
         view.voice = match.ref.name || '没有可用音色';
         view.source = CastVoicePolicy.sourceLabel(match.ref.kind);
-        view.signature = [view.id, view.name, view.sub, view.voice, view.source, view.lead ? 'L' : '', view.manual ? 'M' : ''].join('|');
+        view.signature = [view.id, view.name, view.gender, view.sub, view.voice, view.source, view.lead ? 'L' : '', view.manual ? 'M' : ''].join('|');
         views.push(view);
       }
       // 配角第一次显示时就把取到的音色记进档案，列表里看到的和朗读时用的才是同一个。
@@ -421,7 +421,9 @@ struct CastBookRolesPage {
         Column() {
           ForEach(this.roles, (view: CastRoleView, index: number) => {
             this.roleRow(view, index === this.roles.length - 1)
-          }, (view: CastRoleView): string => view.signature + (this.previewing === view.id ? 'p' : ''))
+            // 键里带上“是不是最后一行”：人物变多后，原来的最后一行要补上分隔线。
+          }, (view: CastRoleView, index: number): string => view.signature + (this.previewing === view.id ? 'p' : '') +
+            (index === this.roles.length - 1 ? 'e' : ''))
         }.width('100%').backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
 
         Text('点人物可以换音色或设为主角。人物声音跨章节固定，修改只影响本书；拿不准是谁说的句子由旁白读，可以在播放器里点“这句不对？”纠正。')

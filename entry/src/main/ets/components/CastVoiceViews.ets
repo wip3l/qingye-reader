@@ -173,12 +173,13 @@ export struct CastVoicePicker {
     if (this.previewing === item.key) this.previewing = '';
   }
 
+  // 按值传进 @Builder 的参数不会随状态刷新，选中态在这里直接读 this.all。
   @Builder
-  segment(label: string, on: boolean, value: boolean) {
+  segment(label: string, value: boolean) {
     Text(label).fontSize(AppFontSize.BODY).textAlign(TextAlign.Center)
-      .fontWeight(on ? FontWeight.Medium : FontWeight.Normal)
-      .fontColor(on ? ThemeRuntime.primaryTextColor(this.dark) : ThemeRuntime.subTextColor(this.dark))
-      .backgroundColor(on ? ThemeRuntime.cardColor(this.dark) : Color.Transparent)
+      .fontWeight(this.all === value ? FontWeight.Medium : FontWeight.Normal)
+      .fontColor(this.all === value ? ThemeRuntime.primaryTextColor(this.dark) : ThemeRuntime.subTextColor(this.dark))
+      .backgroundColor(this.all === value ? ThemeRuntime.cardColor(this.dark) : Color.Transparent)
       .height(30).borderRadius(9).layoutWeight(1)
       .onClick(() => { this.all = value; })
   }
@@ -202,8 +203,10 @@ export struct CastVoicePicker {
             },
             onPlay: (): void => { this.togglePreview(item); }
           })
-        }, (item: CastVoiceItem): string => item.key + '|' + CastVoicePolicy.tagLabel(item.tag) + '|' + this.note(item) +
-          (this.selectedKeys.includes(item.key) ? '1' : '0') + (this.previewing === item.key ? 'p' : ''))
+          // 键里带上“是不是最后一行”：在“合适的 / 全部”之间切换后行数变了，分隔线要跟着重画。
+        }, (item: CastVoiceItem, index: number): string => item.key + '|' + CastVoicePolicy.tagLabel(item.tag) + '|' +
+          this.note(item) + (this.selectedKeys.includes(item.key) ? '1' : '0') +
+          (this.previewing === item.key ? 'p' : '') + (index < this.shown(source).length - 1 ? 'd' : ''))
       }.width('100%').backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
     }
   }
@@ -223,8 +226,8 @@ export struct CastVoicePicker {
       }.width('100%')
 
       Row() {
-        this.segment('合适的', !this.all, false)
-        this.segment('全部', this.all, true)
+        this.segment('合适的', false)
+        this.segment('全部', true)
       }.width('100%').padding(3).borderRadius(12).backgroundColor(ThemeRuntime.softFillColor(this.dark))
 
       Scroll() {

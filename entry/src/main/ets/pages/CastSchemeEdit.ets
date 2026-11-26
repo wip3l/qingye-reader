@@ -257,6 +257,19 @@ struct CastSchemeEditPage {
     }.width('100%').padding({ left: AppSpacing.XXS, top: AppSpacing.SM })
   }
 
+  // 组里的个数要跟着增删变：按值传给 label 的文字不会刷新，所以这里直接读 this.pool。
+  @Builder
+  poolLabel(slot: string) {
+    Row({ space: AppSpacing.MD }) {
+      Text(this.slotLabel(slot)).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium)
+        .fontColor(ThemeRuntime.primaryTextColor(this.dark))
+      if (this.pool(slot).length > 0) {
+        Text(`${this.pool(slot).length} 个，轮流取`).fontSize(AppFontSize.CAPTION)
+          .fontColor(ThemeRuntime.subTextColor(this.dark))
+      }
+    }.width('100%').padding({ left: AppSpacing.XXS, top: AppSpacing.SM })
+  }
+
   @Builder
   emptyRow(text: string, slot: string) {
     Row() {
@@ -293,7 +306,7 @@ struct CastSchemeEditPage {
 
   @Builder
   poolSlot(slot: string) {
-    this.label(this.slotLabel(slot), this.pool(slot).length > 0 ? `${this.pool(slot).length} 个，轮流取` : '')
+    this.poolLabel(slot)
     Column() {
       ForEach(this.pool(slot), (ref: CastVoiceRef) => {
         CastVoiceLine({
