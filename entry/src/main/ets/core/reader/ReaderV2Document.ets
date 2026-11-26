@@ -41,6 +41,8 @@ export class ReaderV2InlineAction {
   bubbleStart: number = 0;
   /** EPUB 注释编号：显示原来的编号文字（不画气泡），点开弹出注释正文。 */
   note: boolean = false;
+  /** EPUB 书内链接：显示链接原来的文字（强调色加虚下划线，不画气泡），点了跳到书里的目标处。 */
+  link: boolean = false;
   /** 热评原文与点赞数；有原文时可画成热评卡。本章说入口的原文是卡面文字（如“76条评论”）。 */
   preview: string = '';
   likes: string = '';
@@ -62,11 +64,12 @@ export class ReaderV2InlineAction {
     this.title = data.title || '';
     this.url = data.url || '';
     this.note = EpubNoteLink.isNote(this.url);
-    this.preview = this.note ? '' : (data.preview || '');
+    this.link = EpubNoteLink.isLink(this.url);
+    this.preview = this.note || this.link ? '' : (data.preview || '');
     this.likes = this.preview ? (data.likes || '') : '';
-    if (!this.note && data.emojis) this.emojis = data.emojis;
+    if (!this.note && !this.link && data.emojis) this.emojis = data.emojis;
     const rawLabel = data.label || '';
-    this.chapter = !this.note && (/本章说|章评|章末/.test(rawLabel) ||
+    this.chapter = !this.note && !this.link && (/本章说|章评|章末/.test(rawLabel) ||
       (/^(?:本章说|章评)/.test(data.title || '') && !/(?:99\+|\d+)\s*$/.test(rawLabel)));
     if (this.chapter) ReaderV2InlineAction.fillChapter(this, data);
     this.displayStart = displayStart;
@@ -450,6 +453,16 @@ export class ReaderV2DocumentParser {
       const validAction = actionMatch && actionMatch.start === absoluteStart && actionMatch.end === absoluteEnd &&
         actionIndex < ReaderV2DocumentParser.MAX_ACTIONS_PER_CHAPTER;
       if (!validAction || !actionMatch) {
+        // 超出数量的书内链接：文字是正文，按普通文字显示，只是不能点。
+        const linkText = ReaderActionMarker.textLinkLabel(document.sourceText.substring(absoluteStart, absoluteEnd));
+        if (linkText) {
+          display += linkText;
+          document.offsets.push(new ReaderV2OffsetSegment(absoluteStart, absoluteEnd,
+            displayCursor, displayCursor + linkText.length));
+          displayCursor += linkText.length;
+          sourceCursor = absoluteEnd;
+          continue;
+        }
         // Damaged and excessive markers are provider metadata, not正文. Drop only the marker and retain an
         // explicit zero-width mapping so progress/TTS offsets continue past it without exposing its payload.
         document.offsets.push(new ReaderV2OffsetSegment(absoluteStart, absoluteEnd,
@@ -525,7 +538,7 @@ export class ReaderV2DocumentParser {
 
   private static commentHidden(action: ReaderV2InlineAction, data: ReaderActionData,
     comments: ReaderV2CommentDisplay): number {
-    if (action.note) return ReaderV2DocumentParser.COMMENT_KEEP;
+    if (action.note || action.link) return ReaderV2DocumentParser.COMMENT_KEEP;
     if (action.chapter) {
       return comments.chapter ? ReaderV2DocumentParser.COMMENT_KEEP : ReaderV2DocumentParser.COMMENT_DROP;
     }
@@ -586,6 +599,7 @@ export class ReaderV2DocumentParser {
   private static actionLabel(match: ReaderActionMatch): string {
     // 注释编号就是正文原来的文字，原样显示，正文与加入注释链接以前逐字一致。
     if (EpubNoteLink.isNote(match.data.url)) return match.data.label || EpubNoteLink.ICON_LABEL;
+    if (EpubNoteLink.isLink(match.data.url)) return match.data.label;
     const configured = (match.data.label || '').trim();
     const count = configured.match(/(99\+|\d+)\s*$/);
     if (count && count[1]) {

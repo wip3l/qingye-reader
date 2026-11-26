@@ -29,7 +29,8 @@ export class EpubConvertResult {
 export type EpubImageResolver = (source: string) => EpubImageRef | null;
 
 /** 把正文里的注释链接（href 原样，相对当前文件）解析成 EpubNoteLink 地址；目标不在书内时返回空串。 */
-export type EpubLinkResolver = (href: string) => string;
+/** note 为真时是注释编号，否则是指向书里其他位置的普通链接；返回动作地址，空串表示不处理。 */
+export type EpubLinkResolver = (href: string, note: boolean) => string;
 
 class EpubPendingImage {
   ref: EpubImageRef;
@@ -63,6 +64,10 @@ export class EpubHtmlConverter {
     'blockquote|table|thead|tbody|tfoot|tr|caption|pre|address|form|fieldset|center|details|summary';
   /** 链接文字超过这个长度就不当注释编号：显示文字整个放进动作标记，太长会被截断。 */
   private static readonly MAX_NOTE_LABEL_LENGTH: number = 40;
+  /** 书内链接的文字上限（与动作标记的标签上限一致），更长的链接照旧当普通文字。 */
+  private static readonly MAX_TEXT_LINK_LABEL_LENGTH: number = 96;
+  /** 一个文件片段里最多换成可点链接的数量：书里自带的长目录页超出部分当普通文字，不会挤掉其它标记。 */
+  private static readonly MAX_TEXT_LINKS: number = 200;
   private static readonly MAX_NOTE_HTML_LENGTH: number = 24000;
   private static readonly NOTE_CORE: string = '(?:\\d{1,4}|[０-９]{1,4}|[一二三四五六七八九十]{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]{1,4}|' +
     '[\\u2460-\\u24FF\\u2776-\\u2793\\u3251-\\u325F\\u32B1-\\u32BF]|[*＊†‡§]{1,3})';
@@ -187,7 +192,8 @@ export class EpubHtmlConverter {
 
   /**
    * resolveLink 为空时链接按普通文字处理（注释弹窗里的注释正文就是这样转换的）；
-   * 给出时注释编号换成可点的动作标记，本文件里被这些编号引用的脚注块不再留在正文里。
+   * 给出时注释编号换成可点的动作标记，本文件里被这些编号引用的脚注块不再留在正文里；
+   * 指向书里其他位置的链接也换成动作标记，显示的仍是链接原来的文字。
    */
   static convertBody(body: string, resolveImage: EpubImageResolver, startId: string = '',
     endId: string = '', resolveLink: EpubLinkResolver | null = null): EpubConvertResult {
@@ -351,20 +357,75 @@ export class EpubHtmlConverter {
     return mapped;
   }
 
-  /** 注释编号换成动作标记；标记的显示文字就是编号原来的文字，正文看起来和以前一样。 */
+  /**
+   * 注释编号与书内链接换成动作标记；标记的显示文字就是链接原来的文字，正文看起来和以前一样。
+   * 标题里的链接（常见的是回到目录页的链接）不换：标题保持原样，不画成链接。
+   */
   private static replaceNoteLinks(source: string, body: string, resolveLink: EpubLinkResolver): string {
     if (source.search(/<a\b/i) < 0) return source;
+    const headings: number[] = [];
+    const headingPattern = /<h([1-6])\b[^>]*>[\s\S]*?<\/h\1\s*>/gi;
+    let heading = headingPattern.exec(source);
+    while (heading) {
+      headings.push(heading.index, heading.index + heading[0].length);
+      heading = headingPattern.exec(source);
+    }
+    const inHeading = (offset: number): boolean => {
+      for (let index = 0; index < headings.length; index += 2) {
+        if (headings[index] > offset) return false;
+        if (offset < headings[index + 1]) return true;
+      }
+      return false;
+    };
+    const blockInside = new RegExp(`<(?:${EpubHtmlConverter.BLOCK_TAGS}|br|img|image|svg|audio|video|object)\\b`, 'i');
+    let links = 0;
     return source.replace(new RegExp(EpubHtmlConverter.ANCHOR_ELEMENT, 'gi'),
       (all: string, attributes: string, inner: string, offset: number, whole: string): string => {
         const before = whole.substring(Math.max(0, offset - 240), offset);
         const href = EpubHtmlConverter.noteHref(attributes, inner, before, body);
-        if (!href) return all;
-        const label = EpubHtmlConverter.noteLabel(inner, before);
-        if (label.length > EpubHtmlConverter.MAX_NOTE_LABEL_LENGTH) return all;
-        const url = resolveLink(href);
+        if (href) {
+          const label = EpubHtmlConverter.noteLabel(inner, before);
+          if (label.length > EpubHtmlConverter.MAX_NOTE_LABEL_LENGTH) return all;
+          const url = resolveLink(href, true);
+          const marker = url ? ReaderActionMarker.create(label, url) : '';
+          return marker || all;
+        }
+        if (links >= EpubHtmlConverter.MAX_TEXT_LINKS || inHeading(offset) || blockInside.test(inner)) return all;
+        const target = EpubHtmlConverter.textLinkHref(attributes);
+        if (!target) return all;
+        const text = EpubHtmlConverter.textLinkText(inner);
+        const label = text.replace(/^ +| +$/g, '');
+        // 动作标记会裁掉标签两端的所有空白（含全角空格），这样的链接留作普通文字，正文才逐字不变。
+        if (!label || label !== label.trim() || label.length > EpubHtmlConverter.MAX_TEXT_LINK_LABEL_LENGTH) {
+          return all;
+        }
+        const url = resolveLink(target, false);
         const marker = url ? ReaderActionMarker.create(label, url) : '';
-        return marker || all;
+        if (!marker) return all;
+        links++;
+        // 链接文字两端的半角空格留在标记外面，和按普通文字转换时一样。
+        return `${text.startsWith(' ') ? ' ' : ''}${marker}${text.length > 1 && text.endsWith(' ') ? ' ' : ''}`;
       });
+  }
+
+  /** 指向书里其他位置的链接返回 href；书外的网址、邮件地址、返回注释编号的链接返回空串。 */
+  private static textLinkHref(attributes: string): string {
+    const tag = `<a ${attributes}>`;
+    const href = EpubHtmlConverter.decodeEntities(EpubHtmlConverter.findHtmlAttribute(tag, ['href', 'xlink:href']))
+      .trim();
+    if (!href || href === '#' || href.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(href)) return '';
+    if (/\b(?:doc-)?backlink\b|\breferrer\b/.test(EpubHtmlConverter.semanticsOf(tag))) return '';
+    return href;
+  }
+
+  /** 链接里的文字按正文同样的规则转换（上下标数字、合并空白、去标签），标签与按普通文字转换时逐字一致。 */
+  private static textLinkText(inner: string): string {
+    const cjk = EpubHtmlConverter.CJK;
+    const text = EpubHtmlConverter.mapScriptDigits(inner)
+      .replace(new RegExp(`([${cjk}])[ \\t]*(?:\\r\\n?|\\n)[ \\t]*(?=[${cjk}])`, 'g'), '$1')
+      .replace(/[ \t\r\n\f]+/g, ' ')
+      .replace(/<[^>]+>/g, '');
+    return EpubHtmlConverter.decodeEntities(text).replace(/[\xA0]/g, ' ');
   }
 
   /** 是注释编号时返回链接的 href，否则返回空串。before 是链接前面的一小段 HTML。 */

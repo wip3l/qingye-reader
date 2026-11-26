@@ -12,7 +12,7 @@ import { ReaderKeyboardSettingsStore } from '../utils/ReaderKeyboardSettingsStor
 import { SmartControlKey } from '../utils/SmartControlKey';
 import { appDb } from '../model/data/AppDatabase';
 import { LocalBookService } from '../core/book/LocalBookService';
-import { LocalChapterContentLoader } from '../core/book/LocalChapterContentLoader';
+import { EpubTargetChapter, LocalChapterContentLoader } from '../core/book/LocalChapterContentLoader';
 import { EpubChapterPlanner, EpubChapterSegment } from '../core/book/EpubChapterPlanner';
 import { EpubConvertResult, EpubHtmlConverter } from '../core/book/EpubHtmlConverter';
 import { EpubNoteLink } from '../core/book/EpubNoteLink';
@@ -100,6 +100,7 @@ import deviceInfo from '@ohos.deviceInfo';
 import { systemBarContentColor } from '../platform/SystemInsets';
 import { TtsTurnFollow } from '../utils/TtsTurnFollow';
 import { ReaderTtsHoldCapsule } from '../components/reader/ReaderTtsHoldCapsule';
+import { ReaderLinkReturnCapsule } from '../components/reader/ReaderLinkReturnCapsule';
 
 /** 本书的文件排版设置与位置（书籍变量）。 */
 const SCROLL_KEY = 'epubOriginalScroll';
@@ -482,6 +483,16 @@ struct EpubOriginalReadBookPage {
   private documents: Map<string, string> = new Map<string, string>();
   private nativeTexts: Map<number, string> = new Map<number, string>();
   private spot: EpubOriginalSpot = new EpubOriginalSpot();
+  /** 点书内链接跳走后的“返回原处”胶囊：只记第一次跳走前的章节与位置，翻满 3 页或点 × 收起。 */
+  @State linkReturnVisible: boolean = false;
+  @State linkReturnTurns: number = 0;
+  @State linkReturnWhere: string = '';
+  @State linkReturnPageText: string = '';
+  private linkReturnChapter: number = -1;
+  private linkReturnSpot: EpubOriginalSpot = new EpubOriginalSpot();
+  private linkReturnKey: string = '';
+  private linkReturnSettleUntil: number = 0;
+  private linkJumpSerial: number = 0;
   private readyTimer: number = -1;
   /** 上次收起或唤出菜单的时间：网页回报的点按晚一拍到达，紧跟在菜单切换之后的那一下不再重复切换。 */
   private menuToggledAt: number = 0;
@@ -3072,6 +3083,7 @@ struct EpubOriginalReadBookPage {
       this.spot = spot;
       this.pageIndex = slot.pageIndex;
       this.pageCount = slot.pageCount;
+      this.countLinkReturnTurn();
       this.scheduleSave();
       this.schedulePrewarm();
     } catch (error) {
@@ -3239,59 +3251,116 @@ struct EpubOriginalReadBookPage {
   }
 
   private jumpTo(path: string, fragment: string): void {
-    this.chapterForTarget(path, fragment).then((index: number): void => {
-      if (!this.alive) return;
-      if (index < 0) {
-        HdsFeedback.showToast('链接指向的内容不在正文里');
-        return;
-      }
-      if (index === this.chapterIndex && fragment) {
-        this.run(`__legado.goAnchor(${JSON.stringify(fragment)})`);
-        this.ttsUserMoved();
-        return;
-      }
-      const target = new EpubOriginalTarget();
-      target.kind = fragment ? 'anchor' : 'start';
-      target.anchor = fragment;
-      this.showChapter(index, target, 'fade');
-    });
+    const serial = ++this.linkJumpSerial;
+    const firstJump = this.linkReturnChapter < 0;
+    const originChapter = this.chapterIndex;
+    const originSpot = this.spot;
+    const where = this.linkWhereText();
+    LocalChapterContentLoader.chapterForTarget(this.chapters, `${this.extractRoot}/${path}`, fragment)
+      .then((found: EpubTargetChapter): void => {
+        const index = found.index;
+        if (!this.alive || serial !== this.linkJumpSerial) return;
+        if (index < 0) {
+          HdsFeedback.showToast('链接指向的内容不在正文里');
+          return;
+        }
+        if (firstJump) {
+          this.linkReturnChapter = originChapter;
+          this.linkReturnSpot = originSpot;
+          this.linkReturnWhere = where[0];
+          this.linkReturnPageText = where[1];
+        }
+        this.linkReturnTurns = 0;
+        this.linkReturnKey = '';
+        this.linkReturnSettleUntil = Date.now() + 800;
+        this.linkReturnVisible = true;
+        if (index === this.chapterIndex && fragment) {
+          this.run(`__legado.goAnchor(${JSON.stringify(fragment)})`);
+          this.ttsUserMoved();
+          return;
+        }
+        const target = new EpubOriginalTarget();
+        target.kind = fragment ? 'anchor' : 'start';
+        target.anchor = fragment;
+        this.showChapter(index, target, 'fade');
+      });
   }
 
-  /** 链接目标所在的章节：同一个文件切成多章时按锚点所在位置挑。 */
-  private async chapterForTarget(path: string, fragment: string): Promise<number> {
-    const absolute = `${this.extractRoot}/${path}`;
-    const candidates: number[] = [];
-    const ranges: EpubChapterSegment[] = [];
-    for (let index = 0; index < this.chapters.length; index++) {
-      const chapter = this.chapters[index];
-      const segments = EpubChapterPlanner.decodeSegments(chapter.variable);
-      if (segments.length === 0 &&
-        EpubHtmlConverter.normalizePath(EpubHtmlConverter.withoutFragment(chapter.resourceUrl || '')) === absolute) {
-        candidates.push(index);
-        ranges.push(new EpubChapterSegment());
-        continue;
-      }
-      for (const segment of segments) {
-        if (EpubHtmlConverter.normalizePath(segment.path) !== absolute) continue;
-        candidates.push(index);
-        ranges.push(segment);
-        break;
-      }
+  /** 胶囊上的“原处”：章节名与（翻页阅读时）页码。 */
+  private linkWhereText(): string[] {
+    const chapter = this.chapterIndex >= 0 && this.chapterIndex < this.chapters.length ?
+      this.chapters[this.chapterIndex] : null;
+    const title = (chapter?.title || this.title || '').trim();
+    return [title, this.paged && this.pageCount > 0 ? `${this.pageIndex + 1}/${this.pageCount}` : ''];
+  }
+
+  /** 位置报告里章节或页码变了算翻了一页；刚跳过去、网页还在排版时的几次报告不算。 */
+  private countLinkReturnTurn(): void {
+    if (!this.linkReturnVisible) return;
+    const key = `${this.chapterIndex}:${this.pageIndex}`;
+    if (key === this.linkReturnKey) return;
+    const first = !this.linkReturnKey;
+    this.linkReturnKey = key;
+    if (first || Date.now() < this.linkReturnSettleUntil) return;
+    this.linkReturnTurns++;
+    if (this.linkReturnTurns >= ReaderLinkReturnCapsule.TURN_LIMIT) this.closeLinkReturn();
+  }
+
+  private returnFromLink(): void {
+    const chapter = this.linkReturnChapter;
+    const spot = this.linkReturnSpot;
+    this.closeLinkReturn();
+    if (chapter < 0 || chapter >= this.chapters.length) return;
+    const target = new EpubOriginalTarget();
+    if (spot.snippet) {
+      target.kind = 'spot';
+      target.snippet = spot.snippet;
+      target.fraction = spot.fraction;
     }
-    if (candidates.length <= 1 || !fragment) return candidates.length > 0 ? candidates[0] : -1;
-    try {
-      const body = EpubHtmlConverter.bodyOf(await LocalChapterContentLoader.readHtmlFile(absolute));
-      const offset = EpubHtmlConverter.findAnchorOffset(body, fragment);
-      if (offset < 0) return candidates[0];
-      for (let index = candidates.length - 1; index >= 0; index--) {
-        const startId = ranges[index].startId;
-        const start = startId ? EpubHtmlConverter.findAnchorOffset(body, startId) : 0;
-        if (start >= 0 && start <= offset) return candidates[index];
-      }
-    } catch (error) {
-      console.warn('[EpubOriginal] locate link target failed:', error);
+    if (chapter === this.chapterIndex) {
+      if (target.kind === 'spot') this.run(`__legado.goSpot(${JSON.stringify(target.snippet)}, ${target.fraction})`);
+      this.ttsUserMoved();
+      return;
     }
-    return candidates[0];
+    this.showChapter(chapter, target, 'fade');
+  }
+
+  private closeLinkReturn(): void {
+    this.linkJumpSerial++;
+    this.linkReturnVisible = false;
+    this.linkReturnChapter = -1;
+    this.linkReturnSpot = new EpubOriginalSpot();
+    this.linkReturnTurns = 0;
+    this.linkReturnKey = '';
+  }
+
+  private shouldShowLinkReturnCapsule(): boolean {
+    return this.linkReturnVisible && this.linkReturnChapter >= 0 && this.ready && !this.menuVisible &&
+      !this.showTtsPanel && !this.annotationMode && !this.shouldShowTtsHoldCapsule();
+  }
+
+  @Builder
+  linkReturnCapsule() {
+    ReaderLinkReturnCapsule({
+      where: this.linkReturnWhere,
+      pageText: this.linkReturnPageText,
+      turns: this.linkReturnTurns,
+      darkMode: this.darkMode,
+      panelColor: this.solidPanelColor(),
+      textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+      subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+      accentColor: ThemeRuntime.accentColor(this.darkMode),
+      onBack: (): void => this.returnFromLink(),
+      onClose: (): void => this.closeLinkReturn()
+    })
+      // 停在页脚上方、正文最后一行之下。
+      .position({
+        x: (this.viewWidth - ReaderLinkReturnCapsule.WIDTH) / 2,
+        y: this.viewHeight - this.footerBand() - ReaderLinkReturnCapsule.HEIGHT - 8
+      })
+      .visibility(this.ttsCapsuleTurnHidden ? Visibility.Hidden : Visibility.Visible)
+      .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ y: 8 }))
+        .animation({ duration: 180, curve: Curve.EaseOut }))
   }
 
   // ---- 进度 ----
@@ -4656,6 +4725,8 @@ struct EpubOriginalReadBookPage {
 
       if (this.shouldShowTtsHoldCapsule()) {
         this.ttsHoldCapsule()
+      } else if (this.shouldShowLinkReturnCapsule()) {
+        this.linkReturnCapsule()
       }
 
       if (this.showTtsPanel) {

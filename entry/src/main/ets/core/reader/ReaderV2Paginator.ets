@@ -1492,6 +1492,9 @@ export class ReaderV2Paginator {
       if (absoluteOffset >= action.displayStart && absoluteOffset < action.displayEnd && action.note) {
         return ReaderV2Paginator.noteTextStyle(base, action.label, snapshot);
       }
+      if (absoluteOffset >= action.displayStart && absoluteOffset < action.displayEnd && action.link) {
+        return ReaderV2Paginator.linkTextStyle(base, snapshot);
+      }
       if (absoluteOffset >= action.displayStart && absoluteOffset < action.displayEnd) {
         const bodyCenter = ReaderV2Paginator.commentTextCenter(base, '国', snapshot);
         const scale = ReaderCommentBubbleSize.scale(action.label, snapshot.commentBubbleSize);
@@ -1603,6 +1606,19 @@ export class ReaderV2Paginator {
         leftBottomRadius: radius
       };
     }
+    return base;
+  }
+
+  /** 书内链接：字形与正文完全一样（不影响排版），只换强调色并加一条半透明的点状下划线。 */
+  private static linkTextStyle(base: graphicsText.TextStyle,
+    snapshot: ReaderV2LayoutSnapshot): graphicsText.TextStyle {
+    base.color = ReaderV2Paginator.graphicsColor(snapshot.noteColor);
+    base.decoration = {
+      textDecoration: graphicsText.TextDecorationType.UNDERLINE,
+      color: ReaderV2Paginator.graphicsColor(((snapshot.noteColor & 0x00FFFFFF) | 0x99000000) >>> 0),
+      decorationStyle: graphicsText.TextDecorationStyle.DOTTED,
+      decorationThicknessScale: 1
+    };
     return base;
   }
 
@@ -2007,7 +2023,7 @@ export class ReaderV2Paginator {
         hit.rect = new ReaderV2Rect(left, top, right, bottom);
         page.actions.push(hit);
       }
-      if (!action.note) ReaderV2Paginator.appendCommentBubble(fragment, action, snapshot);
+      if (!action.note && !action.link) ReaderV2Paginator.appendCommentBubble(fragment, action, snapshot);
     }
   }
 

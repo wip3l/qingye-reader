@@ -180,6 +180,7 @@ import { LocalTtsSelection } from '../utils/localtts/LocalTtsSelection';
 import { ReaderCustomThemeEditor } from '../components/reader/ReaderCustomThemeEditor';
 import { ReaderTtsCapsule } from '../components/reader/ReaderTtsControls';
 import { ReaderTtsHoldCapsule } from '../components/reader/ReaderTtsHoldCapsule';
+import { ReaderLinkReturnCapsule } from '../components/reader/ReaderLinkReturnCapsule';
 import { TtsTurnFollow } from '../utils/TtsTurnFollow';
 import { ReaderAutoScrollCapsule, ReaderAutoScrollSpeedPanel } from '../components/reader/ReaderAutoScrollControls';
 import { ReaderAutoScrollClock } from '../core/reader/ReaderAutoScrollClock';
@@ -294,6 +295,7 @@ import { EpubChapterPlanner } from '../core/book/EpubChapterPlanner';
 import { EpubConvertResult, EpubHeading } from '../core/book/EpubHtmlConverter';
 import { EpubNoteLink } from '../core/book/EpubNoteLink';
 import { LocalChapterContentLoader } from '../core/book/LocalChapterContentLoader';
+import { EpubLinkLocation, EpubLinkTarget } from '../core/book/EpubLinkTarget';
 import { ReaderNoteContent } from '../components/reader/ReaderNoteContent';
 import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -454,7 +456,7 @@ struct ReadBookPage {
   // readerBackgroundMayBeAnimated 的缓存；初值用一个不会出现的地址，保证第一次一定探测。
   private readerAnimatedBackgroundProbeUri: string = '<unprobed>';
   private readerAnimatedBackgroundProbeResult: boolean = false;
-  @State currentChapterIndex: number = 0;
+  @State @Watch('onReaderLinkReturnPositionChanged') currentChapterIndex: number = 0;
   @State menuChapterPreviewIndex: number = 0;
   @State menuChapterSliderActive: boolean = false;
   @State menuChapterTooltipVisible: boolean = false;
@@ -562,7 +564,7 @@ struct ReadBookPage {
   @State verificationTitle: string = '网页验证';
   @State @Watch('syncChangeSourceDialog') showChangeSourceDialog: boolean = false;
   @State contentPages: string[] = [];
-  @State currentPageIndex: number = 0;
+  @State @Watch('onReaderLinkReturnPositionChanged') currentPageIndex: number = 0;
   @State currentPageText: string = '';
   @State displayPageText: string = '';
   @State displayPageChapterIndex: number = 0;
@@ -668,6 +670,20 @@ struct ReadBookPage {
   @State readerSearchBarVisible: boolean = false;
   @State readerSearchReturnChapter: number = -1;
   @State readerSearchPaintVersion: number = 0;
+  /** 点书内链接跳走后的“返回原处”胶囊：只记第一次跳走前的位置，翻满 3 页或点 × 收起。 */
+  @State readerLinkReturnVisible: boolean = false;
+  @State readerLinkReturnTurns: number = 0;
+  @State readerLinkReturnWhere: string = '';
+  @State readerLinkReturnPageText: string = '';
+  private readerLinkReturnChapter: number = -1;
+  private readerLinkReturnOffset: number = -1;
+  /** 跳到目标后停下的位置（章:页）；位置每变一次算翻了一页。跳转进行中、刚落地的一小会儿不算。 */
+  private readerLinkReturnKey: string = '';
+  private readerLinkReturnSettleUntil: number = 0;
+  private readerLinkReturnCheckPending: boolean = false;
+  private readerLinkJumpSerial: number = 0;
+  private readerLinkJumping: boolean = false;
+  private readerLinkFlashTimer: number = -1;
   private readerSearchReturnOffset: number = -1;
   private readerSearchResultQuery: string = '';
   private readerSearchHighlightChapter: number = -1;
@@ -4493,6 +4509,8 @@ struct ReadBookPage {
 
       if (this.shouldShowTtsHoldCapsule()) {
         this.readerTtsHoldCapsule()
+      } else if (this.shouldShowReaderLinkReturnCapsule()) {
+        this.readerLinkReturnCapsule()
       }
 
       Column().width(1).height(1).position({ x: 0, y: 0 }).hitTestBehavior(HitTestMode.None)
@@ -6496,6 +6514,178 @@ struct ReadBookPage {
         y: (this.pageViewHeight > 0 ? this.pageViewHeight : 720) - this.navBarHeight -
           ReaderContentSearchCapsule.HEIGHT - 36
       })
+      .transition(this.ttsMiniPlayerTransition())
+  }
+
+  // ---- 书内链接 ----
+
+  /** 点了 EPUB 里指向书内其他位置的链接：找到目标章和锚点处的文字，跳过去并显示“返回原处”胶囊。 */
+  openReaderEpubLink(action: ReaderActionData): void {
+    const book = this.book;
+    if (!book) return;
+    const serial = ++this.readerLinkJumpSerial;
+    LocalChapterContentLoader.locateLink(book, this.chapters, action.url)
+      .then((location: EpubLinkLocation | null): Promise<void> | void => {
+        if (serial !== this.readerLinkJumpSerial || book !== this.book) return;
+        if (!location) {
+          HdsFeedback.showToast('链接指向的内容不在正文里');
+          return;
+        }
+        return this.jumpToReaderEpubLink(location, serial);
+      }).catch((error: Error): void => {
+        console.warn('书内链接跳转失败:', error);
+        if (serial === this.readerLinkJumpSerial) HdsFeedback.showToast('链接打开失败');
+      });
+  }
+
+  async jumpToReaderEpubLink(location: EpubLinkLocation, serial: number): Promise<void> {
+    const firstJump = this.readerLinkReturnChapter < 0;
+    const originChapter = this.currentChapterIndex;
+    const originOffset = firstJump ? this.getReaderStableReflowOffset() : -1;
+    const where = firstJump ? this.readerLinkWhereText() : [this.readerLinkReturnWhere, this.readerLinkReturnPageText];
+    let range: number[] = [-1, -1];
+    let sourceLength = -1;
+    this.readerLinkJumping = true;
+    let jumped = false;
+    try {
+      jumped = await this.performReaderQuickJump(location.chapterIndex, -1, -1, false, false,
+        (source: string): number => {
+          const plain = ReaderActionMarker.strip(LocalBookService.stripEpubImageMarkers(source, true), true);
+          range = EpubLinkTarget.locate(plain, location.needle, location.estimate);
+          sourceLength = source.length;
+          return range[0] >= 0 ? range[0] : Math.max(0, Math.min(location.estimate, source.length));
+        });
+    } finally {
+      this.readerLinkJumping = false;
+    }
+    if (!jumped || serial !== this.readerLinkJumpSerial) return;
+    if (firstJump) {
+      this.readerLinkReturnChapter = originChapter;
+      this.readerLinkReturnOffset = originOffset;
+      this.readerLinkReturnWhere = where[0];
+      this.readerLinkReturnPageText = where[1];
+    }
+    this.readerLinkReturnTurns = 0;
+    this.readerLinkReturnKey = `${this.currentChapterIndex}:${this.currentPageIndex}`;
+    this.readerLinkReturnSettleUntil = Date.now() + 600;
+    this.readerLinkReturnVisible = true;
+    if (range[0] >= 0) {
+      this.flashReaderLinkTarget(location.chapterIndex, range[0], range[1], sourceLength);
+      if (this.isReaderNovelContinuousScrollModeActive()) this.scrollReaderContinuousToLinkTarget(serial, range[0], 0);
+    }
+  }
+
+  /** 胶囊上的“原处”：章节名与（翻页阅读时）页码。 */
+  readerLinkWhereText(): string[] {
+    const chapter = this.currentChapterIndex >= 0 && this.currentChapterIndex < this.chapters.length ?
+      this.chapters[this.currentChapterIndex] : null;
+    const title = (chapter?.title || '').trim();
+    if (this.isReaderNovelContinuousScrollModeActive() || this.contentPages.length === 0) return [title, ''];
+    const front = this.readerFrontPageCount(this.currentChapterIndex);
+    const count = this.contentPages.length - front;
+    const page = this.currentPageIndex - front + 1;
+    return [title, count > 0 && page >= 1 ? `${page}/${count}` : ''];
+  }
+
+  /** 落点那一段借正文查找的高亮浅色闪一下；正在用正文查找时不动它的高亮。 */
+  flashReaderLinkTarget(chapterIndex: number, start: number, end: number, sourceLength: number): void {
+    if (this.readerSearchBarVisible || end <= start || sourceLength < 0) return;
+    if (this.readerLinkFlashTimer >= 0) clearTimeout(this.readerLinkFlashTimer);
+    this.readerSearchHighlightChapter = chapterIndex;
+    this.readerSearchHighlightStart = start;
+    this.readerSearchHighlightEnd = end;
+    this.readerSearchHighlightSourceLength = sourceLength;
+    this.readerSearchPaintVersion++;
+    this.readerLinkFlashTimer = setTimeout((): void => {
+      this.readerLinkFlashTimer = -1;
+      if (!this.readerSearchBarVisible) this.clearReaderContentSearchHighlight();
+    }, 1600);
+  }
+
+  scrollReaderContinuousToLinkTarget(serial: number, sourceOffset: number, attempt: number): void {
+    setTimeout((): void => {
+      if (serial !== this.readerLinkJumpSerial || !this.isReaderNovelContinuousScrollModeActive()) return;
+      if (this.scrollReaderContinuousToSourceOffset(sourceOffset)) {
+        this.readerLinkReturnSettleUntil = Date.now() + 600;
+        this.scheduleReaderContinuousPositionUpdate();
+      } else if (attempt < 4) {
+        this.scrollReaderContinuousToLinkTarget(serial, sourceOffset, attempt + 1);
+      }
+    }, 80);
+  }
+
+  async returnFromReaderEpubLink(): Promise<void> {
+    const chapter = this.readerLinkReturnChapter;
+    const offset = this.readerLinkReturnOffset;
+    this.closeReaderLinkReturn();
+    if (chapter < 0 || chapter >= this.chapters.length) return;
+    this.readerLinkJumping = true;
+    try {
+      await this.performReaderQuickJump(chapter, -1, -1, false, false,
+        (source: string): number => Math.max(0, Math.min(offset, source.length)));
+    } finally {
+      this.readerLinkJumping = false;
+    }
+  }
+
+  closeReaderLinkReturn(): void {
+    this.readerLinkJumpSerial++;
+    this.readerLinkReturnVisible = false;
+    this.readerLinkReturnChapter = -1;
+    this.readerLinkReturnOffset = -1;
+    this.readerLinkReturnTurns = 0;
+    this.readerLinkReturnKey = '';
+  }
+
+  /** 章节或页码变了：同一帧里先后改章节和页码只算一次，跳转进行中与刚落地时不算。 */
+  onReaderLinkReturnPositionChanged(): void {
+    if (!this.readerLinkReturnVisible || this.readerLinkReturnCheckPending) return;
+    this.readerLinkReturnCheckPending = true;
+    setTimeout((): void => {
+      this.readerLinkReturnCheckPending = false;
+      if (!this.readerLinkReturnVisible) return;
+      const key = `${this.currentChapterIndex}:${this.currentPageIndex}`;
+      if (key === this.readerLinkReturnKey) return;
+      this.readerLinkReturnKey = key;
+      if (this.readerLinkJumping || Date.now() < this.readerLinkReturnSettleUntil) return;
+      this.readerLinkReturnTurns++;
+      if (this.readerLinkReturnTurns >= ReaderLinkReturnCapsule.TURN_LIMIT) this.closeReaderLinkReturn();
+    }, 0);
+  }
+
+  shouldShowReaderLinkReturnCapsule(): boolean {
+    return this.readerLinkReturnVisible && this.readerLinkReturnChapter >= 0 && !this.showMenu && !this.showToc &&
+      !this.showSettings && this.readerInitialPageReady && !this.shouldShowReaderContentSearchCapsule() &&
+      !this.isReaderComicModeActive() && !this.shouldBlockReaderInteraction();
+  }
+
+  @Builder
+  readerLinkReturnCapsule() {
+    ReaderLinkReturnCapsule({
+      where: this.readerLinkReturnWhere,
+      pageText: this.readerLinkReturnPageText,
+      turns: this.readerLinkReturnTurns,
+      darkMode: this.isReaderThemeDark(),
+      panelColor: this.readerPanelColor(),
+      textColor: this.readerPanelTextColor(),
+      subTextColor: this.readerPanelSubTextColor(),
+      accentColor: this.accentColor(),
+      onBack: () => {
+        this.returnFromReaderEpubLink().catch((error: Error) => {
+          console.warn('返回原处失败:', error);
+        });
+      },
+      onClose: () => { this.closeReaderLinkReturn(); }
+    })
+      .position({ x: 0, y: 0 })
+      // 停在页脚上方，与正文查找胶囊同一位置（两者不同时显示）。
+      .translate({
+        x: ((this.pageViewWidth > 0 ? this.pageViewWidth : 360) - ReaderLinkReturnCapsule.WIDTH) / 2,
+        y: (this.pageViewHeight > 0 ? this.pageViewHeight : 720) - this.navBarHeight -
+          ReaderLinkReturnCapsule.HEIGHT - 36
+      })
+      // 翻页（含手指拖动）时先藏起来：材质盖在翻动的正文上要每帧重算。只改可见性，不卸载、不重新布局。
+      .visibility(this.pageSlideDirection !== 0 || this.pageTurnAnimating ? Visibility.Hidden : Visibility.Visible)
       .transition(this.ttsMiniPlayerTransition())
   }
 
@@ -19825,6 +20015,11 @@ ${leading}` : leading;
       // 本地 EPUB 没有书源，注释在书源判断之前处理。
       this.readerSourceActionOpenedAt = now;
       this.openReaderEpubNote(action, tapX, tapY);
+      return;
+    }
+    if (action && EpubNoteLink.isLink(action.url)) {
+      this.readerSourceActionOpenedAt = now;
+      this.openReaderEpubLink(action);
       return;
     }
     if (action && MixedVideoChapter.isPlayAction(action.url)) {

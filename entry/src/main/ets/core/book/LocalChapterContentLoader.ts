@@ -1,11 +1,23 @@
 import fs from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
 import { image } from '@kit.ImageKit';
-import { Book, BookChapter } from '@legado/sourceengine';
+import { Book, BookChapter, ReaderActionMarker } from '@legado/sourceengine';
 import { EpubChapterPlanner, EpubChapterSegment } from './EpubChapterPlanner';
 import { EpubConvertResult, EpubHtmlConverter, EpubImageRef } from './EpubHtmlConverter';
+import { EpubLinkLocation, EpubLinkTarget } from './EpubLinkTarget';
 import { EpubNoteLink } from './EpubNoteLink';
 import { ReaderImageMarker } from './ReaderImageMarker';
+
+/** 书内链接目标所在的章节，以及这一章里目标文件的那一段；找不到时 index 为 -1。 */
+export class EpubTargetChapter {
+  index: number = -1;
+  segment: EpubChapterSegment = new EpubChapterSegment();
+
+  constructor(index: number, segment: EpubChapterSegment) {
+    this.index = index;
+    this.segment = segment;
+  }
+}
 
 export class LocalChapterContentLoader {
   // 纯图片段（漫画、图集）的图片按整页显示，不需要逐张读取尺寸；超过这个数量就不再读。
@@ -114,10 +126,14 @@ export class LocalChapterContentLoader {
     const file = EpubHtmlConverter.normalizePath(filePath);
     const baseDir = EpubHtmlConverter.parentPath(file);
     const sizes = new Map<string, number[]>();
-    const resolveLink = (href: string): string => {
+    const resolveLink = (href: string, note: boolean): string => {
       const target = href.startsWith('#') ? file : EpubHtmlConverter.resolvePath(baseDir, href, root);
       if (!target || !target.startsWith(`${root}/`)) return '';
-      return EpubNoteLink.create(target.substring(root.length + 1), EpubHtmlConverter.fragmentOf(href));
+      const relative = target.substring(root.length + 1);
+      if (note) return EpubNoteLink.create(relative, EpubHtmlConverter.fragmentOf(href));
+      // 书内链接只认正文文件：指向图片、样式表等的链接留作普通文字。
+      if (EpubHtmlConverter.isImagePath(target) || !/\.(?:x?html?|xml)$/i.test(target)) return '';
+      return EpubNoteLink.createLink(relative, EpubHtmlConverter.fragmentOf(href));
     };
     const resolve = (source: string): EpubImageRef | null => {
       const path = EpubHtmlConverter.resolvePath(baseDir, source, root);
@@ -159,6 +175,85 @@ export class LocalChapterContentLoader {
       return ref;
     });
     return note.content ? note : null;
+  }
+
+  /**
+   * 书内链接指向的章节：同一个文件切成多章时按锚点所在位置挑。rawPath 是解压目录里的绝对路径。
+   */
+  static async chapterForTarget(chapters: BookChapter[], rawPath: string,
+    fragment: string): Promise<EpubTargetChapter> {
+    const path = EpubHtmlConverter.normalizePath(rawPath);
+    const candidates: number[] = [];
+    const ranges: EpubChapterSegment[] = [];
+    for (let index = 0; index < chapters.length; index++) {
+      const chapter = chapters[index];
+      const segments = EpubChapterPlanner.decodeSegments(chapter.variable);
+      if (segments.length === 0 &&
+        EpubHtmlConverter.normalizePath(EpubHtmlConverter.withoutFragment(chapter.resourceUrl || '')) === path) {
+        const whole = new EpubChapterSegment();
+        whole.path = path;
+        candidates.push(index);
+        ranges.push(whole);
+        continue;
+      }
+      for (const segment of segments) {
+        if (EpubHtmlConverter.normalizePath(segment.path) !== path) continue;
+        candidates.push(index);
+        ranges.push(segment);
+        break;
+      }
+    }
+    if (candidates.length === 0) return new EpubTargetChapter(-1, new EpubChapterSegment());
+    if (candidates.length === 1 || !fragment) return new EpubTargetChapter(candidates[0], ranges[0]);
+    try {
+      const body = EpubHtmlConverter.bodyOf(await LocalChapterContentLoader.readHtmlFile(path));
+      const offset = EpubHtmlConverter.findAnchorOffset(body, fragment);
+      if (offset >= 0) {
+        for (let index = candidates.length - 1; index >= 0; index--) {
+          const startId = ranges[index].startId;
+          const start = startId ? EpubHtmlConverter.findAnchorOffset(body, startId) : 0;
+          if (start >= 0 && start <= offset) return new EpubTargetChapter(candidates[index], ranges[index]);
+        }
+      }
+    } catch (error) {
+      console.warn('[LocalChapter] locate link target failed:', error);
+    }
+    return new EpubTargetChapter(candidates[0], ranges[0]);
+  }
+
+  /**
+   * 应用排版里点了书内链接：找出目标所在章节，以及锚点后面的一小段文字和锚点前正文的长度，
+   * 阅读页在目标章的源文本里按这段文字找回落点（见 EpubLinkTarget）。找不到目标章时返回 null。
+   */
+  static async locateLink(book: Book, chapters: BookChapter[], url: string): Promise<EpubLinkLocation | null> {
+    const target = EpubNoteLink.parseLink(url);
+    const root = EpubHtmlConverter.normalizePath(book.getVariable('localExtractRoot'));
+    if (!target || !root) return null;
+    const path = EpubHtmlConverter.normalizePath(`${root}/${target.path}`);
+    if (!path.startsWith(`${root}/`) || !this.exists(path)) return null;
+    const found = await LocalChapterContentLoader.chapterForTarget(chapters, path, target.fragment);
+    if (found.index < 0) return null;
+    const location = new EpubLinkLocation();
+    location.chapterIndex = found.index;
+    const segment = found.segment;
+    const body = EpubHtmlConverter.bodyOf(await this.readHtmlFile(path));
+    // 锚点就是这一章的起点、或文件里找不到这个锚点时，落在这一段的开头。
+    const anchor = target.fragment && target.fragment !== segment.startId &&
+      EpubHtmlConverter.findAnchorOffset(body, target.fragment) >= 0 ? target.fragment : '';
+    const plain = (content: string): string => ReaderActionMarker.strip(content.replace(
+      new RegExp(`${LocalChapterContentLoader.escape(ReaderImageMarker.PREFIX)}[\\s\\S]*?` +
+        `${LocalChapterContentLoader.escape(ReaderImageMarker.SUFFIX)}`, 'g'), ''));
+    const after = await this.convertBody(body, path, root, anchor || segment.startId, segment.endId);
+    location.needle = EpubLinkTarget.needle(plain(after.content));
+    if (anchor) {
+      const before = await this.convertBody(body, path, root, segment.startId, anchor);
+      location.estimate = plain(before.content).length;
+    }
+    return location;
+  }
+
+  private static escape(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
   /** 只解码图片头部，返回 [宽, 高]；无法识别（如 SVG）时返回 [0, 0]。 */

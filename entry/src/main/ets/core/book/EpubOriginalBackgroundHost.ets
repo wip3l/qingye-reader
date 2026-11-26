@@ -137,7 +137,7 @@ export class EpubOriginalBackgroundHost implements EpubReadAloudHost {
     this.speechText = EpubOriginalBackgroundHost.speakable(this.content);
   }
 
-  /** 正文里的图片、注释等标记换成同样长度的空格：念的时候跳过，偏移仍与正文一致。 */
+  /** 正文里的图片、注释等标记换成同样长度的空格（书内链接留下文字）：念的时候跳过，偏移仍与正文一致。 */
   static speakable(content: string): string {
     let result = '';
     let cursor = 0;
@@ -151,7 +151,9 @@ export class EpubOriginalBackgroundHost implements EpubReadAloudHost {
       result += content.substring(cursor, next);
       if (next >= content.length) break;
       const end = next === nextAction ? action[1] : imageEnd + ReaderImageMarker.SUFFIX.length;
-      result += ' '.repeat(Math.max(0, end - next));
+      // 书内链接的文字是正文，照念；注释编号等其它标记跳过。
+      const text = next === nextAction ? ReaderActionMarker.textLinkLabel(content.substring(next, end)) : '';
+      result += text + ' '.repeat(Math.max(0, end - next - text.length));
       cursor = end;
     }
     return result;

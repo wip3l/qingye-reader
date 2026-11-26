@@ -11,6 +11,11 @@ export class EpubNoteTarget {
  */
 export class EpubNoteLink {
   static readonly SCHEME: string = 'legado-epub-note:';
+  /**
+   * 指向书里其他位置的普通链接（其他章节、书里自带的目录页）：点了跳过去。与引擎里
+   * ReaderActionMarker.TEXT_LINK_SCHEME 相同，去标记时链接文字留在正文里。锚点可以为空（指向文件开头）。
+   */
+  static readonly LINK_SCHEME: string = 'legado-epub-link:';
   /** 只有图标、没有文字的注释（常见于把注释图标放进链接的书）统一显示成这个字。 */
   static readonly ICON_LABEL: string = '注';
 
@@ -27,6 +32,32 @@ export class EpubNoteLink {
       .map((line: string): string => line.trim())
       .filter((line: string): boolean => line.length > 0)
       .slice(0, maxBlocks);
+  }
+
+  static createLink(path: string, fragment: string): string {
+    const file = (path || '').trim();
+    if (!file) return '';
+    return `${EpubNoteLink.LINK_SCHEME}${encodeURIComponent(file)}#${encodeURIComponent((fragment || '').trim())}`;
+  }
+
+  static isLink(url: string): boolean {
+    return (url || '').startsWith(EpubNoteLink.LINK_SCHEME);
+  }
+
+  /** 书内链接的目标；fragment 为空表示文件开头。 */
+  static parseLink(url: string): EpubNoteTarget | null {
+    const value = url || '';
+    if (!value.startsWith(EpubNoteLink.LINK_SCHEME)) return null;
+    const payload = value.substring(EpubNoteLink.LINK_SCHEME.length);
+    const hash = payload.indexOf('#');
+    const target = new EpubNoteTarget();
+    try {
+      target.path = decodeURIComponent(hash >= 0 ? payload.substring(0, hash) : payload);
+      target.fragment = hash >= 0 ? decodeURIComponent(payload.substring(hash + 1)) : '';
+    } catch (_) {
+      return null;
+    }
+    return target.path ? target : null;
   }
 
   static isNote(url: string): boolean {

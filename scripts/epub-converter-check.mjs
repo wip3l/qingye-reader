@@ -7,7 +7,7 @@
 import { loadReaderModules } from './lib/load-reader-modules.mjs';
 
 const { EpubHtmlConverter, EpubImageRef, EpubChapterPlanner, EpubChapterSegment, EpubTocEntry, ReaderImageMarker,
-  ReaderActionMarker, EpubNoteLink, EpubTextOffsetMap, EpubOriginalDocument, EpubOriginalPiece, EpubOriginalPosition,
+  ReaderActionMarker, EpubNoteLink, EpubLinkTarget, EpubTextOffsetMap, EpubOriginalDocument, EpubOriginalPiece, EpubOriginalPosition,
   EpubOriginalSpot, EpubOriginalScript, EpubOriginalLayoutOptions, ReaderNightImage, EpubDuokanExtensions, cleanup } =
   await loadReaderModules();
 
@@ -247,15 +247,18 @@ try {
 
   console.log('note links');
   {
-    // 链接解析桩：同文件锚点记到 ch1.xhtml，其它文件按 href 原样。
-    const resolveLink = (href) => EpubNoteLink.create(href.startsWith('#') ? 'Text/ch1.xhtml' :
-      `Text/${EpubHtmlConverter.withoutFragment(href)}`, EpubHtmlConverter.fragmentOf(href));
+    // 链接解析桩：同文件锚点记到 ch1.xhtml，其它文件按 href 原样；注释编号与书内链接用各自的地址。
+    const resolveLink = (href, note) => (note ? EpubNoteLink.create : EpubNoteLink.createLink)(
+      href.startsWith('#') ? 'Text/ch1.xhtml' : `Text/${EpubHtmlConverter.withoutFragment(href)}`,
+      EpubHtmlConverter.fragmentOf(href));
     const withNotes = (body) => EpubHtmlConverter.convertBody(body, resolve, '', '', resolveLink).content;
-    // 标记显示成 {文字→文件#锚点}，便于断言。
+    // 注释标记显示成 {文字→文件#锚点}，书内链接显示成 {文字⇒文件#锚点}，便于断言。
     const readable = (text) => text.replace(/\[\[LEGADO_READER_ACTION_V3:[^\]]+\]\]/g, (raw) => {
       const data = ReaderActionMarker.parse(raw);
-      const target = data ? EpubNoteLink.parse(data.url) : null;
-      return target ? `{${data.label}→${target.path}#${target.fragment}}` : raw;
+      const note = data ? EpubNoteLink.parse(data.url) : null;
+      if (note) return `{${data.label}→${note.path}#${note.fragment}}`;
+      const link = data ? EpubNoteLink.parseLink(data.url) : null;
+      return link ? `{${data.label}⇒${link.path}#${link.fragment}}` : raw;
     });
     const plainOf = (text) => text.replace(/\[\[LEGADO_READER_ACTION_V3:[^\]]+\]\]/g,
       (raw) => ReaderActionMarker.parse(raw).label);
@@ -266,17 +269,68 @@ try {
       'EPUB3 noteref 变成注释标记，被引用的 aside 脚注不再留在正文里');
     equal(readable(withNotes('<p>正文<sup><a href="#n2">2</a></sup>，<a href="notes.xhtml#n3">[3]</a>，' +
       '见<a href="ch2.xhtml#s1">第二章</a>。</p>')),
-      '正文{²→Text/ch1.xhtml#n2}，{[3]→Text/notes.xhtml#n3}，见第二章。',
-      '上标编号与跨文件尾注识别为注释，普通章节链接仍是文字');
+      '正文{²→Text/ch1.xhtml#n2}，{[3]→Text/notes.xhtml#n3}，见{第二章⇒Text/ch2.xhtml#s1}。',
+      '上标编号与跨文件尾注识别为注释，普通章节链接换成书内链接');
     equal(readable(withNotes('<p>多看<a class="duokan-footnote" href="#df-1"><img src="gaiji.png"/></a>文字</p>' +
       '<ol class="duokan-footnote-content"><li id="df-1"><p><a href="#dfref-1">◎</a>多看注释</p></li></ol>')),
       '多看{注→Text/ch1.xhtml#df-1}文字', '只有图标的注释显示成“注”，多看注释列表不留在正文里');
     equal(readable(withNotes('<p id="r1"><a href="text.xhtml#ref1">[1]</a>尾注条目</p><p>正文<a href="#x">①</a>。</p>')),
-      '[1]尾注条目\n\n正文{①→Text/ch1.xhtml#x}。', '尾注列表开头返回正文的编号不当注释');
+      '{[1]⇒Text/text.xhtml#ref1}尾注条目\n\n正文{①→Text/ch1.xhtml#x}。', '尾注列表开头返回正文的编号不当注释，当书内链接');
     equal(readable(withNotes('<p>见<a href="#fn9" epub:type="noteref">1</a></p><aside epub:type="footnote" id="other">' +
       '<p>无人引用</p></aside>')), '见{1→Text/ch1.xhtml#fn9}\n\n无人引用', '没被引用的 aside 照常显示');
     equal(EpubHtmlConverter.convertBody(epub3, resolve).content, '正文1继续。\n\n注释一\n\n下一段',
       '不传链接解析时与以前的转换结果一致');
+
+    console.log('text links');
+    {
+      const cases = [
+        ['<p>沈砚翻到最后一页：<a href="ch12.xhtml#jie">见第十二章《借书簿》</a>。</p>', '跨文件锚点'],
+        ['<p>前<a href="ch2.xhtml"> 第二章 </a>后</p>', '链接文字两端的空格留在外面'],
+        ['<p><a href="#top">回到开头</a></p><p>下一段</p>', '同文件锚点、整段都是链接'],
+        ['<ul><li><a href="ch1.xhtml">第一章 开端</a></li><li><a href="ch2.xhtml#x">第二章</a></li></ul>', '书里自带的目录页'],
+        ['<p>上标<a href="ch3.xhtml#a"><sup>12</sup>页</a>说明</p>', '链接里的上标数字与正文转换一致'],
+      ];
+      for (const [body, name] of cases) {
+        const converted = withNotes(body);
+        check(ReaderActionMarker.has(converted), `${name}：换成了标记`);
+        equal(plainOf(converted), EpubHtmlConverter.convertBody(body, resolve).content, `${name}：显示文字与普通转换逐字一致`);
+        equal(ReaderActionMarker.strip(converted), plainOf(converted), `${name}：去标记时保留链接文字`);
+        equal(ReaderActionMarker.strip(converted, true).length, converted.length, `${name}：保留偏移的去标记长度不变`);
+      }
+      equal(readable(withNotes(cases[0][0])), '沈砚翻到最后一页：{见第十二章《借书簿》⇒Text/ch12.xhtml#jie}。',
+        '链接地址带文件与锚点');
+      equal(readable(withNotes(cases[1][0])), '前 {第二章⇒Text/ch2.xhtml#} 后', '没有锚点时指向文件开头');
+      equal(readable(withNotes('<h2><a href="toc.xhtml#t1">第一章</a></h2><p>正文</p>')), '第一章\n\n正文',
+        '标题里回目录的链接保持普通文字');
+      equal(readable(withNotes('<p>访问<a href="https://example.com/">网站</a>或<a href="mailto:a@b.c">邮件</a></p>')),
+        '访问网站或邮件', '书外的网址与邮件地址不换');
+      equal(readable(withNotes('<p><a href="ch2.xhtml"><img src="cover.jpg"/></a></p>')).includes('⇒'), false,
+        '只有图片的链接不换');
+      equal(readable(withNotes(`<p><a href="ch2.xhtml">${'长'.repeat(120)}</a></p>`)).includes('⇒'), false,
+        '过长的链接文字不换');
+      equal(readable(withNotes('<p><a href="ch2.xhtml">\u3000第二章</a></p>')).includes('⇒'), false,
+        '两端有全角空格的链接不换（标记会裁掉它）');
+      const many = Array.from({ length: 230 }, (_, i) => `<p><a href="c${i}.xhtml">第${i}章</a></p>`).join('');
+      const manyText = withNotes(many);
+      equal(readable(manyText).split('⇒').length - 1, 200, '一个片段最多换 200 个链接');
+      equal(plainOf(manyText), EpubHtmlConverter.convertBody(many, resolve).content, '超出的链接留作普通文字');
+      const noteMarker = withNotes('<p>正文<a epub:type="noteref" href="#fn1">1</a>继续。</p>');
+      equal(ReaderActionMarker.strip(noteMarker), '正文继续。', '注释编号去标记时照旧去掉');
+      const limited = ReaderActionMarker.limit(manyText, 3);
+      equal(plainOf(limited), plainOf(manyText), '超出数量被丢弃的书内链接留下文字');
+
+      equal(EpubLinkTarget.needle('\n\u3000\u3000有人说，簿子上的名字会自己出现：先有名字，后有来借书的人。'),
+        '有人说，簿子上的名字会自己出现：先有名字', '落点文字去掉段首缩进，取前 20 字');
+      const source = '第十二章\n\n　　借书簿最旧。\n\n　　有人说，簿子上的名字会自己出现。\n\n　　有人说，簿子上的名字会自己出现。';
+      const second = source.lastIndexOf('有人说');
+      const range = EpubLinkTarget.locate(source, '有人说，簿子上的名字', second - 2);
+      equal(range[0], second, '有几处时取离估计位置最近的一处');
+      equal(range[1], source.length, '闪动范围到这一段结束');
+      equal(EpubLinkTarget.locate(source, '有人说，簿子上的名字', 0)[0], source.indexOf('有人说'), '估计在前面时取第一处');
+      equal(EpubLinkTarget.locate(source, '有人说，簿子上的名字被替换规则改过', 0)[0], source.indexOf('有人说'),
+        '整段找不到时用前 8 个字再找');
+      equal(EpubLinkTarget.locate(source, '完全不存在的句子', 0)[0], -1, '找不到返回 -1');
+    }
 
     const notes = '<aside epub:type="footnote" id="fn1"><p><a epub:type="backlink" href="#r">1</a>. 注释一内容</p></aside>' +
       '<p class="note"><a id="n5" href="#r5">[5]</a>第五条注释</p>' +
