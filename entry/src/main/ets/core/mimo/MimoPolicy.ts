@@ -99,6 +99,30 @@ export class MimoPolicy {
     return merged;
   }
 
+  /**
+   * A voice that is not streamed is heard only after its whole first segment has been synthesised, so a
+   * long opening sentence means a long wait before anything plays. Cut the first spoken unit at a comma
+   * near the front. Quoted speech is left whole so its speaker is judged on the full line.
+   */
+  static shortenHead(units: MimoUnit[], max: number = 40): MimoUnit[] {
+    const index = units.findIndex((unit: MimoUnit): boolean => /[\p{L}\p{N}]/u.test(unit.text));
+    if (index < 0 || units[index].text.length <= max) return units;
+    const text = units[index].text;
+    if ('“「『"'.includes(text.trimStart().charAt(0))) return units;
+    let cut = -1;
+    for (let position = 10; position < Math.min(text.length - 6, max); position++) {
+      if ('，,、；;：:'.includes(text[position])) cut = position + 1;
+    }
+    if (cut < 0) return units;
+    const head = new MimoUnit();
+    head.start = units[index].start; head.end = head.start + cut; head.text = text.slice(0, cut);
+    const tail = new MimoUnit();
+    tail.start = head.end; tail.end = units[index].end; tail.text = text.slice(cut);
+    const result = units.slice(0, index).concat([head, tail], units.slice(index + 1));
+    result.forEach((unit: MimoUnit, id: number): void => { unit.id = id; });
+    return result;
+  }
+
   static validate(result: MimoAnalysis, units: MimoUnit[]): void {
     if (!result || !Array.isArray(result.assignments) || !Array.isArray(result.roles) ||
       result.roles.length > 64 || result.assignments.length !== units.length) {

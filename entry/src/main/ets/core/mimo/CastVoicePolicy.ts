@@ -395,6 +395,65 @@ export class CastVoicePolicy {
   }
 
   /**
+   * How many requests a custom voice may have in flight, read from its concurrentRate the same way the
+   * regular reader does. Empty means no limit (3 at most here). A plain number is the legado format for
+   * "at least this many milliseconds between requests" and the request layer runs such voices one at a
+   * time, so a plain "3" means one request at a time, not three. "n/ms" allows n requests per window,
+   * so up to n (at most 3) run together.
+   */
+  static httpConcurrency(concurrentRate: string): number {
+    const raw = (concurrentRate || '').trim();
+    if (!raw || raw === '0') return 3;
+    const window = raw.match(/^(\d+)\s*\/\s*(\d+)$/);
+    if (window) return Math.max(1, Math.min(3, Number(window[1]) || 1));
+    return 1;
+  }
+
+  /**
+   * Cuts a long passage into pieces for a voice that is not streamed. Such a voice is heard only after a
+   * whole request has finished, and many custom endpoints synthesise at about real-time speed: one
+   * 90-character sentence then blocks playback for as long as it lasts, while three pieces of 30 keep
+   * flowing. Cuts fall on punctuation only; pieces are balanced so no short tail is left on its own.
+   * Text of up to `whole` characters is not cut.
+   */
+  static synthesisPieces(text: string, whole: number = 56, target: number = 40): string[] {
+    if (text.length <= whole) return [text];
+    const clauses: string[] = [];
+    let start = 0;
+    for (let index = 0; index < text.length; index++) {
+      if (!'，,、；;：:。！？!?…'.includes(text[index])) continue;
+      // Keep a run of punctuation and any closing quote with the clause it ends.
+      let end = index + 1;
+      while (end < text.length && '，,、；;：:。！？!?…”’」』）)'.includes(text[end])) end++;
+      clauses.push(text.slice(start, end));
+      start = end; index = end - 1;
+    }
+    if (start < text.length) clauses.push(text.slice(start));
+    if (clauses.length < 2) return [text];
+    const count = Math.max(2, Math.round(text.length / target));
+    const size = text.length / count;
+    const pieces: string[] = [];
+    let current = '';
+    for (const clause of clauses) {
+      // Close the piece once it is nearer the even size without this clause than with it.
+      if (current && pieces.length < count - 1 &&
+        Math.abs(current.length - size) <= Math.abs(current.length + clause.length - size)) {
+        pieces.push(current); current = '';
+      }
+      current += clause;
+    }
+    if (current) pieces.push(current);
+    // A piece without anything to say (only punctuation) joins its neighbour.
+    const result: string[] = [];
+    for (const piece of pieces) {
+      if (result.length > 0 && !/[\p{L}\p{N}]/u.test(piece)) result[result.length - 1] += piece;
+      else if (result.length > 0 && !/[\p{L}\p{N}]/u.test(result[result.length - 1])) result[result.length - 1] += piece;
+      else result.push(piece);
+    }
+    return result;
+  }
+
+  /**
    * Order in which upcoming offline segments are synthesised. The offline engine holds one model at a
    * time, so segments are grouped by model, starting with the model of the segment needed first:
    * a narrator on one model and characters on another then cost two model loads per batch instead of
