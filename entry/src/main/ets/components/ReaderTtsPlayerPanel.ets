@@ -85,6 +85,8 @@ export struct ReaderTtsPlayerPanel {
   @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('mimoEnabled') mimoEnabled: boolean = false;
   @StorageProp('mimoMulti') mimoMulti: boolean = false;
+  /** 多角色朗读（离线/自定义音色发声）开着：同样显示当前说话人和纠正入口。 */
+  @StorageProp('castVoiceEnabled') castVoiceEnabled: boolean = false;
   @StorageProp('mimoCurrentRole') mimoCurrentRole: string = '';
   @StorageProp('mimoReadingStatus') mimoReadingStatus: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
@@ -532,18 +534,19 @@ export struct ReaderTtsPlayerPanel {
         }
         .width('100%')
       }
-      if (this.mimoEnabled) {
+      if (this.mimoEnabled || this.castVoiceEnabled) {
         Row({ space: AppSpacing.SM }) {
-          Text(this.mimoReadingStatus || this.mimoCurrentRole || (this.mimoMulti ? '自动识别人物' : '单音色朗读'))
+          Text(this.mimoReadingStatus || this.mimoCurrentRole ||
+            (this.mimoMulti || this.castVoiceEnabled ? '自动识别人物' : '单音色朗读'))
             .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor).layoutWeight(1)
             .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-          if (this.mimoMulti) {
+          if (this.mimoMulti || this.castVoiceEnabled) {
             Button('这句不对？').height(30).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor)
               .backgroundColor(Color.Transparent)
-              .onClick(() => router.pushUrl({ url: 'pages/MimoBookRoles' }))
+              .onClick(() => router.pushUrl({ url: this.castVoiceEnabled ? 'pages/CastBookRoles' : 'pages/MimoBookRoles' }))
             Button('本书角色').height(30).fontSize(AppFontSize.CAPTION)
               .fontColor(this.primaryTextColor).backgroundColor(ThemeRuntime.softFillColor(this.darkMode))
-              .onClick(() => router.pushUrl({ url: 'pages/MimoBookRoles' }))
+              .onClick(() => router.pushUrl({ url: this.castVoiceEnabled ? 'pages/CastBookRoles' : 'pages/MimoBookRoles' }))
           }
         }.width('100%').padding({ left: AppSpacing.XS })
       }

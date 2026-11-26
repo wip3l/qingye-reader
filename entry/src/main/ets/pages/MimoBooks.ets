@@ -5,6 +5,7 @@ import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { MimoCastSummary, MimoStore } from '../utils/mimo/MimoStore';
+import { CastVoiceStore } from '../utils/mimo/CastVoiceStore';
 import { syncSystemBars } from '../utils/SystemBars';
 import { appDb } from '../model/data/AppDatabase';
 
@@ -77,7 +78,9 @@ struct MimoBooksPage {
           ForEach(this.items, (item: MimoBookItem, index: number) => {
             SettingNavRow({ title: item.name, description: item.description,
               showDivider: index < this.items.length - 1,
-              onTap: () => router.pushUrl({ url: 'pages/MimoBookRoles', params: { book: item.book } }) })
+              // 人物档案两种多角色共用；开着“多角色朗读”时看的是离线/自定义音色那一套绑定。
+              onTap: () => router.pushUrl({ url: CastVoiceStore.enabled() ? 'pages/CastBookRoles' : 'pages/MimoBookRoles',
+                params: { book: item.book } }) })
           }, (item: MimoBookItem): string => item.book + item.description)
         }.width('100%').backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
       }

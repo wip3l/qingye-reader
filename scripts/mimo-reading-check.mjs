@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 
 const policySource = fs.readFileSync(new URL('../entry/src/main/ets/core/mimo/MimoPolicy.ts', import.meta.url), 'utf8');
 const policy = vm.runInNewContext(stripTypeScriptTypes(policySource.replaceAll('export ', '') +
-  '\n({MimoPolicy,MimoSseParser,MimoRole,MimoUnit,MimoVoicePreset})'));
+  '\n({MimoPolicy,MimoSseParser,MimoRole,MimoUnit,MimoVoicePreset,CastVoiceRef})'));
 const { MimoPolicy, MimoSseParser, MimoRole, MimoUnit } = policy;
 const voiceSource=fs.readFileSync(new URL('../entry/src/main/ets/core/mimo/MimoVoicePolicy.ts',import.meta.url),'utf8')
   .replace(/^import .*;\r?\n/gm,'').replace(/^export \{.*;\r?\n/gm,'').replaceAll('export ','');
@@ -130,7 +130,27 @@ const readingSource=fs.readFileSync(new URL('../entry/src/main/ets/utils/mimo/Mi
 const files=new Map();const storage=new Map([['appCacheDir','/cache']]);
 let networkCount=0;let failAt=0;let held=null;let holdNext=false;let clientStops=0;
 let inFlight=0;let maxInFlight=0;let slowSynth=false;const events=[];
-let savedCast=null;let proposals=[];let beforeReceive=null;const speechVoices=[];
+let savedCast=null;let proposals=[];let beforeReceive=null;const speechVoices=[];let assignRole=null;
+// 多角色朗读（离线/自定义音色发声）用的桩：真的策略，假的音色库与合成。
+const castPolicy=vm.runInNewContext(stripTypeScriptTypes(fs.readFileSync(new URL('../entry/src/main/ets/core/mimo/CastVoicePolicy.ts',import.meta.url),'utf8')
+  .replace(/^import .*;\r?\n/gm,'').replace(/^export \{.*;\r?\n/gm,'').replaceAll('export ','')+'\n({CastVoicePolicy})'),
+  {CastVoiceRef:policy.CastVoiceRef,MimoRole}).CastVoicePolicy;
+const castScheme=castPolicy.scheme('s','默认方案');const castUnsupported=new Set();const castSpoken=[];let castPcmWrites=[];
+let localBusy=0;let localOverlap=false;
+const castStore={
+  blocker:()=>castPolicy.key(castScheme.narrator)&&!castUnsupported.has(castPolicy.key(castScheme.narrator))?'':'音色方案还没有选旁白音色',
+  voiceFor:(role,cast)=>castPolicy.voiceFor(role,cast.roles,castScheme,ref=>!castUnsupported.has(castPolicy.key(ref)),()=>'unknown'),
+  localModel:ref=>ref.kind==='local'?{id:ref.id}:undefined,customVoice:ref=>ref.kind==='http'?{id:ref.id}:undefined,
+  markUnsupported:key=>castUnsupported.add(key)};
+const localEngine={cancelAll(){},async synthesize(model,text,speed){
+  if(localBusy)localOverlap=true;localBusy++;await new Promise(r=>setTimeout(r,1));localBusy--;
+  castSpoken.push(['local:'+model.id,text,speed]);
+  return {pcm:new Int16Array(2205).buffer,sampleRate:22050,speed:1,playerSpeed:false,filePath:''};}};
+class FakeHttpReader{stop(){} release(){} discardAudio(){}
+  async synthesize(voice,text,speed){castSpoken.push(['http:'+voice.id,text,speed]);
+    if(voice.id==='mp3')return {pcm:new ArrayBuffer(0),sampleRate:0,speed:1,playerSpeed:false,filePath:'/cache/a.mp3'};
+    return {pcm:new Int16Array(1600).buffer,sampleRate:16000,speed:speed,playerSpeed:true,filePath:''};}}
+const stretch={stretch16BitMono:(pcm,rate,factor)=>pcm.slice(0,Math.floor(pcm.byteLength/factor/2)*2)};
 const settings={multi:false,voice:'白桦',namespace:'test',enabled:true};
 const fakeStore={load:()=>settings,key:async()=>'test-key',onCredentialsChanged:[],
   library:()=>voicePolicy.MimoVoicePolicy.defaults(settings.voice),voiceRevision:0,
@@ -144,13 +164,13 @@ const fakeFiles={accessSync:p=>files.has(p),mkdirSync:()=>{},readTextSync:p=>{if
   writeSync:(p,b)=>{files.set(p,Buffer.from(b));return files.get(p).length},closeSync:()=>{},
   readSync:(p,b)=>{new Uint8Array(b).set(files.get(p));return files.get(p).length},
   renameSync:(a,b)=>{files.set(b,files.get(a));files.delete(a)},unlinkSync:p=>files.delete(p)};
-class Player {write(){return Promise.resolve()} writeSegment(b,s,focus){focus();return this.write()} stop(){} release(){} pause(){return Promise.resolve()} resume(){return Promise.resolve()} waitForSegmentEnd(){return Promise.resolve()} drain(){return Promise.resolve()}}
+class Player {write(){return Promise.resolve()} writeSegment(b,s,focus){castPcmWrites.push([b.byteLength,s]);focus();return this.write()} stop(){} release(){} pause(){return Promise.resolve()} resume(){return Promise.resolve()} waitForSegmentEnd(){return Promise.resolve()} drain(){return Promise.resolve()}}
 class Client {
   stop(){clientStops++;}
   async analyze(key,units,roles,context){
     events.push('analyze:'+units[0].id);
     await new Promise(r=>setTimeout(r,1));
-    return {roles:proposals,assignments:units.map(u=>({unitId:u.id,roleId:'narrator',emotion:'平静',confidence:1}))};
+    return {roles:proposals,assignments:units.map(u=>({unitId:u.id,roleId:assignRole?assignRole(u):'narrator',emotion:'平静',confidence:1}))};
   }
   async synthesize(key,text,voice,style,receive){
     speechVoices.push(voice);
@@ -166,6 +186,8 @@ class Client {
 const Session=vm.runInNewContext(stripTypeScriptTypes(readingSource+'\nMimoReadingSession'),{
   fs:fakeFiles,MimoStore:fakeStore,MimoClient:Client,TtsPcmAudioPlayer:Player,MimoPolicy,MimoUnit,MimoRole,
   MimoVoicePolicy:voicePolicy.MimoVoicePolicy,MIMO_AGES:voicePolicy.MIMO_AGES,MIMO_GENDERS:voicePolicy.MIMO_GENDERS,MIMO_VOICES:['白桦','苏打','茉莉','冰糖'],
+  CastVoiceRef:policy.CastVoiceRef,CastVoicePolicy:castPolicy,CastVoiceStore:castStore,HttpTtsReader:FakeHttpReader,
+  LocalTtsEngine:localEngine,PcmTimeStretch:stretch,
   AppStorage:{get:k=>storage.get(k),setOrCreate:(k,v)=>storage.set(k,v)}});
 const session=new Session();const focus=[];
 const options={book:'book',chapter:'one',sourceOffset:0,speed:1,onAudio:()=>{},onFocus:u=>focus.push(u.text)};
@@ -249,4 +271,42 @@ savedCast.roles[0].preset={...customPreset,name:'本书保存的声音'};
 await session.read('这是本书保存版本显示检查。',options);
 assert.equal(storage.get('mimoCurrentRole'),'旁白 · 本书保存的声音');
 fakeStore.library=originalLibrary;
+
+// 多角色朗读：人物识别照旧，发声换成离线/自定义音色；不走 MiMo 合成。
+files.clear();savedCast=null;focus.length=0;castSpoken.length=0;castPcmWrites=[];
+const castOptions={...options,cast:true,voiceSpeed:1.5,speakText:t=>t.replace(/\[\d+\]/g,'')};
+await assert.rejects(session.read('他推门进来。',castOptions),/旁白音色/,'a scheme without a narrator voice stops with a clear reason');
+castScheme.narrator=castPolicy.ref('local','narr','旁白声');
+castScheme.malePool=[castPolicy.ref('local','m1','男一'),castPolicy.ref('http','mp3','压缩男声')];
+castScheme.femalePool=[castPolicy.ref('http','f1','女一')];
+proposals=[{id:'shen',name:'沈砚',aliases:[],gender:'male',age:'unknown',ageEvidence:'',ageConfidence:0},
+  {id:'lin',name:'林晚',aliases:[],gender:'female',age:'unknown',ageEvidence:'',ageConfidence:0},
+  {id:'zhou',name:'周默',aliases:[],gender:'male',age:'unknown',ageEvidence:'',ageConfidence:0}];
+const speakerOf=[['“今晚的雨恐怕一时半会儿停不了了[12]。”','shen'],['“那我们就在这里多等一会儿好了。”','lin'],['“我去前面看看路是不是还通着。”','zhou']];
+assignRole=u=>(speakerOf.find(([line])=>u.text.includes(line.slice(1,8)))||[,'narrator'])[1];
+const castText='沈砚望着窗外慢慢地说了一句话：“今晚的雨恐怕一时半会儿停不了了[12]。”林晚把茶杯放回桌上轻声回答：“那我们就在这里多等一会儿好了。”周默已经站起身来拿起了伞：“我去前面看看路是不是还通着。”';
+const networkBeforeCast=networkCount;
+await session.read(castText,castOptions);
+assert.equal(focus.join(''),castText,'every unit is focused in order');
+assert.equal(networkCount,networkBeforeCast,'no MiMo synthesis in multi-voice reading');
+const voiceOfLine=line=>castSpoken.filter(([,text])=>text.includes(line)).map(([voice])=>voice);
+assert.deepEqual(voiceOfLine('沈砚望着窗外'),['local:narr'],'narration uses the scheme narrator');
+assert.deepEqual(voiceOfLine('今晚的雨'),['local:m1'],'the first male character takes the first pool voice');
+assert.ok(castSpoken.some(([voice,text])=>voice==='local:m1'&&!text.includes('[12]')),'footnote markers are removed before synthesis');
+assert.deepEqual(voiceOfLine('那我们就在这里'),['http:f1']);
+assert.deepEqual(voiceOfLine('我去前面看看').at(-1),'local:m1','an MP3 voice is dropped and the line is read by another pool voice');
+assert.ok(voiceOfLine('我去前面看看').includes('http:mp3'));
+assert.ok(castUnsupported.has('http:mp3'),'the MP3 voice is remembered as unsupported');
+assert.ok(castSpoken.every(([,,speed])=>speed===1.5),'the reading speed reaches every voice');
+assert.ok(castPcmWrites.length>0&&castPcmWrites.every(([,rate])=>rate===24000),'all voices are written at one sample rate');
+assert.ok(castPcmWrites.some(([bytes])=>bytes===4800),'22.05 kHz offline audio is resampled to 24 kHz');
+assert.equal(localOverlap,false,'offline synthesis is serialised');
+assert.equal(castPolicy.key(savedCast.roles.find(r=>r.id==='shen').castVoice),'local:m1','pool picks are stored with the cast');
+assert.equal(storage.get('mimoCurrentRole'),'周默 · 男一');
+// 重读同一段：人物的音色不变，也不再去试 MP3 音色。
+castSpoken.length=0;focus.length=0;
+await session.read(castText,castOptions);
+assert.deepEqual(voiceOfLine('今晚的雨'),['local:m1']);
+assert.ok(!castSpoken.some(([voice])=>voice==='http:mp3'));
+assignRole=null;proposals=[];
 console.log('MiMo session checks passed: source focus, cached replay, failed segment retention, short-unit merging, synthesis and analysis prefetch, stale chapter cancellation.');

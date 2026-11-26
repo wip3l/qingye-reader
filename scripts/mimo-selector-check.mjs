@@ -8,7 +8,9 @@ const choices=[{key:'multi',label:'MiMo · 自动多角色',multi:true},
  {key:'child',presetId:'child',label:'MiMo · 儿童·清亮',multi:false},
  {key:'custom',presetId:'custom',label:'MiMo · 我的提示词',multi:false}];
 let configured=true,selected='multi',routes=0;const calls=[];
+let castOn=false;
 const context=vm.createContext({
+ CastVoiceStore:{enabled:()=>castOn,title:()=>'多角色 · 默认方案',setEnabled:value=>{castOn=value}},
  MimoStore:{voiceChoices:()=>choices,load:()=>({enabled:true,multi:selected==='multi'}),isConfigured:()=>configured,
  selectedVoiceKey:()=>selected,selectedVoiceTitle:()=>choices.find(c=>c.key===selected).label,
  selectVoice:(c,book)=>{selected=c.key;calls.push([c.key,book]);return true}},
@@ -27,6 +29,13 @@ Object.assign(reader,{bookUrl:'current-book',isTtsSpeaking:false,ttsReader:{isSp
  applyLocalTtsVoice:()=>calls.push(['local']),applyCloudTtsVoice:()=>calls.push(['cloud']),applyCustomTtsVoice:()=>calls.push(['custom']),applyTtsVoice:()=>calls.push(['system'])});
 assert.deepEqual(Array.from(reader.ttsQuickVoiceLabels()).slice(0,3),choices.map(c=>c.label));
 for(let i=0;i<choices.length;i++){reader.selectTtsQuickVoice(i);assert.equal(selected,choices[i].key);assert.equal(reader.ttsQuickVoiceSelectedIndex(),i);assert.equal(calls.at(-1)[1],'current-book');}
+// 多角色朗读开着时它是列表第一项：点它进设置；下面的常规音色位置不变。
+castOn=true;const routesBefore=routes;
+assert.equal(reader.ttsQuickVoiceLabels()[0],'多角色 · 默认方案');
+assert.equal(reader.ttsQuickVoiceSelectedIndex(),0);
+reader.selectTtsQuickVoice(0);assert.equal(routes,routesBefore+1,'the multi-voice entry opens its settings');
+reader.selectTtsQuickVoice(1);assert.equal(calls.at(-1)[0],'local','regular voices follow the multi-voice entry');
+castOn=false;routes=routesBefore;
 for(const [offset,name] of [[0,'local'],[1,'cloud'],[2,'custom'],[3,'system']]){reader.selectTtsQuickVoice(choices.length+offset);assert.equal(calls.at(-1)[0],name,'regular-provider indexes remain aligned');}
 reader.selectTtsQuickVoice(choices.length+4);assert.equal(routes,1,'trailing settings entry still opens settings');
 configured=false;const before=calls.length;reader.selectTtsQuickVoice(1);assert.equal(routes,2);assert.equal(calls.length,before,'no key navigates to setup without activating a preset');

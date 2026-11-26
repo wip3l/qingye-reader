@@ -1,5 +1,12 @@
 export const MIMO_VOICES: string[] = ['白桦', '苏打', '茉莉', '冰糖'];
 
+/** A non-MiMo voice a character speaks with: an installed offline voice ('local') or a custom voice ('http'). */
+export class CastVoiceRef {
+  kind: string = '';
+  id: string = '';
+  name: string = '';
+}
+
 export class MimoRole {
   id: string = 'narrator';
   name: string = '旁白';
@@ -11,6 +18,11 @@ export class MimoRole {
   gender: string = 'unknown';
   ageEvidence: string = '';
   preset?: MimoVoicePreset;
+  /** Marked by the user as a lead; leads speak with the scheme's lead voice. */
+  lead?: boolean;
+  /** Offline/custom voice for multi-voice reading: a pool pick kept stable across chapters, or a manual choice. */
+  castVoice?: CastVoiceRef;
+  castManual?: boolean;
 }
 
 export class MimoUnit {

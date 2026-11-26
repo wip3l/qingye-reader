@@ -1,0 +1,276 @@
+import { CastVoiceRef, MimoRole } from './MimoPolicy';
+export { CastVoiceRef } from './MimoPolicy';
+
+export const CAST_AGES: string[] = ['unknown', 'teen', 'young', 'middle', 'elder'];
+export const CAST_AGE_LABELS: string[] = ['未标', '少年', '青年', '中年', '老年'];
+export const CAST_GENDERS: string[] = ['unknown', 'male', 'female'];
+export const CAST_GENDER_LABELS: string[] = ['不限', '男', '女'];
+/** Scheme slots, in the order the editor shows them. */
+export const CAST_SLOTS: string[] = ['narrator', 'maleLead', 'femaleLead', 'malePool', 'femalePool', 'unknown'];
+export const CAST_SLOT_LABELS: string[] = ['旁白', '男主角', '女主角', '男配角', '女配角', '性别不明'];
+
+/** What the user said about a voice. Voices without a tag are never picked automatically. */
+export class CastVoiceTag {
+  key: string = '';
+  gender: string = 'unknown';
+  age: string = 'unknown';
+  narrator: boolean = false;
+}
+
+/**
+ * Narrator and the two leads have one voice each; supporting characters draw from a pool by gender.
+ * An empty `unknown` means characters of unknown gender speak with the narrator's voice.
+ */
+export class CastScheme {
+  id: string = '';
+  name: string = '';
+  narrator: CastVoiceRef = new CastVoiceRef();
+  maleLead: CastVoiceRef = new CastVoiceRef();
+  femaleLead: CastVoiceRef = new CastVoiceRef();
+  malePool: CastVoiceRef[] = [];
+  femalePool: CastVoiceRef[] = [];
+  unknown: CastVoiceRef = new CastVoiceRef();
+}
+
+export class CastLibrary {
+  enabled: boolean = false;
+  schemes: CastScheme[] = [];
+  schemeId: string = 'default';
+  tags: CastVoiceTag[] = [];
+  /** Custom voices seen answering with a compressed file (MP3); they cannot be mixed into one PCM stream yet. */
+  unsupported: string[] = [];
+  revision: number = 0;
+}
+
+export class CastVoiceMatch {
+  ref: CastVoiceRef = new CastVoiceRef();
+  /** Slot label shown beside the character, e.g. 男主角 / 女配角 / 已指定. */
+  slot: string = '';
+  /** `role.castVoice` was written and the cast needs saving. */
+  changed: boolean = false;
+}
+
+/** Pure policy for multi-voice reading with offline and custom voices. */
+export class CastVoicePolicy {
+  static readonly POOL_LIMIT: number = 12;
+
+  static key(ref: CastVoiceRef | undefined): string {
+    return ref && ref.kind && ref.id ? ref.kind + ':' + ref.id : '';
+  }
+  static ref(kind: string, id: string, name: string): CastVoiceRef {
+    const ref = new CastVoiceRef(); ref.kind = kind; ref.id = id; ref.name = name; return ref;
+  }
+  static clone(ref: CastVoiceRef | undefined): CastVoiceRef {
+    return ref ? CastVoicePolicy.ref(ref.kind, ref.id, ref.name) : new CastVoiceRef();
+  }
+  static valid(ref: CastVoiceRef | undefined): boolean {
+    return !!ref && (ref.kind === 'local' || ref.kind === 'http') && typeof ref.id === 'string' &&
+      ref.id.length > 0 && ref.id.length <= 200 && typeof ref.name === 'string' && ref.name.length <= 80;
+  }
+  static sourceLabel(kind: string): string { return kind === 'local' ? '离线' : kind === 'http' ? '自定义' : ''; }
+  static ageLabel(age: string): string { return CAST_AGE_LABELS[CAST_AGES.indexOf(age)] || '未标'; }
+  static genderLabel(gender: string): string { return CAST_GENDER_LABELS[CAST_GENDERS.indexOf(gender)] || '不限'; }
+  static tagged(tag: CastVoiceTag | undefined): boolean {
+    return !!tag && (tag.gender !== 'unknown' || tag.age !== 'unknown' || tag.narrator);
+  }
+  static tagLabel(tag: CastVoiceTag | undefined): string {
+    if (!CastVoicePolicy.tagged(tag)) return '未标';
+    const parts: string[] = [];
+    if (tag!.gender !== 'unknown') parts.push(CastVoicePolicy.genderLabel(tag!.gender));
+    if (tag!.age !== 'unknown') parts.push(CastVoicePolicy.ageLabel(tag!.age));
+    if (tag!.narrator) parts.push('旁白');
+    return parts.join(' · ');
+  }
+
+  static scheme(id: string, name: string): CastScheme {
+    const scheme = new CastScheme(); scheme.id = id; scheme.name = name; return scheme;
+  }
+  static cloneScheme(source: CastScheme): CastScheme {
+    const scheme = CastVoicePolicy.scheme(source.id, source.name);
+    scheme.narrator = CastVoicePolicy.clone(source.narrator);
+    scheme.maleLead = CastVoicePolicy.clone(source.maleLead);
+    scheme.femaleLead = CastVoicePolicy.clone(source.femaleLead);
+    scheme.malePool = source.malePool.map((ref: CastVoiceRef): CastVoiceRef => CastVoicePolicy.clone(ref));
+    scheme.femalePool = source.femalePool.map((ref: CastVoiceRef): CastVoiceRef => CastVoicePolicy.clone(ref));
+    scheme.unknown = CastVoicePolicy.clone(source.unknown);
+    return scheme;
+  }
+  static defaults(): CastLibrary {
+    const library = new CastLibrary();
+    library.schemes = [CastVoicePolicy.scheme('default', '默认方案')];
+    return library;
+  }
+  /** Every distinct voice a scheme uses. */
+  static schemeVoices(scheme: CastScheme): CastVoiceRef[] {
+    const seen: Set<string> = new Set<string>();
+    const result: CastVoiceRef[] = [];
+    const all = [scheme.narrator, scheme.maleLead, scheme.femaleLead].concat(scheme.malePool, scheme.femalePool, [scheme.unknown]);
+    for (const ref of all) {
+      const key = CastVoicePolicy.key(ref);
+      if (!key || seen.has(key)) continue;
+      seen.add(key); result.push(ref);
+    }
+    return result;
+  }
+
+  private static one(value: CastVoiceRef | undefined): CastVoiceRef {
+    return CastVoicePolicy.valid(value) ? CastVoicePolicy.clone(value) : new CastVoiceRef();
+  }
+  private static pool(value: CastVoiceRef[] | undefined): CastVoiceRef[] {
+    const seen: Set<string> = new Set<string>();
+    const result: CastVoiceRef[] = [];
+    for (const ref of Array.isArray(value) ? value : []) {
+      if (!CastVoicePolicy.valid(ref) || seen.has(CastVoicePolicy.key(ref)) || result.length >= CastVoicePolicy.POOL_LIMIT) continue;
+      seen.add(CastVoicePolicy.key(ref)); result.push(CastVoicePolicy.clone(ref));
+    }
+    return result;
+  }
+  /** Drops anything malformed instead of failing: a damaged file must not take reading down with it. */
+  static normalize(value: CastLibrary | undefined): CastLibrary {
+    const result = new CastLibrary();
+    if (!value || typeof value !== 'object') return CastVoicePolicy.defaults();
+    result.enabled = value.enabled === true;
+    const ids: Set<string> = new Set<string>();
+    for (const item of Array.isArray(value.schemes) ? value.schemes.slice(0, 50) : []) {
+      if (!item || typeof item.id !== 'string' || !item.id || item.id.length > 80 || ids.has(item.id) ||
+        typeof item.name !== 'string' || !item.name.trim() || item.name.length > 30) continue;
+      const scheme = CastVoicePolicy.scheme(item.id, item.name.trim());
+      scheme.narrator = CastVoicePolicy.one(item.narrator);
+      scheme.maleLead = CastVoicePolicy.one(item.maleLead);
+      scheme.femaleLead = CastVoicePolicy.one(item.femaleLead);
+      scheme.malePool = CastVoicePolicy.pool(item.malePool);
+      scheme.femalePool = CastVoicePolicy.pool(item.femalePool);
+      scheme.unknown = CastVoicePolicy.one(item.unknown);
+      ids.add(scheme.id); result.schemes.push(scheme);
+    }
+    if (result.schemes.length === 0) result.schemes = CastVoicePolicy.defaults().schemes;
+    result.schemeId = typeof value.schemeId === 'string' && result.schemes.some((s: CastScheme): boolean => s.id === value.schemeId) ?
+      value.schemeId : result.schemes[0].id;
+    const keys: Set<string> = new Set<string>();
+    for (const item of Array.isArray(value.tags) ? value.tags.slice(0, 2000) : []) {
+      if (!item || typeof item.key !== 'string' || !item.key || item.key.length > 220 || keys.has(item.key)) continue;
+      const tag = new CastVoiceTag(); tag.key = item.key;
+      tag.gender = CAST_GENDERS.includes(item.gender) ? item.gender : 'unknown';
+      tag.age = CAST_AGES.includes(item.age) ? item.age : 'unknown';
+      tag.narrator = item.narrator === true;
+      keys.add(tag.key); result.tags.push(tag);
+    }
+    result.unsupported = Array.isArray(value.unsupported) ? Array.from(new Set<string>(value.unsupported.filter(
+      (key: string): boolean => typeof key === 'string' && key.length > 0 && key.length <= 220))).slice(0, 500) : [];
+    result.revision = Number.isInteger(value.revision) ? Math.max(0, value.revision) : 0;
+    return result;
+  }
+
+  /** 1 fits, 0 unknown, -1 clashes. Analysis ages are child/teen/adult/elder; voice tags split adults in two. */
+  static ageFit(tagAge: string, roleAge: string): number {
+    if (!tagAge || tagAge === 'unknown' || !roleAge || roleAge === 'unknown') return 0;
+    if (roleAge === 'child' || roleAge === 'teen') return tagAge === 'teen' ? 1 : -1;
+    if (roleAge === 'adult') return tagAge === 'young' || tagAge === 'middle' ? 1 : -1;
+    if (roleAge === 'elder') return tagAge === 'elder' ? 1 : (tagAge === 'middle' ? 0 : -1);
+    return 0;
+  }
+
+  /**
+   * The voice a character speaks with. Narrator, leads and unknown-gender characters follow the scheme
+   * live, so editing the scheme changes them at once. Supporting characters keep the pool voice they
+   * were first given (stored in `role.castVoice`) so a voice never changes mid-book; they are given a
+   * new one only when theirs left the pool or can no longer be used.
+   * An empty result means the scheme has no usable narrator voice.
+   */
+  static voiceFor(role: MimoRole, roles: MimoRole[], scheme: CastScheme,
+    available: (ref: CastVoiceRef) => boolean, tagAge: (key: string) => string): CastVoiceMatch {
+    const match = new CastVoiceMatch();
+    const usable = (ref: CastVoiceRef | undefined): boolean => !!ref && CastVoicePolicy.key(ref).length > 0 && available(ref);
+    const narrator = usable(scheme.narrator) ? scheme.narrator : new CastVoiceRef();
+    if (role.castManual && role.castVoice && usable(role.castVoice)) {
+      match.ref = CastVoicePolicy.clone(role.castVoice); match.slot = '已指定'; return match;
+    }
+    if (role.id === 'narrator') { match.ref = CastVoicePolicy.clone(narrator); match.slot = '旁白'; return match; }
+    const male = role.gender === 'male', female = role.gender === 'female';
+    if (!male && !female) {
+      match.ref = CastVoicePolicy.clone(usable(scheme.unknown) ? scheme.unknown : narrator);
+      match.slot = '性别不明'; return match;
+    }
+    const lead = male ? scheme.maleLead : scheme.femaleLead;
+    if (role.lead && usable(lead)) {
+      match.ref = CastVoicePolicy.clone(lead); match.slot = male ? '男主角' : '女主角'; return match;
+    }
+    match.slot = male ? '男配角' : '女配角';
+    const pool = (male ? scheme.malePool : scheme.femalePool).filter(usable);
+    if (pool.length === 0) { match.ref = CastVoicePolicy.clone(narrator); match.slot += ' · 暂用旁白'; return match; }
+    const kept = CastVoicePolicy.key(role.castVoice);
+    if (!role.castManual && kept && pool.some((ref: CastVoiceRef): boolean => CastVoicePolicy.key(ref) === kept)) {
+      match.ref = CastVoicePolicy.clone(role.castVoice); return match;
+    }
+    const uses: Map<string, number> = new Map<string, number>();
+    for (const other of roles) {
+      if (other.id === role.id || other.id === 'narrator') continue;
+      const key = CastVoicePolicy.key(other.castVoice);
+      if (key) uses.set(key, (uses.get(key) || 0) + 1);
+    }
+    let best = 0;
+    for (let index = 1; index < pool.length; index++) {
+      const a = CastVoicePolicy.key(pool[index]), b = CastVoicePolicy.key(pool[best]);
+      const useA = uses.get(a) || 0, useB = uses.get(b) || 0;
+      if (useA !== useB) { if (useA < useB) best = index; continue; }
+      if (CastVoicePolicy.ageFit(tagAge(a), role.age) > CastVoicePolicy.ageFit(tagAge(b), role.age)) best = index;
+    }
+    match.ref = CastVoicePolicy.clone(pool[best]);
+    role.castVoice = CastVoicePolicy.clone(pool[best]); role.castManual = false;
+    match.changed = true;
+    return match;
+  }
+
+  /** Fills the empty slots of a scheme from tagged voices; used once, for a scheme the user has not set up. */
+  static autoFill(scheme: CastScheme, voices: CastVoiceRef[], tagOf: (key: string) => CastVoiceTag | undefined): boolean {
+    let changed = false;
+    const tagged = voices.filter((ref: CastVoiceRef): boolean => CastVoicePolicy.tagged(tagOf(CastVoicePolicy.key(ref))));
+    const gender = (ref: CastVoiceRef): string => tagOf(CastVoicePolicy.key(ref))!.gender;
+    const taken: Set<string> = new Set<string>();
+    const take = (candidates: CastVoiceRef[]): CastVoiceRef | undefined => {
+      const found = candidates.find((ref: CastVoiceRef): boolean => !taken.has(CastVoicePolicy.key(ref)));
+      if (found) taken.add(CastVoicePolicy.key(found));
+      return found;
+    };
+    if (!CastVoicePolicy.key(scheme.narrator)) {
+      const narrator = take(tagged.filter((ref: CastVoiceRef): boolean => tagOf(CastVoicePolicy.key(ref))!.narrator)) || take(tagged);
+      if (narrator) { scheme.narrator = CastVoicePolicy.clone(narrator); changed = true; }
+    } else taken.add(CastVoicePolicy.key(scheme.narrator));
+    const males = tagged.filter((ref: CastVoiceRef): boolean => gender(ref) === 'male');
+    const females = tagged.filter((ref: CastVoiceRef): boolean => gender(ref) === 'female');
+    if (!CastVoicePolicy.key(scheme.maleLead)) {
+      const lead = take(males); if (lead) { scheme.maleLead = CastVoicePolicy.clone(lead); changed = true; }
+    }
+    if (!CastVoicePolicy.key(scheme.femaleLead)) {
+      const lead = take(females); if (lead) { scheme.femaleLead = CastVoicePolicy.clone(lead); changed = true; }
+    }
+    if (scheme.malePool.length === 0) {
+      for (let voice = take(males); voice && scheme.malePool.length < 4; voice = take(males)) {
+        scheme.malePool.push(CastVoicePolicy.clone(voice)); changed = true;
+      }
+    }
+    if (scheme.femalePool.length === 0) {
+      for (let voice = take(females); voice && scheme.femalePool.length < 4; voice = take(females)) {
+        scheme.femalePool.push(CastVoicePolicy.clone(voice)); changed = true;
+      }
+    }
+    return changed;
+  }
+
+  /** Linear resampling of 16-bit mono PCM, so voices recorded at different rates can share one output stream. */
+  static resample(pcm: ArrayBuffer, from: number, to: number): ArrayBuffer {
+    const source = new Int16Array(pcm, 0, Math.floor(pcm.byteLength / 2));
+    if (from === to || from <= 0 || to <= 0 || source.length === 0) return pcm.slice(0, source.length * 2);
+    const length = Math.max(1, Math.round(source.length * to / from));
+    const target = new Int16Array(length);
+    const step = from / to;
+    for (let index = 0; index < length; index++) {
+      const position = index * step;
+      const left = Math.min(source.length - 1, Math.floor(position));
+      const right = Math.min(source.length - 1, left + 1);
+      const fraction = position - left;
+      target[index] = Math.round(source[left] * (1 - fraction) + source[right] * fraction);
+    }
+    return target.buffer;
+  }
+}

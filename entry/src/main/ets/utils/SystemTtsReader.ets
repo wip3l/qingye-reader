@@ -26,6 +26,8 @@ export interface TtsReadOptions {
   mimoBookName?: string;
   mimoChapter?: string;
   mimoSourceOffset?: number;
+  /** 多角色朗读用离线音色与自定义音色发声（人物识别仍走 mimo 这条路径，需同时传 mimo: true）。 */
+  castVoices?: boolean;
   onFinished?: () => void;
   /**
    * Fired instead of synthesis when the requested text has no audible content
@@ -529,6 +531,8 @@ export class SystemTtsReader {
         book: options.mimoBook || 'preview', bookName: options.mimoBookName || '',
         chapter: options.mimoChapter || 'preview',
         sourceOffset: options.mimoSourceOffset || 0, speed: options.speed || 1,
+        cast: options.castVoices === true, voiceSpeed: this.getTtsSpeed(),
+        speakText: (value: string): string => this.normalizeChunkForSpeech(value),
         onFocus: (unit: MimoUnit, index: number): void => {
           if (generation !== this.readGeneration || !this.active) return;
           const chunk: TtsChunk = { text: unit.text, start: unit.start, end: unit.end };

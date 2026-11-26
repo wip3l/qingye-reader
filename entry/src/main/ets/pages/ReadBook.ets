@@ -71,6 +71,7 @@ import { RecentReadCardUpdater } from '../utils/RecentReadCardUpdater';
 import lazy { SystemTtsReader, TtsChunk } from '../utils/SystemTtsReader';
 import { TtsCustomVoices, TtsVoiceOption } from '../utils/TtsVoiceModels';
 import { MimoStore } from '../utils/mimo/MimoStore';
+import { CastVoiceStore } from '../utils/mimo/CastVoiceStore';
 import { MimoVoiceChoice } from '../core/mimo/MimoVoicePolicy';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
 import { TtsSentenceNavigator } from '../utils/TtsSentenceNavigator';
@@ -430,6 +431,8 @@ struct ReadBookPage {
   @StorageProp('mimoConfigured') @Watch('onMimoVoiceStateChanged') mimoConfiguredState: boolean = false;
   @StorageProp('mimoVoicesRevision') @Watch('onMimoVoiceStateChanged') mimoVoicesRevision: number = 0;
   @StorageProp('mimoAnalysisAvailable') @Watch('onMimoVoiceStateChanged') mimoAnalysisState: boolean = false;
+  @StorageProp('castVoiceEnabled') @Watch('onMimoVoiceStateChanged') castVoiceEnabledState: boolean = false;
+  @StorageProp('castVoiceRevision') @Watch('onMimoVoiceStateChanged') castVoiceRevision: number = 0;
   @State bookUrl: string = '';
   @State book: Book | null = null;
   @State chapters: BookChapter[] = [];
@@ -1416,6 +1419,8 @@ struct ReadBookPage {
   private readerPageVisible: boolean = false;
   /** Whether the read in progress was started with MiMo, so its failures can offer the regular voice. */
   private ttsReadUsesMimo: boolean = false;
+  /** 这次朗读是“多角色朗读”（离线/自定义音色发声），失败时的提示和退路与 MiMo 朗读不同。 */
+  private ttsReadUsesCast: boolean = false;
   private readerCommentPanelMarker: string = '';
   private readerCommentPanelAnchorBottom: number = -1;
   private readerCommentPageAreaTop: number = -1;
@@ -10703,7 +10708,7 @@ struct ReadBookPage {
       HdsFeedback.showToast(voice.downloadable ? '请到朗读设置下载该音色' : '该系统音色当前不可用');
       return;
     }
-    if (restartSpeaking && MimoStore.load().enabled) MimoStore.setEnabled(false);
+    if (restartSpeaking && MimoStore.load().enabled) MimoStore.setEnabled(false); if (restartSpeaking) CastVoiceStore.setEnabled(false);
     const shouldResume = restartSpeaking && (this.isTtsSpeaking || this.ttsReader?.isSpeaking());
     if (shouldResume) {
       this.stopTtsReading();
@@ -10852,7 +10857,7 @@ struct ReadBookPage {
       HdsFeedback.showToast('该自定义音色已禁用');
       return;
     }
-    if (restartSpeaking && MimoStore.load().enabled) MimoStore.setEnabled(false);
+    if (restartSpeaking && MimoStore.load().enabled) MimoStore.setEnabled(false); if (restartSpeaking) CastVoiceStore.setEnabled(false);
     const shouldResume = restartSpeaking && (this.isTtsSpeaking || this.ttsReader?.isSpeaking());
     if (shouldResume) {
       this.stopTtsReading();
@@ -10887,7 +10892,7 @@ struct ReadBookPage {
       HdsFeedback.showToast('请先登录账号后使用在线音色');
       return;
     }
-    if (restartSpeaking && MimoStore.load().enabled) MimoStore.setEnabled(false);
+    if (restartSpeaking && MimoStore.load().enabled) MimoStore.setEnabled(false); if (restartSpeaking) CastVoiceStore.setEnabled(false);
     const shouldResume = restartSpeaking && (this.isTtsSpeaking || this.ttsReader?.isSpeaking());
     if (shouldResume) {
       this.stopTtsReading();
@@ -10919,7 +10924,7 @@ struct ReadBookPage {
       HdsFeedback.showToast(LocalTtsModels.MEMBER_REQUIRED);
       return;
     }
-    if (restartSpeaking && MimoStore.load().enabled) MimoStore.setEnabled(false);
+    if (restartSpeaking && MimoStore.load().enabled) MimoStore.setEnabled(false); if (restartSpeaking) CastVoiceStore.setEnabled(false);
     const shouldResume = restartSpeaking && (this.isTtsSpeaking || this.ttsReader?.isSpeaking());
     if (shouldResume) {
       this.stopTtsReading();
@@ -10955,6 +10960,7 @@ struct ReadBookPage {
   }
 
   selectedTtsVoiceTitle(): string {
+    if (CastVoiceStore.enabled()) return CastVoiceStore.title();
     if (MimoStore.load().enabled) return MimoStore.selectedVoiceTitle(this.bookUrl);
     const localVoice = this.currentLocalTtsVoice();
     if (localVoice) {
@@ -10988,6 +10994,8 @@ struct ReadBookPage {
    * before MiMo is set up, so switching it off hides them and the settings entry.
    */
   mimoQuickVoiceLabels(): string[] {
+    // 开着多角色朗读时它排在最前面（点它进设置），选下面任何一个常规音色就关掉多角色。
+    if (CastVoiceStore.enabled()) return [CastVoiceStore.title()];
     if (!MimoStore.load().enabled) return [];
     try { return MimoStore.voiceChoices(this.bookUrl).map((choice: MimoVoiceChoice): string => choice.label); }
     catch (_) { return []; }
@@ -10999,6 +11007,7 @@ struct ReadBookPage {
     if (shouldResume) this.stopTtsReading();
     try {
       if (!MimoStore.selectVoice(choice, this.bookUrl)) { this.getUIContext().getRouter().pushUrl({ url: 'pages/MimoSettings' }); return; }
+      CastVoiceStore.setEnabled(false);
       this.publishTtsFloatingVoices();
       if (shouldResume) this.startTtsReadingFromCurrentPosition(false).catch((error: Error) => HdsFeedback.showToast(error.message));
     } catch (error) { HdsFeedback.showToast((error as Error).message); }
@@ -11058,6 +11067,7 @@ struct ReadBookPage {
   }
 
   ttsQuickVoiceSelectedIndex(): number {
+    if (CastVoiceStore.enabled()) return 0;
     const mimoLabels = this.mimoQuickVoiceLabels();
     if (mimoLabels.length > 0 && MimoStore.load().enabled) {
       return MimoStore.voiceChoices(this.bookUrl).findIndex((choice: MimoVoiceChoice): boolean => choice.key === MimoStore.selectedVoiceKey(this.bookUrl));
@@ -11082,6 +11092,10 @@ struct ReadBookPage {
   selectTtsQuickVoice(selectedIndex: number): void {
     if (selectedIndex < 0) return;
     const mimoLabels = this.mimoQuickVoiceLabels();
+    if (CastVoiceStore.enabled() && selectedIndex < mimoLabels.length) {
+      this.getUIContext().getRouter().pushUrl({ url: 'pages/CastReading' });
+      return;
+    }
     if (selectedIndex < mimoLabels.length) {
       const choice = MimoStore.voiceChoices(this.bookUrl)[selectedIndex];
       if (choice) this.applyMimoPresetChoice(choice);
@@ -15838,9 +15852,11 @@ struct ReadBookPage {
       }
       this.publishTtsFloatingSession();
       const cloudVoice = this.findCurrentCloudTtsVoice();
-      this.ttsReadUsesMimo = MimoStore.load().enabled;
+      this.ttsReadUsesCast = CastVoiceStore.enabled();
+      this.ttsReadUsesMimo = this.ttsReadUsesCast || MimoStore.load().enabled;
       await this.ttsEngine().start(text, {
         mimo: this.ttsReadUsesMimo,
+        castVoices: this.ttsReadUsesCast,
         mimoBook: this.book?.bookUrl || '',
         mimoBookName: this.book?.name || '',
         mimoChapter: String(this.currentChapterIndex),
@@ -15932,8 +15948,11 @@ struct ReadBookPage {
         { text: '改用单音色', color: this.accentColor() }]
     });
     if (result.index === 1 && failedToken === this.ttsReadToken && this.readerPageVisible) {
-      MimoStore.load().multi = false;
-      MimoStore.saveSettings();
+      if (this.ttsReadUsesCast) CastVoiceStore.setEnabled(false);
+      else {
+        MimoStore.load().multi = false;
+        MimoStore.saveSettings();
+      }
       await this.startTtsReadingFromCurrentPosition(false);
     }
   }
@@ -15943,12 +15962,14 @@ struct ReadBookPage {
     if (!this.readerPageVisible) { HdsFeedback.showToast(message); return; }
     const failedToken = this.ttsReadToken;
     const result = await ThemedDialog.showDialog(this.getUIContext(), {
-      title: 'MiMo 朗读已暂停', message: message + '\n已保留朗读位置，可改用常规音色继续。',
+      title: this.ttsReadUsesCast ? '多角色朗读已暂停' : 'MiMo 朗读已暂停',
+      message: message + '\n已保留朗读位置，可改用常规音色继续。',
       buttons: [{ text: '稍后再试', color: this.getSubTextColor() },
         { text: '改用常规朗读', color: this.accentColor() }]
     });
     if (result.index === 1 && failedToken === this.ttsReadToken && this.readerPageVisible) {
-      MimoStore.setEnabled(false);
+      if (this.ttsReadUsesCast) CastVoiceStore.setEnabled(false);
+      else MimoStore.setEnabled(false);
       await this.startTtsReadingFromCurrentPosition(false);
     }
   }

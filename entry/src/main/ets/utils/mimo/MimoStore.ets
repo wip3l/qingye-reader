@@ -29,6 +29,8 @@ export class MimoBookCast {
   /** Empty means inherit the global scheme; existing character snapshots remain untouched. */
   schemeId: string = '';
   assignmentEnabled?: boolean;
+  /** Multi-voice scheme (offline/custom voices) for this book; empty follows the scheme in use. */
+  castSchemeId?: string;
 }
 export class MimoCastSummary {
   /** Empty for casts saved before the book was recorded; see linkLegacyCasts. */
@@ -348,6 +350,7 @@ export class MimoStore {
       if (Array.isArray(cast.roles) && cast.roles.length > 0 && Array.isArray(cast.corrections)) {
         cast.schemeId = typeof cast.schemeId === 'string' ? cast.schemeId : '';
         cast.assignmentEnabled = typeof cast.assignmentEnabled === 'boolean' ? cast.assignmentEnabled : undefined;
+        cast.castSchemeId = typeof cast.castSchemeId === 'string' ? cast.castSchemeId : '';
         return cast;
       }
     } catch (_) {}

@@ -129,6 +129,11 @@ export class HttpTtsReader {
     }
   }
 
+  /** 合成出来但不交给 writeAudio 播放的音频：放开它占着的缓存文件。 */
+  discardAudio(audio: HttpTtsAudio): void {
+    if (audio.filePath) this.releaseCacheFile(audio.filePath);
+  }
+
   async writeAudio(audio: HttpTtsAudio, onPlaybackStart?: (durationMs: number) => void): Promise<void> {
     const rate = this.playbackRateOf(audio);
     if (audio.filePath) {

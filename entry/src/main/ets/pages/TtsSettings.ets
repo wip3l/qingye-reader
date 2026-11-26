@@ -19,6 +19,7 @@ import { TtsVoiceCatalog } from '../utils/TtsVoiceCatalog';
 import { AdaptiveIconButton } from '../components/AdaptiveIconButton';
 import { TtsSettings, TtsSettingsStore } from '../utils/TtsSettingsStore';
 import { MimoStore } from '../utils/mimo/MimoStore';
+import { CastVoiceStore } from '../utils/mimo/CastVoiceStore';
 import { MimoVoiceChoice } from '../core/mimo/MimoVoicePolicy';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
 import { PlaybackSpeed } from '../utils/PlaybackSpeed';
@@ -75,6 +76,8 @@ struct TtsSettingsPage {
   @State voices: TtsVoiceOption[] = [TtsVoiceCatalog.defaultVoice()];
   @StorageProp('mimoEnabled') mimoEnabled: boolean = false;
   @StorageProp('mimoMulti') mimoMulti: boolean = false;
+  @StorageProp('castVoiceEnabled') @Watch('refreshMimoChoices') castVoiceEnabled: boolean = false;
+  @StorageProp('castVoiceRevision') castVoiceRevision: number = 0;
   @StorageProp('mimoVoice') mimoVoice: string = '白桦';
   @StorageProp('mimoVoicesRevision') @Watch('refreshMimoChoices') mimoVoicesRevision: number = 0;
   @State mimoChoices: MimoVoiceChoice[] = [];
@@ -149,6 +152,9 @@ struct TtsSettingsPage {
       }.width('100%').backgroundColor(this.cardColor()).borderRadius(ThemeRuntime.cardRadius())
 
       Column() {
+        SettingNavRow({ title: '多角色朗读', description: this.castVoiceEnabled ?
+          `已启用 · ${CastVoiceStore.title().replace('多角色 · ', '')}` : '识别人物与旁白，用离线音色和自定义音色分别朗读',
+          onTap: (): void => { this.stopPreview(); router.pushUrl({ url: 'pages/CastReading' }); } })
         SettingNavRow({ title: 'MiMo 朗读', description: this.mimoEnabled ?
           (this.mimoMulti ? '已启用 · 自动多角色 · 自带 API Key' : '已启用 · 单音色 · 自带 API Key') :
           '使用自己的 API Key，自动识别人物与旁白', showDivider: false,
@@ -284,6 +290,7 @@ struct TtsSettingsPage {
   }
 
   selectedVoiceTitle(): string {
+    if (this.castVoiceEnabled) return CastVoiceStore.title();
     if (this.mimoEnabled) return MimoStore.selectedVoiceTitle();
     const localVoice = this.currentLocalVoice();
     if (localVoice) {
@@ -346,7 +353,7 @@ struct TtsSettingsPage {
     this.stopPreview();
     ReaderTtsFloatingSession.stop();
     try {
-      if (MimoStore.selectVoice(choice, activeBook)) this.refreshMimoChoices();
+      if (MimoStore.selectVoice(choice, activeBook)) { CastVoiceStore.setEnabled(false); this.refreshMimoChoices(); }
       else router.pushUrl({ url: 'pages/MimoSettings' });
     } catch (error) { HdsFeedback.showToast((error as Error).message); }
   }
@@ -616,7 +623,7 @@ struct TtsSettingsPage {
 
   applyVoice(voice: TtsVoiceOption, stopPreview: boolean): void {
     if (!TtsVoiceCatalog.systemEnabled(voice, this.ttsDisabledVoiceKeys)) return;
-    if (stopPreview && this.mimoEnabled) MimoStore.setEnabled(false);
+    if (stopPreview && this.mimoEnabled) MimoStore.setEnabled(false); if (stopPreview) CastVoiceStore.setEnabled(false);
     if (stopPreview && this.isPreviewing) {
       this.previewReader.stop();
       this.isPreviewing = false;
@@ -643,7 +650,7 @@ struct TtsSettingsPage {
       router.pushUrl({ url: 'pages/MemberBenefits' });
       return;
     }
-    if (this.mimoEnabled) MimoStore.setEnabled(false);
+    if (this.mimoEnabled) MimoStore.setEnabled(false); CastVoiceStore.setEnabled(false);
     if (this.isPreviewing) {
       this.previewReader.stop();
       this.isPreviewing = false;
@@ -661,7 +668,7 @@ struct TtsSettingsPage {
       HdsFeedback.showToast('该自定义音色已禁用');
       return;
     }
-    if (this.mimoEnabled) MimoStore.setEnabled(false);
+    if (this.mimoEnabled) MimoStore.setEnabled(false); CastVoiceStore.setEnabled(false);
     if (this.isPreviewing) {
       this.previewReader.stop();
       this.isPreviewing = false;
@@ -680,7 +687,7 @@ struct TtsSettingsPage {
       HdsFeedback.showToast('请先登录账号后使用云端音色');
       return;
     }
-    if (this.mimoEnabled) MimoStore.setEnabled(false);
+    if (this.mimoEnabled) MimoStore.setEnabled(false); CastVoiceStore.setEnabled(false);
     if (this.isPreviewing) {
       this.previewReader.stop();
       this.isPreviewing = false;
