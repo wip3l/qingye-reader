@@ -205,6 +205,69 @@ export class ReadWorkIdentity {
   }
 }
 
+/**
+ * 单本书的视角：哪些书的地址和它是同一部作品。规则与阅读统计排行完全一致（ReadWorkIdentity 的折叠与
+ * 缺作者规则，再加用户的手动合并），所以排行里并成一行的，详情页统计和票上的时长也合在一起。
+ */
+export class ReadWorkLinks {
+  private merges: ReadWorkMergeGroup[];
+  private fold: ((text: string) => string) | null;
+  private worksByUrl: Map<string, Set<string>> = new Map<string, Set<string>>();
+  private urlsByWork: Map<string, Set<string>> = new Map<string, Set<string>>();
+
+  /** editions：每个（书的地址, 记录键）一行，带书名、作者和是否在书架上。 */
+  constructor(editions: ReadStatsRow[], fold: ((text: string) => string) | null, merges: ReadWorkMergeGroup[]) {
+    this.merges = merges;
+    this.fold = fold;
+    const identities = ReadWorkIdentity.resolve(editions, fold);
+    editions.forEach((row: ReadStatsRow): void => {
+      if (!row.bookUrl) return;
+      const work = this.canonical(identities.get(row.bookKey) || `record:${row.bookKey}`);
+      let works = this.worksByUrl.get(row.bookUrl);
+      if (!works) {
+        works = new Set<string>();
+        this.worksByUrl.set(row.bookUrl, works);
+      }
+      works.add(work);
+      let urls = this.urlsByWork.get(work);
+      if (!urls) {
+        urls = new Set<string>();
+        this.urlsByWork.set(work, urls);
+      }
+      urls.add(row.bookUrl);
+    });
+  }
+
+  /** 手动合并过的作品统一认成那一组的 main。 */
+  private canonical(work: string): string {
+    const group = ReadWorkMerges.find(this.merges, work);
+    return group ? group.main : work;
+  }
+
+  /**
+   * 和这本书同一部作品的全部地址，含它自己。这个地址还没有阅读记录时，按书名 + 作者去找（都有才找）。
+   */
+  urlsOf(bookUrl: string, name: string, author: string): string[] {
+    const works = new Set<string>();
+    const known = this.worksByUrl.get(bookUrl);
+    if (known) known.forEach((work: string): void => {
+      works.add(work);
+    });
+    const title = ReadWorkIdentity.text(name, this.fold);
+    const writer = ReadWorkIdentity.text(author, this.fold);
+    if (title && writer && title !== '书名未留存') works.add(this.canonical(ReadWorkIdentity.workKey(title, writer)));
+    const result = new Set<string>();
+    if (bookUrl) result.add(bookUrl);
+    works.forEach((work: string): void => {
+      const urls = this.urlsByWork.get(work);
+      if (urls) urls.forEach((url: string): void => {
+        result.add(url);
+      });
+    });
+    return Array.from(result);
+  }
+}
+
 export class ReadStatsSummary {
   totalMs: number = 0;
   activeDays: number = 0;

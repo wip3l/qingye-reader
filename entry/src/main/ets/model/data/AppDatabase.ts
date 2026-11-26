@@ -3875,22 +3875,50 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   }
 
   /**
-   * 单本书的阅读记录，所有设备合计。书名和作者都有时按作品归并，换源前后的记录算同一本；
-   * 这里不排除隐私书，调用方是这本书自己的详情页。
+   * 阅读记录里出现过的每个（书的地址, 记录键），带书架或统计里登记的书名作者，交给 ReadWorkLinks 认作品。
+   * 不排除隐私书：调用方是这本书自己的详情页和票。
    */
-  async getBookReadStatsRecords(bookUrl: string, name: string, author: string,
-    ownerId: string): Promise<BookReadStatsRecord[]> {
-    const records: BookReadStatsRecord[] = [];
-    if (!this.store || !bookUrl) return records;
+  async getReadStatsEditions(ownerId: string): Promise<ReadStatsRow[]> {
+    const rows: ReadStatsRow[] = [];
+    if (!this.store) return rows;
     await this.readStatsWriteTask;
-    const work = name && author ? 1 : 0;
+    const resultSet = await this.store.querySql(`SELECT r.bookUrl, r.bookKey,
+      COALESCE(NULLIF(b.name, ''), m.name, '') AS name, COALESCE(b.author, m.author, '') AS author,
+      CASE WHEN b.bookUrl IS NOT NULL AND b.pendingAddToShelf = 0 THEN 1 ELSE 0 END AS onShelf
+      FROM (SELECT DISTINCT bookUrl, bookKey FROM read_stats_records
+        WHERE deletedAt = 0 AND (ownerId = '' OR ownerId = ?)) r
+      LEFT JOIN books b ON b.bookUrl = r.bookUrl
+      LEFT JOIN read_stats_books m ON m.bookUrl = r.bookUrl`, [ownerId]);
+    try {
+      while (resultSet.goToNextRow()) {
+        const row = new ReadStatsRow();
+        row.bookUrl = resultSet.getString(0) || '';
+        row.bookKey = resultSet.getString(1) || '';
+        row.name = resultSet.getString(2) || '';
+        row.author = resultSet.getString(3) || '';
+        row.onShelf = resultSet.getLong(4) === 1;
+        rows.push(row);
+      }
+    } finally {
+      resultSet.close();
+    }
+    return rows;
+  }
+
+  /** 这些地址的阅读记录，所有设备合计；地址由 ReadWorkLinks.urlsOf 给出（同一部作品的各个书源）。 */
+  async getBookReadStatsRecords(bookUrls: string[], ownerId: string): Promise<BookReadStatsRecord[]> {
+    const records: BookReadStatsRecord[] = [];
+    const urls = bookUrls.filter((url: string): boolean => !!url);
+    if (!this.store || urls.length === 0) return records;
+    await this.readStatsWriteTask;
+    const marks = urls.map((): string => '?').join(', ');
+    const args: relationalStore.ValueType[] = [ownerId];
+    urls.forEach((url: string): void => {
+      args.push(url);
+    });
     const resultSet = await this.store.querySql(`SELECT r.dayKey, r.durationMs, r.startedAt
       FROM read_stats_records r
-      WHERE r.deletedAt = 0 AND (r.ownerId = '' OR r.ownerId = ?)
-      AND (r.bookUrl = ? OR (? = 1 AND r.bookUrl IN (
-        SELECT bookUrl FROM books WHERE name = ? AND author = ?
-        UNION SELECT bookUrl FROM read_stats_books WHERE name = ? AND author = ?)))`,
-      [ownerId, bookUrl, work, name, author, name, author]);
+      WHERE r.deletedAt = 0 AND (r.ownerId = '' OR r.ownerId = ?) AND r.bookUrl IN (${marks})`, args);
     try {
       while (resultSet.goToNextRow()) {
         const record = new BookReadStatsRecord();

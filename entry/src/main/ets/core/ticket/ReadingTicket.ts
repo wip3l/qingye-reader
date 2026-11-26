@@ -122,10 +122,12 @@ export class ReadingTicketRules {
   }
 
   /**
-   * 把标记和阅读统计拼成票。统计按作品归并，规则与详情页“统计”页签一致：
-   * 地址相同，或书名作者都有且相同的记录都算这本。返回顺序：月份新的在前，同月新的在前。
+   * 把标记和阅读统计拼成票。统计按作品归并：linkUrls 给出和这条标记同一部作品的全部书的地址
+   * （票夹传 ReadWorkLinks，规则与阅读统计排行、详情页“统计”页签一致）；不传时退回地址相同，
+   * 或书名作者都有且相同。返回顺序：月份新的在前，同月新的在前。
    */
-  static build(marks: BookMark[], rows: TicketStatsRow[]): ReadingTicket[] {
+  static build(marks: BookMark[], rows: TicketStatsRow[],
+    linkUrls: ((mark: BookMark) => string[]) | null = null): ReadingTicket[] {
     const byUrl = new Map<string, Map<string, number>>();
     const urlsByWork = new Map<string, Set<string>>();
     rows.forEach((row: TicketStatsRow): void => {
@@ -152,7 +154,10 @@ export class ReadingTicketRules {
       if (!ReadingTicketRules.hasTicket(mark) || !mark.workKey) return;
       const urls = new Set<string>();
       if (mark.bookUrl) urls.add(mark.bookUrl);
-      const work = ReadingTicketRules.workOf(mark.bookName, mark.author);
+      const work = linkUrls ? '' : ReadingTicketRules.workOf(mark.bookName, mark.author);
+      if (linkUrls) linkUrls(mark).forEach((url: string): void => {
+        urls.add(url);
+      });
       if (work) {
         const matched = urlsByWork.get(work);
         if (matched) matched.forEach((url: string): void => {

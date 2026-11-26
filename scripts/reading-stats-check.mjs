@@ -148,6 +148,35 @@ test('manual merges fold works into one row without touching records and split r
   assert.equal(S.calculate(rows, 'all', ...at, null, groups).items.length, 3);
 });
 
+test('book view links source editions by the same rules as the ranking', () => {
+  const { ReadWorkLinks: Links, ReadWorkMerges: Merges, ReadWorkIdentity: Identity } =
+    load('core/stats/ReadStatsSummary.ts', {}, 'ReadWorkLinks,ReadWorkMerges,ReadWorkIdentity');
+  const fold = text => text.replace(/鬥/g, '斗').replace(/蒼/g, '苍').replace(/穹/g, '穹');
+  const edition = (bookUrl, name, author, onShelf = false, bookKey = bookUrl) => ({ bookUrl, bookKey, name, author, onShelf });
+  const editions = [
+    edition('src1', '斗破苍穹', '天蚕土豆', true),
+    edition('src2', '鬥破蒼穹', '天蚕土豆 '),
+    edition('src2', '鬥破蒼穹', '天蚕土豆 ', false, 'cloud-key'),
+    edition('src3', '斗破苍穹', ''),
+    edition('src4', '斗破苍穹', '天蚕土豆著'),
+    edition('other', '武动乾坤', '天蚕土豆')
+  ];
+  const urls = (links, ...args) => Array.from(links.urlsOf(...args)).sort();
+  const links = new Links(editions, fold, []);
+  assert.deepEqual(urls(links, 'src1', '斗破苍穹', '天蚕土豆'), ['src1', 'src2'], 'script and spacing fold');
+  assert.deepEqual(urls(links, 'src2', '', ''), ['src1', 'src2'], 'known address links without a name');
+  assert.deepEqual(urls(links, 'new', '鬥破蒼穹', '天蚕土豆'), ['new', 'src1', 'src2'], 'unread edition links by name');
+  assert.deepEqual(urls(links, 'new', '斗破苍穹', ''), ['new'], 'no author, no record: nothing to link');
+  assert.deepEqual(urls(new Links(editions.filter(item => item.bookUrl !== 'src4'), fold, []),
+    'src1', '斗破苍穹', '天蚕土豆'), ['src1', 'src2', 'src3'], 'author-less record joins the only authored work');
+  const member = (name, author) => ({ work: Identity.workKey(name, author), name, author });
+  const merges = Merges.combine([], [member('斗破苍穹', '天蚕土豆'), member('斗破苍穹', '天蚕土豆著')],
+    member('斗破苍穹', '天蚕土豆').work);
+  const merged = new Links(editions, fold, merges);
+  assert.deepEqual(urls(merged, 'src4', '斗破苍穹', '天蚕土豆著'), ['src1', 'src2', 'src4'], 'manual merges apply');
+  assert.deepEqual(urls(merged, 'other', '武动乾坤', '天蚕土豆'), ['other']);
+});
+
 test('ranking sorts by recent reading, read days or title and keeps duration ranks', () => {
   const { ReadStatsSummary: S, ReadWorkMerges: Merges, ReadWorkIdentity: Identity } =
     load('core/stats/ReadStatsSummary.ts', {}, 'ReadStatsSummary,ReadWorkMerges,ReadWorkIdentity');

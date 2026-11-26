@@ -8,6 +8,7 @@ import { BookAnnotation } from '../../model/reader/BookAnnotation';
 import { readStatsTracker } from '../stats/ReadStatsTracker';
 import { BookReadStats, BookReadStatsDay, BookReadStatsMonth, BookReadStatsRecord } from '../stats/BookReadStats';
 import { ReadStatsPosterRenderer } from '../stats/ReadStatsPosterRenderer';
+import { BookReadStatsLoader } from '../stats/BookReadStatsLoader';
 import { ReadingTicket, ReadingTicketRules, TicketAccentRules } from './ReadingTicket';
 import { TicketKeepsake, TicketKeepsakeItem } from './TicketKeepsake';
 import { Book } from '@legado/sourceengine';
@@ -43,7 +44,9 @@ export class ReadingTicketLoader {
     const marks = await appDb.getAllBookMarks();
     if (!marks.some((mark: BookMark): boolean => ReadingTicketRules.hasTicket(mark))) return [];
     const rows = await appDb.getTicketStatsRows(ownerId);
-    const tickets = ReadingTicketRules.build(marks, rows);
+    const links = await BookReadStatsLoader.links(context, ownerId);
+    const tickets = ReadingTicketRules.build(marks, rows,
+      (mark: BookMark): string[] => links.urlsOf(mark.bookUrl, mark.bookName, mark.author));
     await ReadingTicketLoader.fillQuotes(tickets);
     const keepsakes = await TicketKeepsake.all(context);
     // 标记删掉的作品不会再有票，它的存根一起清掉。
@@ -162,7 +165,7 @@ export class ReadingTicketLoader {
   }
 
   /**
-   * 单本书的票（详情页标记页签、标成读过时出票）：编号看全部标记，时长只查这本，
+   * 单本书的票（详情页标记页签、标成读过时出票）：编号看全部标记，时长只查这部作品，
    * 归并规则与 loadAll 一致。没有票的状态返回 null。
    */
   static async loadOne(context: Context, mark: BookMark): Promise<ReadingTicket | null> {
@@ -174,8 +177,7 @@ export class ReadingTicketLoader {
     if (!marks.some((item: BookMark): boolean => item.workKey === mark.workKey)) marks.push(mark);
     const number = ReadingTicketRules.numbers(marks.map((item: BookMark): BookMark =>
       item.workKey === mark.workKey ? mark : item)).get(mark.workKey) || 0;
-    const records = mark.bookUrl ? await appDb.getBookReadStatsRecords(mark.bookUrl, mark.bookName.trim(),
-      mark.author.trim(), ownerId) : [];
+    const records = await BookReadStatsLoader.workRecords(context, mark.bookUrl, mark.bookName, mark.author, ownerId);
     const days = new Map<string, number>();
     records.forEach((record: BookReadStatsRecord): void => {
       if (record.durationMs > 0 && /^\d{4}-\d{2}-\d{2}$/.test(record.dayKey)) {
@@ -214,7 +216,7 @@ export class ReadingTicketLoader {
     const back = new ReadingTicketBack();
     await appDb.init(context);
     const ownerId = await ReadingTicketLoader.ownerId(context);
-    const records = await appDb.getBookReadStatsRecords(ticket.bookUrl, ticket.bookName.trim(), ticket.author.trim(),
+    const records = await BookReadStatsLoader.workRecords(context, ticket.bookUrl, ticket.bookName, ticket.author,
       ownerId);
     const stats = BookReadStats.calculate(records);
     const days = new Map<string, number>();

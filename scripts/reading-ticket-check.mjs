@@ -91,6 +91,22 @@ test('stats merge by address and by name+author without counting a day twice', (
   assert.equal(ticket.monthKey, '2026-10');
 });
 
+test('linked addresses decide which records belong to a ticket', () => {
+  const marks = [mark({
+    workKey: 'w', bookName: '斗破苍穹', author: '天蚕土豆', bookUrl: 'src1', status: BookMarkStatus.READING
+  })];
+  const rows = [
+    row('src1', '斗破苍穹', '天蚕土豆', '2026-11-21', 41),
+    row('src2', '鬥破蒼穹', '天蚕土豆 ', '2026-11-10', 60),
+    row('src3', '斗破苍穹', '天蚕土豆', '2026-11-11', 30)
+  ];
+  const [linked] = ReadingTicketRules.build(marks, rows, () => ['src1', 'src2']);
+  assert.equal(linked.totalMs, 101 * 60000, 'only the linked addresses count, even with matching names');
+  assert.equal(linked.startDayKey, '2026-11-10');
+  const [plain] = ReadingTicketRules.build(marks, rows);
+  assert.equal(plain.totalMs, 71 * 60000, 'without links falls back to exact name and author');
+});
+
 test('start and end days for each status and missing records', () => {
   const read = ReadingTicketRules.compose(mark({
     workKey: 'r', status: BookMarkStatus.READ, finishTime: at(2026, 4, 1), createTime: at(2026, 3, 1)
