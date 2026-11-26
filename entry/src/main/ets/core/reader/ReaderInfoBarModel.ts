@@ -385,6 +385,8 @@ export class ReaderInfoBarContext {
   chapterProgressRatio: number = -1;
   /** 横屏双页时一次显示两页。 */
   doublePage: boolean = false;
+  /** 停在书封扉页：页眉页脚不显示任何内容。 */
+  frontPage: boolean = false;
   timeText: string = '';
   /** 电量百分比；小于 0 表示读取不到。 */
   batteryPercent: number = -1;
@@ -442,14 +444,14 @@ export class ReaderInfoBarText {
 
   /** 槽位里画在电池图标之前的文字；纯电量项没有前置文字。 */
   static leading(item: string, context: ReaderInfoBarContext): string {
-    if (item === ReaderInfoItem.BATTERY) return '';
+    if (context.frontPage || item === ReaderInfoItem.BATTERY) return '';
     if (item === ReaderInfoItem.TIME_BATTERY) return context.timeText;
     return ReaderInfoBarText.of(item, context);
   }
 
   /** 槽位需要画电池图标时返回电量百分比，否则返回 -1。 */
   static battery(item: string, context: ReaderInfoBarContext): number {
-    if (!ReaderInfoItem.usesBattery(item) || context.batteryPercent < 0) return -1;
+    if (context.frontPage || !ReaderInfoItem.usesBattery(item) || context.batteryPercent < 0) return -1;
     return Math.round(Math.min(100, context.batteryPercent));
   }
 
@@ -458,6 +460,7 @@ export class ReaderInfoBarText {
   }
 
   static chapterPercent(context: ReaderInfoBarContext): number {
+    if (context.frontPage) return 0;
     if (context.chapterProgressRatio >= 0) {
       return Math.max(0, Math.min(100, context.chapterProgressRatio * 100));
     }

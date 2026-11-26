@@ -38,7 +38,7 @@ const names = ['readerContinuousV2Request', 'readerContinuousV2State', 'readerCo
   'readerAnnotationStamp', 'decorateReaderV2Page'];
 vm.runInContext(stripTypeScriptTypes(requestSource.replace(/^import .*;\r?\n/gm, '')
   .replace(/^@Observed\r?\n/gm, '').replace(/^export /gm, '') +
-  `\nclass Reader { ${names.map(method).join('\n')} }; globalThis.Reader = Reader;`), sandbox);
+  `\nclass Reader { ${names.map(method).join('\n')} readerFrontPageCount() { return 0; } readerFrontPageSpecFor() { return null; } }; globalThis.Reader = Reader;`), sandbox);
 const snapshot = { identity: 'font-20' };
 function fixture() {
   const reader = new sandbox.Reader();

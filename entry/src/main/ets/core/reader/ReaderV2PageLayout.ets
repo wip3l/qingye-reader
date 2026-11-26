@@ -124,6 +124,14 @@ export class ReaderV2PageFragment {
 export class ReaderV2PageDecoration {
   image: string = '';
   rect: ReaderV2Rect = new ReaderV2Rect();
+  /**
+   * 空串为普通饰图（image 按 rect 拉伸）。书封扉页另有几种画法（见 ReaderFrontPage.KIND_*）：书封（投影、圆角、
+   * 书脊折痕，image 居中裁切铺满，取不到时用 color 生成底色）、只在书封图缺失时才画的书封文字、墨线菱形、标签底。
+   */
+  kind: string = '';
+  color: number = 0;
+  /** 书封投影按深色阅读主题加重。 */
+  shadowDark: boolean = false;
   /** 首字的字形，画在 (glyphX, glyphY)。 */
   glyph: graphicsText.Paragraph | null = null;
   glyphX: number = 0;
@@ -167,6 +175,8 @@ export class ReaderV2PageLayout implements ReaderPaginationBoundary {
   selectionHeight: number = 0;
   /** 页底对齐给本页正文每处行间加的距离（像素）；选字层的行距要跟着加。 */
   lineStretchPx: number = 0;
+  /** 书封扉页：第一章之前额外的一页，只有装饰，不占正文偏移，也不计入页码。 */
+  frontPage: boolean = false;
   /** 本页最后一个片段的下边缘（含字形出血），滚动阅读用它确定列表项高度。 */
   contentBottomPx: number = 0;
   /** 划线由阅读页按当前划线数据填入；annotationStamp 记填入时的数据版本，版本变了重新填。 */

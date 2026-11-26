@@ -35,17 +35,18 @@ const names = ['cancelReaderContinuousMetricsTimers', 'refreshReaderContinuousPa
   'scheduleReaderContinuousMetricsBatch', 'runReaderContinuousMetricsBatch',
   'scheduleReaderContinuousPositionUpdate', 'updateReaderContinuousDisplayPosition',
   'readerContinuousV2ChapterEndVisible', 'readerContinuousV2FirstVisibleSourceOffset',
-  'getReaderInfoBarContext', 'fillPagedReaderInfoProgress', 'getProgressText', 'ttsQuickProgress',
+  'getReaderInfoBarContext', 'fillPagedReaderInfoProgress', 'applyReaderFrontPageToInfoBar', 'getProgressText', 'ttsQuickProgress',
   'getReaderPageColumnWidth', 'readerViewportFitsSpread'];
 vm.runInContext(stripTypeScriptTypes(
   ['core/reader/ReaderFontWeight.ts', 'core/reader/ReaderTitleSplit.ts',
     'model/reader/ReaderRegexFontRule.ets', 'model/reader/ReaderTitleStyle.ets']
     .map(file => readEtsModule(file).replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '')).join('\n') + '\n' +
   readEtsModule('core/reader/ReaderPageOffsets.ts').replace(/^export /gm, '') + '\n' +
+  readEtsModule('core/reader/ReaderFrontPageText.ts').replace(/^export /gm, '') + '\n' +
   // 双页判定与横屏翻页动画共用 ReaderPageTurnAnimation.wideViewport。
   readEtsModule('core/reader/ReaderPageTurnAnimation.ts').replace(/^export /gm, '') + '\n' +
   readEtsModule('core/reader/ReaderInfoBarModel.ts').replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '') +
-  `\nclass Reader { ${names.map(method).join('\n')} }\n` +
+  `\nclass Reader { ${names.map(method).join('\n')} readerFrontPageCount() { return 0; } readerFrontPageSpecFor() { return null; } }\n` +
   'globalThis.Reader = Reader; globalThis.Text = ReaderInfoBarText; globalThis.Item = ReaderInfoItem;'), sandbox);
 async function tick() {
   const jobs = [...timers.values()];

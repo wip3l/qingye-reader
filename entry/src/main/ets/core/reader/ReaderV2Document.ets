@@ -2,6 +2,7 @@ import { ReaderActionData, ReaderActionHot, ReaderActionMarker, ReaderActionMatc
 import { EpubNoteLink } from '../book/EpubNoteLink';
 import { ReaderImageMarker } from '../book/ReaderImageMarker';
 import { ReaderTitleSplit, ReaderTitleSplitSettings } from './ReaderTitleSplit';
+import { ReaderFrontPageSpec } from './ReaderFrontPage';
 
 /**
  * V2 阅读文档只保存语义和稳定偏移，不保存任何 ArkUI 组件状态。
@@ -170,6 +171,8 @@ export class ReaderV2Document {
   offsets: ReaderV2OffsetSegment[] = [];
   regexRanges: ReaderV2RegexRange[] = [];
   identity: string = '';
+  /** 书封扉页：只给第一章挂上；翻页模式排成第一章之前的一页，滚动阅读排在第一章标题上方一屏。 */
+  frontPage: ReaderFrontPageSpec | null = null;
 
   private dropCapBlock: number = -2;
 

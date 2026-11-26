@@ -7,6 +7,8 @@ import { ReaderV2AnnotationPainter } from './ReaderV2AnnotationPainter';
 import { ReaderV2CommentCardPainter } from './ReaderV2CommentCard';
 import { ReaderV2RulingPainter } from './ReaderV2RulingPainter';
 import { ReaderRasterAssets } from './ReaderRasterAssets';
+import { ReaderFrontPage } from './ReaderFrontPage';
+import { ReaderFrontPagePainter } from './ReaderFrontPagePainter';
 import {
   ReaderV2PageFragment,
   ReaderV2PageLayout,
@@ -70,7 +72,22 @@ export class ReaderV2PagePainter {
    * 这里不画，否则透明帧会露出底下的第一帧；翻页纹理等自绘层不传，照旧画第一帧。
    */
   private static drawDecorations(canvas: drawing.Canvas, page: ReaderV2PageLayout, skipAnimatedArtwork: boolean): void {
+    // 书封扉页：书封图画出来后，书封上的文字（只给文字封面用）不再画。
+    let coverDrawn = false;
     for (const decoration of page.decorations) {
+      if (decoration.kind) {
+        if (decoration.kind === ReaderFrontPage.KIND_COVER) {
+          coverDrawn = ReaderFrontPagePainter.paintCover(canvas, decoration);
+        } else if (decoration.kind === ReaderFrontPage.KIND_RULE) {
+          ReaderFrontPagePainter.paintRule(canvas, decoration);
+        } else if (decoration.kind === ReaderFrontPage.KIND_CHIP) {
+          ReaderFrontPagePainter.paintChip(canvas, decoration);
+        }
+        if (decoration.glyph && !(decoration.kind === ReaderFrontPage.KIND_COVER_TEXT && coverDrawn)) {
+          decoration.glyph.paint(canvas, decoration.glyphX, decoration.glyphY);
+        }
+        continue;
+      }
       const rect = decoration.rect;
       const width = rect.right - rect.left;
       const height = rect.bottom - rect.top;

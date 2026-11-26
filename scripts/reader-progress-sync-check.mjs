@@ -13,13 +13,14 @@ function method(name) {
 }
 const sandbox = vm.createContext({ console: { info() {}, warn() {}, error() {} } });
 const names = ['readerContinuousFirstVisiblePage', 'onReaderComicScrollIndexChanged',
-  'runReaderContinuousChapterCommit', 'restorePendingPageIndex', 'getReaderInfoBarContext', 'fillPagedReaderInfoProgress',
+  'runReaderContinuousChapterCommit', 'restorePendingPageIndex', 'getReaderInfoBarContext', 'fillPagedReaderInfoProgress', 'applyReaderFrontPageToInfoBar',
   'updateReaderContinuousDisplayPosition', 'readerContinuousV2FirstVisibleSourceOffset',
   'readerContinuousV2ChapterEndVisible'];
 vm.runInContext(stripTypeScriptTypes(
-  ['core/reader/ReaderDataSources.ets', 'core/reader/ReaderPageOffsets.ts', 'core/reader/ReaderInfoBarModel.ts']
+  ['core/reader/ReaderDataSources.ets', 'core/reader/ReaderPageOffsets.ts', 'core/reader/ReaderInfoBarModel.ts',
+    'core/reader/ReaderFrontPageText.ts']
     .map(file => readEtsModule(file).replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '')).join('\n') +
-  `\nclass Reader { ${names.map(method).join('\n')} }\n` +
+  `\nclass Reader { ${names.map(method).join('\n')} readerFrontPageCount() { return 0; } readerFrontPageSpecFor() { return null; } }\n` +
   'globalThis.Reader = Reader; globalThis.DataSource = ReaderContinuousDataSource;' +
   'globalThis.Segment = ReaderScrollSegment; globalThis.Text = ReaderInfoBarText; globalThis.Item = ReaderInfoItem;'), sandbox);
 const noop = () => {};

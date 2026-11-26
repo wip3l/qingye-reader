@@ -20,6 +20,7 @@ import { ReaderFontWeight } from './ReaderFontWeight';
 import { ReaderFontStroke } from './ReaderFontStroke';
 import { ReaderPunctuationSqueeze } from './ReaderPunctuationSqueeze';
 import { ReaderPunctuationMetrics } from './ReaderPunctuationMetrics';
+import { ReaderFrontPage } from './ReaderFrontPage';
 import { EpubNoteLink } from '../book/EpubNoteLink';
 import { ReaderV2CommentCardLayout } from './ReaderV2CommentCard';
 import { ReaderV2ChapterHeadLayout, ReaderV2ChapterHeadMetrics } from './ReaderV2ChapterHead';
@@ -150,6 +151,8 @@ export class ReaderV2PaginationSession {
   dropPart: number = 0;
   /** 页底对齐：当前这一遍给正文每处行间加的距离，只在重排那一页时不为 0。 */
   lineStretchPx: number = 0;
+  /** 书封扉页已排出（翻页模式是单独一页，滚动阅读是第一页顶上的一屏）。 */
+  frontDone: boolean = false;
   private blockStyles: ReaderV2SpanStyleRange[] = [];
   private blockStylesIndex: number = -1;
 
@@ -317,6 +320,16 @@ export class ReaderV2Paginator {
     while (session.blockIndex < session.document.blocks.length && appended < limit) {
       const columnIndex = session.pageIndex % session.snapshot.columnRects.length;
       const column = session.snapshot.columnRects[columnIndex];
+      const front = session.document.frontPage;
+      if (front !== null && !session.continuous && !session.frontDone && session.pageIndex === 0) {
+        session.frontDone = true;
+        const frontPage = ReaderFrontPage.page(front, session.snapshot, column, session.pageIndex, columnIndex);
+        frontPage.identity = `${session.document.identity}_${session.snapshot.identity}_front_${front.identity()}`;
+        result.pages.push(frontPage);
+        session.pageIndex++;
+        appended++;
+        continue;
+      }
       if (!session.continuous && session.snapshot.titleSinglePage &&
         session.document.blocks[session.blockIndex].title && session.lineIndex === 0) {
         const titlePage = ReaderV2Paginator.buildTitlePage(session, column);
@@ -349,6 +362,15 @@ export class ReaderV2Paginator {
         ReaderV2ChapterHeadLayout.place(page, session.snapshot, session.chapterHead, column);
       }
       ReaderV2Paginator.placeDropCap(page, session, column);
+      if (session.continuous && front !== null && !session.frontDone && session.pageIndex === 0) {
+        // 滚动阅读：正文从下移一屏处排起（见 continuousFrontInset），这里把扉页画进空出来的那一屏。
+        session.frontDone = true;
+        const area = new ReaderV2Rect(column.left, column.top, column.right, column.top + column.height());
+        for (const decoration of ReaderFrontPage.decorations(front, session.snapshot, area)) {
+          page.decorations.push(decoration);
+        }
+        page.contentBottomPx = Math.max(page.contentBottomPx, area.bottom);
+      }
       page.sourceStart = session.document.sourceOffsetForDisplay(page.displayStart);
       page.sourceEnd = session.document.sourceOffsetForDisplay(page.displayEnd);
       page.identity = `${session.document.identity}_${session.snapshot.identity}_${session.pageIndex}_` +
@@ -430,6 +452,12 @@ export class ReaderV2Paginator {
     return draft;
   }
 
+  /** 滚动阅读的第一章：正文下移一屏，给书封扉页让位。 */
+  private static continuousFrontInset(session: ReaderV2PaginationSession, column: ReaderV2Rect): number {
+    return session.continuous && session.document.frontPage !== null && !session.frontDone && session.pageIndex === 0 ?
+      column.height() : 0;
+  }
+
   /** 按当前光标排出一页的片段，不做页底对齐；session.lineStretchPx 是这一遍给正文行间加的距离。 */
   private static layoutPage(session: ReaderV2PaginationSession, column: ReaderV2Rect,
     columnIndex: number): ReaderV2PageDraft {
@@ -440,7 +468,7 @@ export class ReaderV2Paginator {
       page.columnIndex = columnIndex;
       page.contentRect = new ReaderV2Rect(column.left, column.top, column.right, column.bottom);
       const columnBottom = session.continuous ? Number.MAX_SAFE_INTEGER : column.bottom;
-      let y = column.top;
+      let y = column.top + ReaderV2Paginator.continuousFrontInset(session, column);
       let hasContent = false;
       let topInkGuardApplied = false;
       let mustEndPage = false;

@@ -17,6 +17,8 @@ import {
 } from '../components/reader/ReaderShelfCoverOpening';
 import { ReaderCacheCoordinator } from '../core/book/ReaderCacheCoordinator';
 import { BookCoverResolver } from '../utils/BookCoverResolver';
+import { ReaderFrontPage, ReaderFrontPageSpec } from '../core/reader/ReaderFrontPage';
+import { ReaderFrontPageText } from '../core/reader/ReaderFrontPageText';
 import { applyReaderSystemBars, restoreReaderNavigation, syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
 import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation';
 import { ReaderScreenScrollMotion } from '../core/reader/ReaderScreenScrollMotion';
@@ -354,6 +356,9 @@ class ReaderAnnotationChapterRanges {
   ranges: BookAnnotationRange[] = [];
 }
 const READER_IDLE_WORK_RETRY_MS = 120;
+/** 等书封扉页封面超时的占位结果（真实路径不会是这个值）。 */
+const READER_FRONT_COVER_PENDING = '\u0000pending';
+const READER_FRONT_COVER_WAIT_MS = 300;
 // 翻页动画进行中，后台分页的每次同步排版（2–7ms）只在帧内还剩这么多空闲时才开始；一直没有就最多等 32ms。
 const READER_PAGINATION_MOTION_IDLE_MS = 5;
 // 连续快翻时卷页动画的时长比例，以及动画中途被下一次翻页催促时走完整页的时长。
@@ -1211,6 +1216,12 @@ struct ReadBookPage {
   @StorageLink('readerQuickJumpExpanded') readerQuickJumpExpanded: boolean = false;
   @StorageLink('readerQuickBookmarkEnabled') readerQuickBookmarkEnabled: boolean = true;
   @StorageLink('readerScrollTapTurn') readerScrollTapTurn: boolean = false;
+  @StorageLink('readerFrontPageEnabled') @Watch('onReaderFrontPageEnabledChanged') readerFrontPageEnabled: boolean = true;
+  /** 书封扉页上用的本机封面文件；空串画文字封面。 */
+  private readerFrontCoverPath: string = '';
+  private readerFrontCoverSerial: number = 0;
+  private readerFrontSpecInputs: string = '';
+  private readerFrontSpecCache: ReaderFrontPageSpec | null = null;
   @StorageProp('readerPageTurnHapticsScope') readerPageTurnHapticsScope: number = 0;
   @StorageLink('readerHeaderEnabled') @Watch('onReaderChromeChanged') readerHeaderEnabled: boolean = false;
   @StorageLink('readerFooterEnabled') @Watch('onReaderChromeChanged') readerFooterEnabled: boolean = true;
@@ -2233,6 +2244,11 @@ struct ReadBookPage {
       this.chapters = engine.chapters;
       this.initializeReaderComicMode();
       await this.initializeReaderTextConvert();
+      // 书封扉页的封面：没读过的书一打开就停在扉页，稍等一下封面（多半已在书架缓存里），免得先闪文字封面。
+      this.readerFrontCoverPath = '';
+      if (this.readerFrontPageEnabled && !this.isReaderComicModeActive()) {
+        await this.resolveReaderFrontCover(Book.hasStartedReading(this.book) ? 0 : READER_FRONT_COVER_WAIT_MS);
+      }
       if (loadSerial !== this.bookLoadSerial) {
         return;
       }
@@ -2246,11 +2262,13 @@ struct ReadBookPage {
         ReaderScrollAnchor.decode(this.book.getVariable(ReaderScrollAnchor.VARIABLE_KEY),
           this.currentChapterIndex, savedOffset) : null;
       this.readerContinuousAnchor = this.readerContinuousRestoreAnchor;
+      // 存下的页码不算书封扉页；读过的书按页码恢复时补回扉页那一页。没读过的书停在第 0 页，也就是扉页。
+      const frontShift = Book.hasStartedReading(this.book) ? this.readerFrontPageCount(this.currentChapterIndex) : 0;
       if (savedOffset >= 0) {
         this.readerTypographyRestoreOffset = savedOffset;
         this.pendingRestorePageIndex = -1;
       } else {
-        this.pendingRestorePageIndex = savedPosition;
+        this.pendingRestorePageIndex = savedPosition + frontShift;
       }
       // 打开恢复可能卡在 DB 分页缓存读取或死掉的排版链上：挂一个有界看门狗，
       // 任何路径都不会把用户永久留在“正在恢复阅读进度”遮罩。
@@ -2261,12 +2279,12 @@ struct ReadBookPage {
         // Seed the exit checkpoint before pagination starts. If the user immediately backs out, the transient
         // first incremental spread must never replace the last position that was already durable in the database.
         this.readerProgressAnchorChapterIndex = this.currentChapterIndex;
-        this.readerProgressAnchorPageIndex = savedPosition;
+        this.readerProgressAnchorPageIndex = savedPosition + frontShift;
         this.readerProgressAnchorOffset = savedOffset;
         const storedPageCount = Number(this.book.getVariable('readProgressPageCount'));
         const storedProgressChapter = Number.parseInt(this.book.getVariable('readProgressChapterIndex'));
         this.readerProgressAnchorPageCount = storedProgressChapter === this.currentChapterIndex &&
-          Number.isFinite(storedPageCount) && storedPageCount > 0 ? Math.round(storedPageCount) : 0;
+          Number.isFinite(storedPageCount) && storedPageCount > 0 ? Math.round(storedPageCount) + frontShift : 0;
         this.readerProgressAnchorPageText = this.book.getVariable('lastReadPageText') || '';
         this.readerProgressAnchorPageImage = this.book.getVariable('lastReadPageImage') || '';
       }
@@ -8242,6 +8260,153 @@ struct ReadBookPage {
       !this.isReaderComicModeActive();
   }
 
+  /**
+   * 书封扉页的内容；不显示时返回 null（设置关闭、漫画、不是第一章）。翻页时每次取分页都要算缓存键，
+   * 所以只在书名、简介、章数、强调色、封面等变了时重建。
+   */
+  readerFrontPageSpecFor(chapterIndex: number): ReaderFrontPageSpec | null {
+    if (chapterIndex !== 0 || !this.readerFrontPageEnabled || !this.book || this.isReaderComicModeActive()) return null;
+    const intro = this.book.getDisplayIntro() || '';
+    const accent = ReaderV2Color.parse(this.accentColor(), 0xFF2E5A88);
+    const inputs = [this.book.bookUrl, this.book.name, this.book.author, this.book.kind, this.book.wordCount,
+      `${this.chapters.length}`, `${intro.length}`, intro.substring(0, 32), `${accent}`, this.readerFrontCoverPath]
+      .join('\u0001');
+    if (this.readerFrontSpecCache && inputs === this.readerFrontSpecInputs) return this.readerFrontSpecCache;
+    const spec = new ReaderFrontPageSpec();
+    spec.title = (this.book.name || '').trim();
+    spec.author = (this.book.author || '').trim();
+    spec.meta = ReaderFrontPageText.meta(this.chapters.length, this.book.wordCount);
+    spec.tags = ReaderFrontPageText.tags(this.book.kind);
+    spec.intro = intro;
+    spec.coverPath = this.readerFrontCoverPath;
+    spec.accentColor = accent;
+    this.readerFrontSpecInputs = inputs;
+    this.readerFrontSpecCache = spec;
+    return spec;
+  }
+
+  /** 这一章在翻页模式里有几页书封扉页（0 或 1）。滚动阅读的扉页在第一块正文里，不单独占页。 */
+  readerFrontPageCount(chapterIndex: number): number {
+    if (this.isReaderNovelContinuousScrollModeActive()) return 0;
+    return this.readerFrontPageSpecFor(chapterIndex) ? 1 : 0;
+  }
+
+  /** 分页缓存键里扉页那一段：不含封面路径（封面后到时就地换图，见 applyReaderFrontCover）。 */
+  readerFrontPageKeyIdentity(chapterIndex: number): string {
+    const spec = this.readerFrontPageSpecFor(chapterIndex);
+    return spec ? `_front_${spec.layoutIdentity()}` : '';
+  }
+
+  isReaderFrontPageShown(): boolean {
+    return this.currentPageIndex < this.readerFrontPageCount(this.currentChapterIndex);
+  }
+
+  /** 页眉页脚的页码不算扉页；停在扉页时整条不显示。 */
+  applyReaderFrontPageToInfoBar(context: ReaderInfoBarContext, chapterIndex: number, rawPageIndex: number): void {
+    const front = this.readerFrontPageCount(chapterIndex);
+    if (front <= 0) return;
+    context.frontPage = rawPageIndex < front;
+    context.pageIndex = ReaderFrontPageText.contentPageIndex(rawPageIndex, front);
+    context.pageCount = ReaderFrontPageText.contentPageCount(context.pageCount, front);
+  }
+
+  setReaderFrontPageEnabled(enabled: boolean): void {
+    this.readerFrontPageEnabled = enabled;
+    ReaderSettingsStore.saveFrontPageEnabled(getContext(this), enabled).catch((e: Error) => {
+      console.error('保存书封扉页设置失败:', e);
+    });
+  }
+
+  onReaderFrontPageEnabledChanged(): void {
+    if (this.readerEntryInitializing || !this.book) return;
+    if (this.readerFrontPageEnabled) this.resolveReaderFrontCover(0);
+    this.relayoutReaderForFrontPage();
+  }
+
+  /**
+   * 扉页开关变了：重排当前章（只有第一章受影响，其余章的缓存键本来就不含扉页）。停在扉页上时打开后仍在扉页，
+   * 关掉后回到第一章第一页；其余情况按当前阅读位置恢复。
+   */
+  relayoutReaderForFrontPage(): void {
+    if (this.currentChapterIndex !== 0 || !this.content) return;
+    const continuous = this.isReaderNovelContinuousScrollModeActive();
+    const readingOffset = this.getReaderStableReflowOffset();
+    const stayOnFront = !continuous && this.readerFrontPageEnabled && this.currentPageIndex === 0 &&
+      readingOffset <= 0;
+    if (!stayOnFront) this.readerTypographyRestoreOffset = readingOffset;
+    this.invalidateReaderTypographyLayout();
+    this.refreshReaderTextRender();
+    this.paginateContent(this.content);
+    if (this.hasPagedReaderArea() && this.pagedContentText) {
+      this.currentPageIndex = stayOnFront ? 0 :
+        this.normalizeReaderSpreadPageIndex(this.findPageIndexByOffset(readingOffset));
+      this.syncCurrentPageText();
+      this.forceCurrentReaderPageRender();
+      this.refreshCurrentReaderV2RetainedPages(true);
+    }
+    this.saveReadingProgress();
+  }
+
+  /**
+   * 找扉页用的封面：与书架同一套规则（自定义封面、主题封面、图集），转成本机文件。waitMs 内拿到就直接用，
+   * 拿不到先画文字封面，到了再把已排好的扉页就地换图。
+   */
+  async resolveReaderFrontCover(waitMs: number): Promise<void> {
+    const book = this.book;
+    if (!book || !this.readerFrontPageEnabled) return;
+    const serial = ++this.readerFrontCoverSerial;
+    const raw = BookCoverResolver.first(book, this.isReaderThemeDark());
+    const context = getContext(this);
+    const task: Promise<string> = BookCoverResolver.prepareFile(context, raw)
+      .catch((error: Error): string => {
+        console.warn('准备书封扉页封面失败:', error);
+        return '';
+      });
+    const apply = (path: string): void => {
+      if (serial !== this.readerFrontCoverSerial || this.book !== book || path === this.readerFrontCoverPath) return;
+      this.applyReaderFrontCover(path);
+    };
+    if (waitMs > 0) {
+      const timeout = new Promise<string>((resolve: (value: string) => void): void => {
+        setTimeout((): void => resolve(READER_FRONT_COVER_PENDING), waitMs);
+      });
+      const early = await Promise.race([task, timeout]);
+      if (early !== READER_FRONT_COVER_PENDING) {
+        apply(early);
+        return;
+      }
+    }
+    task.then(apply);
+  }
+
+  /** 换上新的封面文件：已排好的扉页（翻页的扉页、滚动阅读第一块里的扉页）就地换图，再重画。 */
+  applyReaderFrontCover(path: string): void {
+    this.readerFrontCoverPath = path;
+    const spec = this.readerFrontPageSpecFor(0);
+    if (!spec) return;
+    const update = (page: ReaderV2PageLayout | undefined): void => {
+      if (!page) return;
+      let changed = false;
+      for (const decoration of page.decorations) {
+        if (decoration.kind === ReaderFrontPage.KIND_COVER) {
+          decoration.image = path;
+          changed = true;
+        }
+      }
+      // 换了封面图的页要换标识，常驻页和翻页纹理才不会沿用旧图。
+      if (changed && page.frontPage) {
+        page.identity = `${page.identity.replace(/_cover_[0-9a-z]*$/, '')}_cover_${ReaderFrontPage.hash(path)}`;
+      }
+    };
+    for (const pageSet of this.readerV2PageSetCache.values()) update(pageSet.pages[0]);
+    for (const result of this.readerPaginationCache.values()) update(result.v2Session?.pageSet.pages[0]);
+    for (const layout of this.readerContinuousV2Layouts.values()) update(layout);
+    if (this.currentChapterIndex !== 0) return;
+    this.refreshReaderTextRender();
+    this.forceCurrentReaderPageRender();
+    this.refreshCurrentReaderV2RetainedPages(true);
+  }
+
   getReaderInfoBarContext(): ReaderInfoBarContext {
     const context = new ReaderInfoBarContext();
     context.bookName = this.book?.name || '';
@@ -8260,6 +8425,7 @@ struct ReadBookPage {
       context.doublePage = false;
     } else if (!this.isReaderComicModeActive()) {
       this.fillPagedReaderInfoProgress(context);
+      this.applyReaderFrontPageToInfoBar(context, context.chapterIndex, this.currentPageIndex);
     }
     context.timeText = this.readerInfoTimeText;
     context.batteryPercent = this.readerInfoBatteryPercent;
@@ -8346,9 +8512,11 @@ struct ReadBookPage {
     if (!incoming || this.pageSlideDirection === 0) return context;
     const chapterIndex = this.clampChapterIndex(this.pageTurnIncomingChapterIndex);
     const pageIndex = Math.max(0, this.pageTurnIncomingPageIndex);
+    const frontShift = this.readerFrontPageCount(chapterIndex);
     if (chapterIndex === context.chapterIndex) {
-      if (pageIndex === context.pageIndex) return context;
-      context.pageIndex = pageIndex;
+      if (pageIndex === this.currentPageIndex) return context;
+      context.frontPage = pageIndex < frontShift;
+      context.pageIndex = ReaderFrontPageText.contentPageIndex(pageIndex, frontShift);
       if (context.chapterProgressRatio >= 0) {
         const chapterSource = this.pagedContentText;
         const ends = this.contentPageEnds;
@@ -8364,8 +8532,10 @@ struct ReadBookPage {
     context.chapterProgressRatio = -1;
     const source = this.pageTurnIncomingDocumentSource;
     const pagination = source ? this.getCachedReaderPagination(chapterIndex, source) : null;
-    context.pageCount = pagination ? pagination.pages.length : 0;
+    context.pageCount = ReaderFrontPageText.contentPageCount(pagination ? pagination.pages.length : 0, frontShift);
     context.pageCountPending = !pagination || pagination.complete !== true;
+    context.frontPage = pageIndex < frontShift;
+    context.pageIndex = ReaderFrontPageText.contentPageIndex(pageIndex, frontShift);
     if (pagination && context.pageCountPending && pageIndex < pagination.ends.length) {
       const end = pagination.ends[pageIndex];
       if (end > 0 && end < source.length) context.chapterProgressRatio = end / source.length;
@@ -10254,6 +10424,7 @@ struct ReadBookPage {
     this.readerQuickJumpMode = ReaderQuickJumpModel.normalizeMode(settings.quickJumpMode);
     this.readerQuickBookmarkEnabled = settings.quickBookmarkEnabled;
     this.readerScrollTapTurn = settings.scrollTapTurn;
+    this.readerFrontPageEnabled = settings.frontPageEnabled;
     this.readerHeaderEnabled = settings.readerHeaderEnabled;
     this.readerFooterEnabled = settings.readerFooterEnabled;
     this.readerInfoBarConfigRaw = settings.readerInfoBarConfig;
@@ -12360,12 +12531,14 @@ struct ReadBookPage {
       this.scheduleReaderContinuousPositionUpdate();
       return true;
     }
-    if (page < this.contentPages.length) {
-      return this.performReaderQuickJump(chapterIndex, -1, this.getPageStartOffset(page));
+    // 页数模式的页码不算书封扉页，换回分页里的序号。
+    const rawPage = page + this.readerFrontPageCount(chapterIndex);
+    if (rawPage < this.contentPages.length) {
+      return this.performReaderQuickJump(chapterIndex, -1, this.getPageStartOffset(rawPage));
     }
-    if (this.readerKnownPageStartOffset(page) >= 0) {
+    if (this.readerKnownPageStartOffset(rawPage) >= 0) {
       // 总页数来自已存分页时，没排到的页按存下的页首位置定位，排完后正好落在同一页。
-      return this.performReaderQuickJump(chapterIndex, -1, this.readerKnownPageStartOffset(page));
+      return this.performReaderQuickJump(chapterIndex, -1, this.readerKnownPageStartOffset(rawPage));
     }
     // 漫画增量排版期间总页数来自图片计数，未排到的页按比例取，排完后落到同一序号。
     return this.performReaderQuickJump(chapterIndex, (page + 0.5) / count);
@@ -12651,7 +12824,7 @@ struct ReadBookPage {
       if (comic) this.comicImageActions().onChapterBecameCurrent(targetChapter);
       this.readerProgressRestoreConfirmed = true;
       engine.curIdx = targetChapter;
-      engine.curPos = page;
+      engine.curPos = ReaderFrontPageText.contentPageIndex(page, this.readerFrontPageCount(targetChapter));
       committed = true;
       await this.saveReadingProgress(false, true);
       if (serial !== this.quickJumpSerial || bookUrl !== this.bookUrl || this.currentChapterIndex !== targetChapter ||
@@ -12831,6 +13004,10 @@ struct ReadBookPage {
     }
     const clippedFirstLine = continuous && this.readerContinuousAnchor?.chapterIndex === chapterIndex &&
       this.readerContinuousAnchor.viewportOffsetVp < 0;
+    // 存的页码与页数都不算书封扉页：扉页和第一章第一页都存成 0。
+    const frontShift = continuous ? 0 : this.readerFrontPageCount(chapterIndex);
+    pageIndex = ReaderFrontPageText.contentPageIndex(pageIndex, frontShift);
+    progressPageCount = ReaderFrontPageText.contentPageCount(progressPageCount, frontShift);
     if (!Book.hasStartedReading(this.book) && chapterIndex <= 0 && pageIndex <= 0 &&
       (!continuous || (characterOffset <= 0 && !clippedFirstLine))) {
       if (engine.book?.bookUrl === this.book.bookUrl) {
@@ -14602,6 +14779,11 @@ struct ReadBookPage {
           this.readerTapZoneSettingItem()
         }
       }
+
+      this.readerSwitchSettingItem('书封扉页', '第一章前加一页书封、书名和简介，新书第一次打开先停在这页',
+        this.readerFrontPageEnabled, (checked: boolean) => {
+          this.setReaderFrontPageEnabled(checked);
+        })
     }
 
     ReaderSettingGroup({ title: '屏幕', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
@@ -20478,6 +20660,8 @@ ${leading}` : leading;
     const document = ReaderV2DocumentParser.parse(source, chapterIndex, this.readerLayoutChapterTitle(chapterIndex),
       this.readerV2HeadingHints(chapterIndex), ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw),
       this.readerCommentDisplay());
+    // 翻页模式的第一章前面加书封扉页（滚动阅读的扉页在第一块正文里，见 runReaderContinuousLayout）。
+    document.frontPage = this.readerFrontPageCount(chapterIndex) > 0 ? this.readerFrontPageSpecFor(chapterIndex) : null;
     const session = ReaderV2Paginator.start(document, snapshot, this.buildReaderV2RegexStyles(document));
     const result: ReaderPaginationResult = {
       source: source,
@@ -21716,7 +21900,8 @@ ${leading}` : leading;
 
   readerV2AnimatedDecorations(page: ReaderV2PageLayout | null): ReaderV2PageDecoration[] {
     if (!page || page.decorations.length === 0) return [];
-    return page.decorations.filter((decoration: ReaderV2PageDecoration): boolean =>
+    // 书封扉页的封面图（kind 非空）始终画在画布上，即使是动图也只取第一帧。
+    return page.decorations.filter((decoration: ReaderV2PageDecoration): boolean => !decoration.kind &&
       decoration.rect.right - decoration.rect.left > 0.5 && decoration.rect.bottom - decoration.rect.top > 0.5 &&
         ReaderRasterAssets.isAnimatedArtwork(decoration.image));
   }
@@ -22745,6 +22930,8 @@ ${leading}` : leading;
         ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw), this.readerCommentDisplay());
       // Identical text can occur in different chunks. Their selection/progress maps still own different offsets.
       document.identity = `continuous_${request.key}`;
+      // 滚动阅读：书封扉页排在第一章第一块正文的上方一屏。
+      if (request.index === 0) document.frontPage = this.readerFrontPageSpecFor(request.chapter);
       const layout = await ReaderV2Paginator.layoutContinuousAsync(document, request.snapshot,
         this.buildReaderV2RegexStyles(document), valid);
       if (!layout || !valid()) return;
@@ -23816,7 +24003,7 @@ ${leading}` : leading;
       `${this.readerHeaderEnabled}_${this.readerFooterEnabled}_` +
       `${this.readerExtendToStatusBar}_${this.isLandscapeDoublePageActive()}_${this.readerTypographyCacheIdentity()}_` +
       `${this.readerParagraphCommentPaginationIdentity()}_` +
-      `${source.length}_${this.readerPaginationSourceHash(source)}`;
+      `${source.length}_${this.readerPaginationSourceHash(source)}${this.readerFrontPageKeyIdentity(chapterIndex)}`;
   }
 
   readerPaginationSourceHash(source: string): number {

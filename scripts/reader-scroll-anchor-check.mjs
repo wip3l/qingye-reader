@@ -28,7 +28,8 @@ const names = ['captureReaderContinuousAnchor', 'readerContinuousSourceIdentity'
   'savedReaderProgressOffset', 'saveReadingProgress', 'scheduleReaderComicProgressSave',
   'clearReaderComicProgressSaveTimer', 'flushReadingProgressCheckpoint', 'backgroundTtsReadOffset'];
 vm.runInContext(stripTypeScriptTypes(readEtsModule('core/reader/ReaderScrollAnchor.ts').replace(/^export /gm, '') +
-  `\nclass Reader { ${names.map(method).join('\n')} }\nglobalThis.Reader = Reader; globalThis.Anchor = ReaderScrollAnchor;`), sandbox);
+  readEtsModule('core/reader/ReaderFrontPageText.ts').replace(/^export /gm, '') + '\n' +
+  `\nclass Reader { ${names.map(method).join('\n')} readerFrontPageCount() { return 0; } readerFrontPageSpecFor() { return null; } }\nglobalThis.Reader = Reader; globalThis.Anchor = ReaderScrollAnchor;`), sandbox);
 const { Reader, Anchor } = sandbox;
 // Opening-animation hook called once the restored offset is applied; the shelf motion is covered by shelf-book-animation-check.
 Reader.prototype.startShelfOpeningAfterContent = () => {};
