@@ -33,7 +33,7 @@ export class ReaderV2ChapterHeadLayout {
     if (!head.image || titleBlocks <= 0 || columnWidth <= 1) return result;
     const font = snapshot.titleFontSizePx;
     const aspect = Math.max(0.05, Math.min(20, head.aspect > 0 ? head.aspect : 1));
-    const scale = Math.max(0.5, Math.min(2, head.scale > 0 ? head.scale : 1));
+    const scale = Math.max(0.5, Math.min(10, head.scale > 0 ? head.scale : 1));
     if (head.placement === 'top' || head.placement === 'bottom') {
       let height = font * 0.9 * scale;
       let width = height * aspect;

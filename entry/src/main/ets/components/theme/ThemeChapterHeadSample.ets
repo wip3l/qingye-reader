@@ -46,7 +46,7 @@ export class ThemeChapterHeadSampleMetrics {
   }
 
   static scale(head: ThemePackageChapterHead): number {
-    return Math.max(0.5, Math.min(2, head.scale > 0 ? head.scale : 1));
+    return Math.max(0.5, Math.min(10, head.scale > 0 ? head.scale : 1));
   }
 
   static side(head: ThemePackageChapterHead): boolean {

@@ -234,7 +234,7 @@ export const SECTIONS: Section[] = [
         options: [['', '标题左侧'], ['top', '标题上方'], ['bottom', '标题下方']],
         hint: '左侧：贴版心左边、上下对齐整组标题，标题在剩下的宽度里按读者的对齐方式排。上方、下方：单独占一行，跟着标题的对齐方式',
         when: (m) => !!mode(m, 'chapterHead.image') },
-      { k: '{m}.chapterHead.scale', label: '大小', type: 'range', min: 0.5, max: 2, step: 0.1, fallback: 1, resetLabel: '默认',
+      { k: '{m}.chapterHead.scale', label: '大小', type: 'range', min: 0.5, max: 10, step: 0.1, fallback: 1, resetLabel: '默认',
         hint: '左侧时 1 表示和整组标题一样高（最宽占版心的 30%）；上方、下方时 1 表示约一个标题字高',
         when: (m) => !!mode(m, 'chapterHead.image') },
       { g: '序号行' },

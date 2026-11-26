@@ -209,6 +209,17 @@ export function normalizeOrnamentScale(value: number | null | undefined): number
   return Math.round(clamped * 100) / 100;
 }
 
+/** 标题饰图大小倍数的上下限：比正文角饰放得开，放大后仍受版心宽度（左侧时 30%）限制。 */
+export const CHAPTER_HEAD_SCALE_MIN: number = 0.5;
+export const CHAPTER_HEAD_SCALE_MAX: number = 10;
+
+/** 缺省、0 或非法值都当 1；其余夹在 0.5–10，保留两位小数。 */
+export function normalizeChapterHeadScale(value: number | null | undefined): number {
+  if (typeof value !== 'number' || !isFinite(value) || value <= 0) return 1;
+  const clamped = Math.max(CHAPTER_HEAD_SCALE_MIN, Math.min(CHAPTER_HEAD_SCALE_MAX, value));
+  return Math.round(clamped * 100) / 100;
+}
+
 /** 角饰模式只填了左上或右下其中一张。 */
 export function readerHasSingleCorner(reader: ThemePackagePartReader | null | undefined): boolean {
   if (!reader || reader.backgroundMode !== 'ornaments') return false;
@@ -497,7 +508,7 @@ export class ThemePackageChapterHead {
   image: string = '';
   /** CHAPTER_HEAD_PLACEMENTS 之一；空串是标题左侧。 */
   placement: string = '';
-  /** 饰图大小倍数 0.5–2。左侧时 1 表示和整组标题一样高，上方、下方时 1 表示约一个标题字高。 */
+  /** 饰图大小倍数 0.5–10。左侧时 1 表示和整组标题一样高，上方、下方时 1 表示约一个标题字高。 */
   scale: number = 1;
   /** 分段标题第一段的颜色（可带透明度）；空串和标题同色。读者没开标题分段时不生效。 */
   numberColor: string = '';
@@ -552,7 +563,7 @@ export function normalizeChapterHead(value: ThemePackageChapterHead | null | und
   if (!value || typeof value !== 'object') return result;
   result.image = typeof value.image === 'string' ? value.image : '';
   result.placement = value.placement === 'top' || value.placement === 'bottom' ? value.placement : '';
-  result.scale = normalizeOrnamentScale(value.scale);
+  result.scale = normalizeChapterHeadScale(value.scale);
   result.numberColor = typeof value.numberColor === 'string' && HEX_COLOR.test(value.numberColor) ?
     value.numberColor.toUpperCase() : '';
   // 本机旧记录里没有首字这几项。只写了印章图没写行数时按 2 行。
@@ -1794,7 +1805,7 @@ function decodeVariantParts(record: Record<string, Object>, manifest: ThemePacka
       [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE], headLabel);
     const placement = stringField(head, 'placement').trim();
     parsed.placement = placement === 'top' || placement === 'bottom' ? placement : '';
-    parsed.scale = normalizeOrnamentScale(numberField(head, 'scale'));
+    parsed.scale = normalizeChapterHeadScale(numberField(head, 'scale'));
     parsed.numberColor = colorField(head, 'numberColor', headLabel, true);
     parsed.dropCapImage = partAssetRef(head, 'dropCapImage', manifest,
       [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE], headLabel);

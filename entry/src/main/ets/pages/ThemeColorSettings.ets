@@ -74,7 +74,7 @@ import {
   DROP_CAP_STYLE_RAISE,
   normalizeDropCapRatio,
   normalizeOrnamentInset,
-  normalizeOrnamentScale,
+  normalizeChapterHeadScale,
   ThemePackageChapterHead
 } from '../theme/share/ThemePackageFormat';
 import {
@@ -2669,7 +2669,7 @@ struct ThemeColorSettingsPage {
             .fontColor(this.subTextColor())
         }
         .width('100%')
-        Slider({ value: this.chapterHeadScalePercent(), min: 50, max: 200, step: 10, style: SliderStyle.OutSet })
+        Slider({ value: this.chapterHeadScalePercent(), min: 50, max: 1000, step: 10, style: SliderStyle.OutSet })
           .id('theme_editor_chapter_head_scale')
           .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
           .width('100%')
@@ -7279,7 +7279,7 @@ struct ThemeColorSettingsPage {
       const previous = this.ownThemeId();
       await this.runAssetUpload((): Promise<SchemeAssetResult> =>
         SchemeAssetService.setChapterHeadLayout(getContext(this), this.schemeId, dark, placement,
-          normalizeOrnamentScale(percent / 100)), '', false, false, '');
+          normalizeChapterHeadScale(percent / 100)), '', false, false, '');
       this.syncChapterHeadOverride(previous);
     } finally {
       this.chapterHeadScaleDrag = -1;

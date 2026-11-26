@@ -903,10 +903,11 @@ test('chapter head: decode, per-mode fallback, refs, encode, pack:self', () => {
   const again = byPath(format.decodeTheme(format.encodeTheme(exported), manifest).parts);
   assert.equal(again.light.chapterHead.image, 'assets/logo.svg');
   assert.equal(again.dark.chapterHead.numberColor, '#99FFFFFF');
-  // 缺省值不写；不认得的位置按标题左侧；大小夹在 0.5–2。
-  const plain = decode({ ...partsJson(), light: { chapterHead: { image: 'assets/logo.svg', placement: 'corner', scale: 9 } } });
+  // 缺省值不写；不认得的位置按标题左侧；大小夹在 0.5–10（比正文角饰的 0.5–2 宽）。
+  const plain = decode({ ...partsJson(), light: { chapterHead: { image: 'assets/logo.svg', placement: 'corner', scale: 12 } } });
   assert.equal(plain.light.chapterHead.placement, '');
-  assert.equal(plain.light.chapterHead.scale, 2);
+  assert.equal(plain.light.chapterHead.scale, 10);
+  assert.equal(decode({ ...partsJson(), light: { chapterHead: { image: 'assets/logo.svg', scale: 9 } } }).light.chapterHead.scale, 9);
   assert.deepEqual(format.encodeParts(byPath(decode({ ...partsJson(), light: { chapterHead: { image: 'assets/logo.svg' } } }))).light.chapterHead,
     { image: 'assets/logo.svg' });
   // 旧包没有这一节：编码不多出字段，取值为 null。
