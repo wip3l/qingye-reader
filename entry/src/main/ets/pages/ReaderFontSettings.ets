@@ -20,6 +20,7 @@ import { ReaderRegexSample } from '../core/reader/ReaderRegexSample';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { ReaderFontHelper, ReaderFontItem } from '../utils/ReaderFontHelper';
+import { ReaderFontPreviewImage, ReaderFontPreviewImages, ReaderFontPreviewRequest } from '../utils/ReaderFontPreviewImages';
 import { ReaderSystemFontHelper } from '../utils/ReaderSystemFontHelper';
 import { ReaderFontBootstrap } from '../utils/ReaderFontBootstrap';
 import { ColorCodePicker } from '../components/ColorCodePicker';
@@ -111,7 +112,12 @@ export struct ReaderFontSettingsEditor {
   // 标题预览框的真实高度；滚出屏幕时冻结在这个高度（0 为不冻结）。
   private titlePreviewHeight: number = 0;
   @State titlePreviewFrozenHeight: number = 0;
-  private customFontPreviewFamilies: Map<string, string> = new Map<string, string>();
+  // 字体列表的名字预览图生成好后加一，让对应行换成图片。
+  @State customFontPreviewVersion: number = 0;
+  private customFontPreviewAlive: boolean = true;
+  private onCustomFontPreviewReady: () => void = (): void => {
+    if (this.customFontPreviewAlive) this.customFontPreviewVersion++;
+  };
   // customFonts() 每次都要解析 JSON 并逐个检查文件，列表每一行会调好几次；按原始串缓存，字体多时不再拖住主线程。
   private customFontsCacheRaw: string = '';
   private customFontsCache: ReaderCustomFontItem[] = [];
@@ -209,6 +215,7 @@ export struct ReaderFontSettingsEditor {
   }
 
   aboutToDisappear(): void {
+    this.customFontPreviewAlive = false;
     this.flushScheduledSettingsSave();
   }
 
@@ -390,13 +397,26 @@ export struct ReaderFontSettingsEditor {
   @Builder
   customFontRow(font: ReaderCustomFontItem, index: number) {
     Row({ space: AppSpacing.MD }) {
-      Text(font.sourceName || font.familyName)
-        .fontSize(AppFontSize.BODY_LARGE)
-        .fontColor(this.primaryTextColor())
-        .fontFamily(this.customFontPreviewFamily(font))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .layoutWeight(1)
+      Row() {
+        if (this.customFontPreviewImage(font, index) !== null) {
+          Image(this.customFontPreviewImage(font, index)?.uri ?? '')
+            .width(this.customFontPreviewImage(font, index)?.widthVp ?? 0)
+            .height(this.customFontPreviewImage(font, index)?.heightVp ?? 0)
+            .objectFit(ImageFit.Contain)
+            .syncLoad(true)
+            .draggable(false)
+            .accessibilityText(font.sourceName || font.familyName)
+        } else {
+          Text(font.sourceName || font.familyName)
+            .fontSize(AppFontSize.BODY_LARGE)
+            .fontColor(this.primaryTextColor())
+            .fontFamily(this.applicationFontFamily)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+      }
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Start)
       if (this.customFontUsage(index)) {
         Text(this.customFontUsage(index))
           .fontSize(AppFontSize.CAPTION)
@@ -410,15 +430,25 @@ export struct ReaderFontSettingsEditor {
     .alignItems(VerticalAlign.Center)
   }
 
-  /** 列表里用字体本身显示名字；注册结果按文件缓存，避免每次重绘都重新注册。 */
-  customFontPreviewFamily(font: ReaderCustomFontItem): string {
-    const key = font.filePath || font.familyName;
-    let family = this.customFontPreviewFamilies.get(key);
-    if (family === undefined) {
-      family = this.registerCustomFont(font, false);
-      this.customFontPreviewFamilies.set(key, family);
-    }
-    return family || this.applicationFontFamily;
+  /**
+   * 列表里用字体本身显示名字：用预先画好的名字图片，不注册字体（注册一款就要把整个字体常驻内存）。
+   * 图片还没画好或画不出时返回 null，这一行先用界面字体显示。
+   */
+  customFontPreviewImage(font: ReaderCustomFontItem, index: number): ReaderFontPreviewImage | null {
+    // 读一次版本号，图片生成好后这一行跟着刷新。
+    if (this.customFontPreviewVersion < 0 || !font.filePath) return null;
+    const context = this.getUIContext();
+    ReaderFontPreviewImages.init(getContext(this).cacheDir);
+    const request = new ReaderFontPreviewRequest();
+    request.filePath = font.filePath;
+    request.label = font.sourceName || font.familyName;
+    request.fontSizeFp = AppFontSize.BODY_LARGE;
+    request.color = this.primaryTextColor();
+    request.density = context.vp2px(1);
+    request.fontScale = context.fp2px(1) / Math.max(0.01, context.vp2px(1));
+    // 行宽：卡片左右各 12vp 外边距、行内左右各 16vp，“在用”标记约 110vp。
+    request.maxWidthVp = Math.max(80, (this.editorWidth || 360) - 56 - (this.customFontUsage(index) ? 110 : 0));
+    return ReaderFontPreviewImages.lookup(request, this.onCustomFontPreviewReady);
   }
 
   /** 这款字体正被正文或标题使用时，在列表里标出来。 */
@@ -1083,8 +1113,7 @@ export struct ReaderFontSettingsEditor {
     return ['global', ''];
   }
 
-  /** withGraphicsText 为 false 时只供界面显示（列表预览），不加载给阅读页排版。 */
-  registerCustomFont(font: ReaderCustomFontItem, withGraphicsText: boolean = true): string {
+  registerCustomFont(font: ReaderCustomFontItem): string {
     if (!font || !font.filePath) {
       return '';
     }
@@ -1092,7 +1121,7 @@ export struct ReaderFontSettingsEditor {
     item.familyName = font.familyName || ReaderFontHelper.normalizeFontFamily(font.filePath);
     item.filePath = font.filePath;
     item.sourceName = ReaderFontHelper.resolveDisplayName(font.sourceName, font.filePath);
-    const result = ReaderFontHelper.registerFont(this.getUIContext(), item, withGraphicsText);
+    const result = ReaderFontHelper.registerFont(this.getUIContext(), item);
     return result.registered ? result.familyName : '';
   }
 

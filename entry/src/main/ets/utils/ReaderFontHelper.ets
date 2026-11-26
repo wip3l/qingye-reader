@@ -71,11 +71,10 @@ export class ReaderFontHelper {
   }
 
   /**
-   * 注册给界面（ArkUI）用，withGraphicsText 为 true 时再加载给阅读页排版引擎（graphics.text）。
-   * 只在列表里用字体本身显示名字时传 false：graphics.text 会把整个字体再拷一份进共享内存。
+   * 注册给界面（ArkUI）并加载给阅读页排版引擎（graphics.text）。两边注册了都卸不掉，整个字体常驻内存，
+   * 只给真正要用的字体调；列表里显示字体名字用 ReaderFontPreviewImages 画好的图片。
    */
-  static registerFont(uiContext: UIContext | null, item: ReaderFontItem,
-    withGraphicsText: boolean = true): ReaderFontRegisterResult {
+  static registerFont(uiContext: UIContext | null, item: ReaderFontItem): ReaderFontRegisterResult {
     const result = new ReaderFontRegisterResult();
     if (!item || !item.filePath || !ReaderFontHelper.fontFileExists(item.filePath)) {
       return result;
@@ -142,9 +141,7 @@ export class ReaderFontHelper {
         console.warn(`全局注册阅读字体失败: ${familySrc}`, e);
       }
     }
-    if (withGraphicsText) {
-      result.graphicsTextRegistered = ReaderFontHelper.registerGraphicsTextFont(result.familyName, preparedPath, result);
-    }
+    result.graphicsTextRegistered = ReaderFontHelper.registerGraphicsTextFont(result.familyName, preparedPath, result);
     result.registered = result.arkUiRegistered;
     result.errorSummary = errors.join(' | ');
     return result;
