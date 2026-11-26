@@ -1,8 +1,8 @@
 import { CastVoiceRef, MimoRole } from './MimoPolicy';
 export { CastVoiceRef } from './MimoPolicy';
 
-export const CAST_AGES: string[] = ['unknown', 'teen', 'young', 'middle', 'elder'];
-export const CAST_AGE_LABELS: string[] = ['未标', '少年', '青年', '中年', '老年'];
+export const CAST_AGES: string[] = ['unknown', 'child', 'teen', 'young', 'middle', 'elder'];
+export const CAST_AGE_LABELS: string[] = ['未标', '儿童', '少年', '青年', '中年', '老年'];
 export const CAST_GENDERS: string[] = ['unknown', 'male', 'female'];
 export const CAST_GENDER_LABELS: string[] = ['不限', '男', '女'];
 /** Scheme slots, in the order the editor shows them. */
@@ -183,10 +183,14 @@ export class CastVoicePolicy {
     return result;
   }
 
-  /** 1 fits, 0 unknown, -1 clashes. Analysis ages are child/teen/adult/elder; voice tags split adults in two. */
+  /**
+   * 1 fits, 0 acceptable or unknown, -1 clashes. Analysis ages are child/teen/adult/elder; voice tags split
+   * adults in two. A child and a teen voice can stand in for each other when the exact one is taken.
+   */
   static ageFit(tagAge: string, roleAge: string): number {
     if (!tagAge || tagAge === 'unknown' || !roleAge || roleAge === 'unknown') return 0;
-    if (roleAge === 'child' || roleAge === 'teen') return tagAge === 'teen' ? 1 : -1;
+    if (roleAge === 'child') return tagAge === 'child' ? 1 : (tagAge === 'teen' ? 0 : -1);
+    if (roleAge === 'teen') return tagAge === 'teen' ? 1 : (tagAge === 'child' ? 0 : -1);
     if (roleAge === 'adult') return tagAge === 'young' || tagAge === 'middle' ? 1 : -1;
     if (roleAge === 'elder') return tagAge === 'elder' ? 1 : (tagAge === 'middle' ? 0 : -1);
     return 0;

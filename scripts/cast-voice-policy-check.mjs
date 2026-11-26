@@ -102,7 +102,12 @@ const up = new Int16Array(policy.resample(pcm.buffer, 22050, 24000));
 assert.equal(up.length, 2400);
 assert.ok(Math.abs(up[1200] - Math.round(Math.sin(1200 * 22050 / 24000 / 20) * 10000)) < 200);
 assert.equal(new Int16Array(policy.resample(pcm.buffer, 24000, 24000)).length, 2205);
-assert.equal(policy.ageFit('teen', 'child'), 1);
+assert.equal(policy.ageFit('child', 'child'), 1);
+assert.equal(policy.ageFit('teen', 'child'), 0, 'a teen voice is an acceptable stand-in for a child');
+assert.equal(policy.ageFit('child', 'teen'), 0);
+assert.equal(policy.ageFit('young', 'child'), -1);
+assert.equal(policy.ageLabel('child'), '儿童');
+assert.equal(policy.normalize({ schemes: [], tags: [{ key: 'local:k', gender: 'female', age: 'child' }] }).tags[0].age, 'child');
 assert.equal(policy.ageFit('elder', 'adult'), -1);
 
 // 二期：响度、调度顺序、分析接口地址。

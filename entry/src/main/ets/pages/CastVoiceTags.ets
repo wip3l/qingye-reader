@@ -1,4 +1,4 @@
-import { router } from '@kit.ArkUI';
+import { LengthMetrics, router } from '@kit.ArkUI';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingSwitchRow } from '../components/common/SettingRow';
 import { CastVoiceLine } from '../components/CastVoiceViews';
@@ -145,8 +145,9 @@ struct CastVoiceTagsPage {
 
       Column({ space: AppSpacing.MD }) {
         Text('年龄段').fontSize(AppFontSize.BODY).fontColor(ThemeRuntime.subTextColor(this.dark)).width('100%')
-        Row({ space: AppSpacing.MD }) {
-          ForEach(['teen', 'young', 'middle', 'elder'], (value: string) => {
+        // 五档在窄屏上可能一行放不下，放不下就换行。
+        Flex({ wrap: FlexWrap.Wrap, space: { main: LengthMetrics.vp(AppSpacing.MD), cross: LengthMetrics.vp(AppSpacing.MD) } }) {
+          ForEach(['child', 'teen', 'young', 'middle', 'elder'], (value: string) => {
             this.chip(CAST_AGE_LABELS[CAST_AGES.indexOf(value)], this.editAge === value,
               (): void => { this.editAge = this.editAge === value ? 'unknown' : value; this.store(); })
           }, (value: string): string => value + (this.editAge === value ? '1' : '0'))
