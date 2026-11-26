@@ -7,6 +7,8 @@ import { HdsFeedback } from './HdsFeedback';
 import { LocalTtsModel, LocalTtsModels } from './localtts/LocalTtsModels';
 import { LocalTtsSelection } from './localtts/LocalTtsSelection';
 import { MimoStore } from './mimo/MimoStore';
+import { CastVoiceStore } from './mimo/CastVoiceStore';
+import { router } from '@kit.ArkUI';
 import { PlaybackSpeed } from './PlaybackSpeed';
 import { SystemTtsReader, TtsReadOptions } from './SystemTtsReader';
 import { TtsSettings, TtsSettingsStore } from './TtsSettingsStore';
@@ -153,7 +155,9 @@ export class TtsVoicePicker {
   /** 交给朗读引擎的音色与语速；mimo 时由 MiMo 负责发音。 */
   fillOptions(options: TtsReadOptions): void {
     const cloud = this.currentCloudVoice();
-    options.mimo = MimoStore.load().enabled;
+    // 多角色朗读开着时人物识别走 mimo 那条路径，发声用离线/自定义音色。
+    options.castVoices = CastVoiceStore.enabled();
+    options.mimo = options.castVoices || MimoStore.load().enabled;
     // 音色列表还没取回来时先按保存的云端音色读，不要悄悄换成系统音色。
     options.cloudVoiceId = cloud?.id || (this.cloudVoices.length === 0 ? (this.cloudVoiceId || '').trim() : '');
     options.cloudVoiceName = cloud?.name || '';
@@ -189,6 +193,8 @@ export class TtsVoicePicker {
   // ---- 快捷音色列表 ----
 
   private mimoLabels(): string[] {
+    // 与普通阅读页一致：多角色朗读开着时它排在最前面，点它进设置，选常规音色就关掉。
+    if (CastVoiceStore.enabled()) return [CastVoiceStore.title()];
     if (!MimoStore.load().enabled) return [];
     try {
       return MimoStore.voiceChoices(this.bookUrl()).map((choice: MimoVoiceChoice): string => choice.label);
@@ -226,6 +232,7 @@ export class TtsVoicePicker {
 
   selectedIndex(): number {
     const mimo = this.mimoLabels();
+    if (CastVoiceStore.enabled()) return 0;
     if (mimo.length > 0) {
       const key = MimoStore.selectedVoiceKey(this.bookUrl());
       return Math.max(0, MimoStore.voiceChoices(this.bookUrl()).findIndex((choice: MimoVoiceChoice): boolean =>
@@ -253,6 +260,10 @@ export class TtsVoicePicker {
   select(index: number): boolean {
     if (index < 0) return false;
     const mimo = this.mimoLabels();
+    if (CastVoiceStore.enabled() && index < mimo.length) {
+      router.pushUrl({ url: 'pages/CastReading' });
+      return false;
+    }
     if (index < mimo.length) {
       const choice = MimoStore.voiceChoices(this.bookUrl())[index];
       if (!choice) return false;
@@ -265,6 +276,7 @@ export class TtsVoicePicker {
           this.onOpenMimoSettings();
           return false;
         }
+        CastVoiceStore.setEnabled(false);
       } catch (error) {
         HdsFeedback.showToast((error as Error).message);
         return false;
@@ -290,6 +302,7 @@ export class TtsVoicePicker {
   }
 
   private leaveMimo(): void {
+    CastVoiceStore.setEnabled(false);
     if (MimoStore.load().enabled) MimoStore.setEnabled(false);
   }
 

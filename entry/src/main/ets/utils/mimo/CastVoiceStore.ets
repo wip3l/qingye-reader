@@ -1,8 +1,11 @@
 import fs from '@ohos.file.fs';
+import asset from '@ohos.security.asset';
+import { util } from '@kit.ArkTS';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { HttpTTS } from '@legado/sourceengine';
 import { MimoRole } from '../../core/mimo/MimoPolicy';
 import {
-  CastLibrary, CastScheme, CastVoiceMatch, CastVoicePolicy, CastVoiceRef, CastVoiceTag
+  CastAnalysisEndpoint, CastAnalysisModel, CastLibrary, CastScheme, CastVoiceMatch, CastVoicePolicy, CastVoiceRef, CastVoiceTag
 } from '../../core/mimo/CastVoicePolicy';
 import { LocalTtsModel, LocalTtsModels } from '../localtts/LocalTtsModels';
 import { TtsCustomVoices } from '../TtsVoiceModels';
@@ -33,7 +36,136 @@ export class CastVoiceStore {
   private static itemsStamp: string = '';
   private static itemsCustomRaw: string = '';
 
+  private static readonly KEY_ALIAS: string = 'legado.cast.analysis-key.v1';
+
   private static path(): string { return MimoStore.root() + '/cast_voices.json'; }
+
+  /** 备份/恢复后重新读盘。密钥不在这个文件里，恢复到别的设备后自定义接口要重新填密钥并测试。 */
+  static reload(): void {
+    CastVoiceStore.cache = null;
+    CastVoiceStore.itemsCache = null;
+    try { CastVoiceStore.library(); } catch (_) {}
+  }
+
+  // ---- 人物识别用的模型 ----
+
+  static analysisModel(): CastAnalysisModel {
+    try { return CastVoiceStore.library().analysis; } catch (_) { return new CastAnalysisModel(); }
+  }
+  /** 正在用的自定义接口；用 MiMo 时返回一个空的。 */
+  static analysis(): CastAnalysisEndpoint {
+    return CastVoicePolicy.activeEndpoint(CastVoiceStore.analysisModel()) || new CastAnalysisEndpoint();
+  }
+  static endpoint(id: string): CastAnalysisEndpoint | undefined {
+    return CastVoiceStore.analysisModel().endpoints.find((item: CastAnalysisEndpoint): boolean => item.id === id);
+  }
+  static usesCustomAnalysis(): boolean {
+    return !!CastVoicePolicy.activeEndpoint(CastVoiceStore.analysisModel());
+  }
+  /** 能不能识别人物：自定义接口要测试通过，MiMo 要有密钥且识别测试通过。 */
+  static analysisReady(): boolean {
+    if (CastVoiceStore.usesCustomAnalysis()) return CastVoiceStore.analysis().verified;
+    return MimoStore.isConfigured() && MimoStore.load().analysisAvailable;
+  }
+  static analysisTitle(): string {
+    if (CastVoiceStore.usesCustomAnalysis()) {
+      const active = CastVoiceStore.analysis();
+      return CastVoicePolicy.endpointTitle(active) + (active.verified ? '' : ' · 未通过测试');
+    }
+    if (!MimoStore.isConfigured()) return 'MiMo · 未配置';
+    return MimoStore.load().analysisAvailable ? 'MiMo · 已配置' : 'MiMo · 密钥不能识别人物';
+  }
+  /** 每个接口各存各的密钥；只有一个接口时存下的那一个沿用原来的别名。 */
+  private static keyQuery(id: string): asset.AssetMap {
+    const alias = id === CastVoicePolicy.LEGACY_ENDPOINT_ID ? CastVoiceStore.KEY_ALIAS : CastVoiceStore.KEY_ALIAS + '.' + id;
+    const query: asset.AssetMap = new Map();
+    query.set(asset.Tag.ALIAS, new util.TextEncoder().encodeInto(alias));
+    return query;
+  }
+  /** 自定义分析接口的密钥，只存在本机安全存储里。不传 id 取正在用的那个接口的。 */
+  static async analysisKey(id?: string): Promise<string> {
+    const target = id || CastVoiceStore.analysisModel().activeId;
+    if (!target) return '';
+    const query = CastVoiceStore.keyQuery(target);
+    query.set(asset.Tag.RETURN_TYPE, asset.ReturnType.ALL);
+    try {
+      const rows = await asset.query(query);
+      if (rows.length === 0) return '';
+      const data = rows[0].get(asset.Tag.SECRET) as Uint8Array;
+      return data ? util.TextDecoder.create('utf-8').decodeWithStream(data) : '';
+    } catch (error) {
+      if ((error as BusinessError).code === asset.ErrorCode.NOT_FOUND) return '';
+      throw new Error('无法访问本机安全密钥，请解锁设备后重试');
+    }
+  }
+  private static async removeKey(id: string): Promise<void> {
+    try { await asset.remove(CastVoiceStore.keyQuery(id)); } catch (error) {
+      if ((error as BusinessError).code !== asset.ErrorCode.NOT_FOUND) throw new Error('删除安全密钥失败，请重试');
+    }
+  }
+  /**
+   * 测试通过后调用：保存接口、模型与密钥，返回接口的 id。id 为空表示新增；key 为空表示沿用已存的密钥。
+   * 只保存，不改变正在用哪个接口。
+   */
+  static async saveEndpoint(id: string, name: string, url: string, model: string, key: string): Promise<string> {
+    const analysis = CastVoiceStore.library().analysis;
+    const existing = id ? analysis.endpoints.find((item: CastAnalysisEndpoint): boolean => item.id === id) : undefined;
+    if (!existing && analysis.endpoints.length >= CastVoicePolicy.ENDPOINT_LIMIT) {
+      throw new Error(`最多保存 ${CastVoicePolicy.ENDPOINT_LIMIT} 个接口`);
+    }
+    const target = existing ? existing.id : 'e' + Date.now().toString(36) + Math.floor(Math.random() * 1679616).toString(36);
+    const value = key.trim();
+    if (value) {
+      if (value.length > 4096 || /\s/.test(value)) throw new Error('请输入完整的 API Key');
+      const attributes = CastVoiceStore.keyQuery(target);
+      attributes.set(asset.Tag.SECRET, new util.TextEncoder().encodeInto(value));
+      attributes.set(asset.Tag.ACCESSIBILITY, asset.Accessibility.DEVICE_FIRST_UNLOCKED);
+      attributes.set(asset.Tag.SYNC_TYPE, asset.SyncType.NEVER);
+      attributes.set(asset.Tag.WRAP_TYPE, asset.WrapType.NEVER);
+      attributes.set(asset.Tag.CONFLICT_RESOLUTION, asset.ConflictResolution.OVERWRITE);
+      try { await asset.add(attributes); } catch (_) { throw new Error('密钥安全保存失败'); }
+    }
+    // 存密钥时让出过主线程，重新取一次，别把这期间的其他改动盖掉。
+    const library = CastVoiceStore.library();
+    let saved = library.analysis.endpoints.find((item: CastAnalysisEndpoint): boolean => item.id === target);
+    if (!saved) {
+      saved = new CastAnalysisEndpoint(); saved.id = target;
+      library.analysis.endpoints.push(saved);
+    }
+    saved.name = name.trim().slice(0, 30);
+    saved.url = CastVoicePolicy.completionsUrl(url);
+    saved.model = model.trim();
+    saved.verified = true;
+    CastVoiceStore.save(library);
+    return target;
+  }
+  /** 改用某个已保存的接口识别人物。没通过测试的（比如从备份恢复来的）不能直接启用。 */
+  static useEndpoint(id: string): void {
+    const library = CastVoiceStore.library();
+    const endpoint = library.analysis.endpoints.find((item: CastAnalysisEndpoint): boolean => item.id === id);
+    if (!endpoint) throw new Error('这个接口已经不在了');
+    if (!endpoint.verified) throw new Error('这个接口要重新填写密钥并测试通过后才能启用');
+    if (library.analysis.activeId === id) return;
+    library.analysis.activeId = id;
+    CastVoiceStore.save(library);
+  }
+  /** 改回用 MiMo 识别；保存的接口都留着。 */
+  static useMimoAnalysis(): void {
+    const library = CastVoiceStore.library();
+    if (!library.analysis.activeId) return;
+    library.analysis.activeId = '';
+    CastVoiceStore.save(library);
+    if (library.enabled && !CastVoiceStore.analysisReady()) CastVoiceStore.setEnabled(false);
+  }
+  /** 删除一个接口和它的密钥；删的是正在用的那个时改回 MiMo。 */
+  static async deleteEndpoint(id: string): Promise<void> {
+    await CastVoiceStore.removeKey(id);
+    const library = CastVoiceStore.library();
+    library.analysis.endpoints = library.analysis.endpoints.filter((item: CastAnalysisEndpoint): boolean => item.id !== id);
+    if (library.analysis.activeId === id) library.analysis.activeId = '';
+    CastVoiceStore.save(library);
+    if (library.enabled && !CastVoiceStore.analysisReady()) CastVoiceStore.setEnabled(false);
+  }
 
   static library(): CastLibrary {
     if (!CastVoiceStore.cache) {
@@ -59,6 +191,7 @@ export class CastVoiceStore {
     if (!library) return;
     AppStorage.setOrCreate('castVoiceEnabled', library.enabled);
     AppStorage.setOrCreate('castVoiceRevision', library.revision);
+    AppStorage.setOrCreate('castAnalysisCustom', !!library.analysis.activeId);
   }
 
   /** Never throws: the reader asks this on every start, also before app storage is ready. */
@@ -153,8 +286,8 @@ export class CastVoiceStore {
     for (const voice of custom) {
       if (voice.enabled === false) continue;
       const item = add(CastVoicePolicy.ref('http', String(voice.id), voice.name || '未命名音色'), '自定义');
-      if (library.unsupported.includes(item.key)) {
-        item.unsupported = true; item.reason = '返回 MP3，暂不支持';
+      if (library.undecodable.includes(item.key)) {
+        item.unsupported = true; item.reason = '音频无法解码';
       }
     }
     CastVoiceStore.itemsCache = items;
@@ -172,6 +305,10 @@ export class CastVoiceStore {
   }
   static tagAge(key: string): string {
     return CastVoiceStore.voices().find((item: CastVoiceItem): boolean => item.key === key)?.tag.age || 'unknown';
+  }
+  /** 这个音色用的离线模型（按模型目录分），自定义音色返回空串；用来把同一个模型的片段排在一起合成。 */
+  static modelGroup(ref: CastVoiceRef): string {
+    return CastVoiceStore.localModel(ref)?.dirName || '';
   }
   static localModel(ref: CastVoiceRef): LocalTtsModel | undefined {
     return ref.kind === 'local' ? LocalTtsModels.selectableModels().find((model: LocalTtsModel): boolean => model.id === ref.id) : undefined;
@@ -202,14 +339,14 @@ export class CastVoiceStore {
   }
   static markUnsupported(key: string): void {
     const library = CastVoiceStore.library();
-    if (!key || library.unsupported.includes(key)) return;
-    library.unsupported.push(key);
+    if (!key || library.undecodable.includes(key)) return;
+    library.undecodable.push(key);
     CastVoiceStore.save(library);
   }
   static clearUnsupported(key: string): void {
     const library = CastVoiceStore.library();
-    if (!library.unsupported.includes(key)) return;
-    library.unsupported = library.unsupported.filter((item: string): boolean => item !== key);
+    if (!library.undecodable.includes(key)) return;
+    library.undecodable = library.undecodable.filter((item: string): boolean => item !== key);
     CastVoiceStore.save(library);
   }
 
@@ -237,6 +374,11 @@ export class CastVoiceStore {
     const scheme = CastVoiceStore.scheme(cast);
     if (!CastVoicePolicy.key(scheme.narrator)) return `音色方案“${scheme.name}”还没有选旁白音色`;
     if (!CastVoiceStore.usable(scheme.narrator)) return `音色方案“${scheme.name}”的旁白音色“${scheme.narrator.name}”已不可用，请重新选择`;
+    // 离线音色是会员功能：提前说清楚，不要等读到某个人物时才失败。
+    if (!LocalTtsModels.memberAllowed() &&
+      CastVoicePolicy.schemeVoices(scheme).some((ref: CastVoiceRef): boolean => ref.kind === 'local')) {
+      return `音色方案“${scheme.name}”用了离线音色。${LocalTtsModels.MEMBER_REQUIRED}，或把方案里的离线音色换成自定义音色`;
+    }
     return '';
   }
 }

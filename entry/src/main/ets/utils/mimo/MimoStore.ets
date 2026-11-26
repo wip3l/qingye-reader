@@ -31,6 +31,8 @@ export class MimoBookCast {
   assignmentEnabled?: boolean;
   /** Multi-voice scheme (offline/custom voices) for this book; empty follows the scheme in use. */
   castSchemeId?: string;
+  /** When this cast was first saved. Cached role analysis belongs to one cast; clearing the cast starts over. */
+  epoch?: number;
 }
 export class MimoCastSummary {
   /** Empty for casts saved before the book was recorded; see linkLegacyCasts. */
@@ -363,6 +365,7 @@ export class MimoStore {
     cast.book = book;
     if (bookName) cast.bookName = bookName;
     cast.updatedAt = Date.now();
+    if (!cast.epoch) cast.epoch = cast.updatedAt;
     MimoStore.write(MimoStore.root() + '/cast_' + MimoStore.hash(book) + '.json', JSON.stringify(cast));
     MimoStore.voiceRevision++;
     MimoStore.publish();

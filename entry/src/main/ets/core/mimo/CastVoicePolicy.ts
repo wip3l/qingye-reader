@@ -32,13 +32,32 @@ export class CastScheme {
   unknown: CastVoiceRef = new CastVoiceRef();
 }
 
+/** One saved OpenAI-compatible endpoint that can tell who is speaking. Its key lives in secure storage, by id. */
+export class CastAnalysisEndpoint {
+  id: string = '';
+  name: string = '';
+  /** Full chat-completions URL. */
+  url: string = '';
+  model: string = '';
+  /** Passed its test with the key saved on this device. */
+  verified: boolean = false;
+}
+
+/** Which text model tells who is speaking: the saved MiMo key, or one of the saved endpoints. */
+export class CastAnalysisModel {
+  /** Id of the endpoint in use; '' means MiMo. */
+  activeId: string = '';
+  endpoints: CastAnalysisEndpoint[] = [];
+}
+
 export class CastLibrary {
   enabled: boolean = false;
+  analysis: CastAnalysisModel = new CastAnalysisModel();
   schemes: CastScheme[] = [];
   schemeId: string = 'default';
   tags: CastVoiceTag[] = [];
-  /** Custom voices seen answering with a compressed file (MP3); they cannot be mixed into one PCM stream yet. */
-  unsupported: string[] = [];
+  /** Custom voices whose audio could not be decoded to PCM, so they cannot share the output stream. */
+  undecodable: string[] = [];
   revision: number = 0;
 }
 
@@ -53,6 +72,8 @@ export class CastVoiceMatch {
 /** Pure policy for multi-voice reading with offline and custom voices. */
 export class CastVoicePolicy {
   static readonly POOL_LIMIT: number = 12;
+  /** Loudness every voice is brought to: RMS of the spoken parts, about -20 dBFS. */
+  static readonly TARGET_LEVEL: number = 3200;
 
   static key(ref: CastVoiceRef | undefined): string {
     return ref && ref.kind && ref.id ? ref.kind + ':' + ref.id : '';
@@ -130,6 +151,7 @@ export class CastVoicePolicy {
     const result = new CastLibrary();
     if (!value || typeof value !== 'object') return CastVoicePolicy.defaults();
     result.enabled = value.enabled === true;
+    result.analysis = CastVoicePolicy.normalizeAnalysis(value.analysis);
     const ids: Set<string> = new Set<string>();
     for (const item of Array.isArray(value.schemes) ? value.schemes.slice(0, 50) : []) {
       if (!item || typeof item.id !== 'string' || !item.id || item.id.length > 80 || ids.has(item.id) ||
@@ -155,7 +177,7 @@ export class CastVoicePolicy {
       tag.narrator = item.narrator === true;
       keys.add(tag.key); result.tags.push(tag);
     }
-    result.unsupported = Array.isArray(value.unsupported) ? Array.from(new Set<string>(value.unsupported.filter(
+    result.undecodable = Array.isArray(value.undecodable) ? Array.from(new Set<string>(value.undecodable.filter(
       (key: string): boolean => typeof key === 'string' && key.length > 0 && key.length <= 220))).slice(0, 500) : [];
     result.revision = Number.isInteger(value.revision) ? Math.max(0, value.revision) : 0;
     return result;
@@ -255,6 +277,141 @@ export class CastVoicePolicy {
       }
     }
     return changed;
+  }
+
+  static readonly ENDPOINT_LIMIT: number = 20;
+  /** The single endpoint saved before there was a list; its key keeps the old alias. */
+  static readonly LEGACY_ENDPOINT_ID: string = 'legacy';
+
+  private static endpoint(value: CastAnalysisEndpoint | undefined, id: string): CastAnalysisEndpoint | undefined {
+    if (!value || typeof value !== 'object') return undefined;
+    const url = typeof value.url === 'string' && CastVoicePolicy.validUrl(value.url) ? value.url.trim() : '';
+    const model = typeof value.model === 'string' && value.model.length <= 120 ? value.model.trim() : '';
+    if (!url || !model || !/^[A-Za-z0-9_-]{1,40}$/.test(id)) return undefined;
+    const result = new CastAnalysisEndpoint();
+    result.id = id; result.url = url; result.model = model;
+    result.name = typeof value.name === 'string' ? value.name.trim().slice(0, 30) : '';
+    result.verified = value.verified === true;
+    return result;
+  }
+  /** Also reads the older single-endpoint shape `{ provider, url, model, verified }`. */
+  static normalizeAnalysis(value: CastAnalysisModel | undefined): CastAnalysisModel {
+    const result = new CastAnalysisModel();
+    if (!value || typeof value !== 'object') return result;
+    if (Array.isArray(value.endpoints)) {
+      const ids: Set<string> = new Set<string>();
+      for (const item of value.endpoints) {
+        const endpoint = CastVoicePolicy.endpoint(item, item && typeof item.id === 'string' ? item.id : '');
+        if (!endpoint || ids.has(endpoint.id) || result.endpoints.length >= CastVoicePolicy.ENDPOINT_LIMIT) continue;
+        ids.add(endpoint.id); result.endpoints.push(endpoint);
+      }
+      if (typeof value.activeId === 'string' && ids.has(value.activeId)) result.activeId = value.activeId;
+      return result;
+    }
+    const old = value as Object as Record<string, Object>;
+    const endpoint = CastVoicePolicy.endpoint(old as Object as CastAnalysisEndpoint, CastVoicePolicy.LEGACY_ENDPOINT_ID);
+    if (endpoint) {
+      result.endpoints.push(endpoint);
+      if (old['provider'] === 'custom') result.activeId = endpoint.id;
+    }
+    return result;
+  }
+  static activeEndpoint(analysis: CastAnalysisModel): CastAnalysisEndpoint | undefined {
+    return analysis.activeId ? analysis.endpoints.find((item: CastAnalysisEndpoint): boolean => item.id === analysis.activeId) : undefined;
+  }
+  static endpointTitle(endpoint: CastAnalysisEndpoint): string { return endpoint.name || endpoint.model; }
+  /** "api.example.com" from the endpoint URL, for the list's second line. */
+  static endpointHost(url: string): string {
+    const match = /^https?:\/\/([^\s/]+)/i.exec(url || '');
+    return match ? match[1] : '';
+  }
+
+  static validUrl(value: string): boolean {
+    const url = (value || '').trim();
+    return url.length <= 500 && /^https?:\/\/[^\s/]+\/\S*$/i.test(url);
+  }
+  /** "https://host/v1" and "https://host/v1/" are completed to the chat-completions path; a full path is kept. */
+  static completionsUrl(value: string): string {
+    const url = (value || '').trim().replace(/\/+$/, '');
+    if (!url) return '';
+    return /\/chat\/completions$/i.test(url) ? url : url + '/chat/completions';
+  }
+
+  /**
+   * Loudness of 16-bit mono speech: RMS over the 20 ms windows that are not silence, so pauses and
+   * trailing silence do not make a voice look quieter than it sounds. 0 when there is no speech.
+   */
+  static level(pcm: ArrayBuffer, sampleRate: number): number {
+    const samples = new Int16Array(pcm, 0, Math.floor(pcm.byteLength / 2));
+    const window = Math.max(1, Math.round(sampleRate / 50));
+    let total = 0;
+    let count = 0;
+    for (let start = 0; start + window <= samples.length; start += window) {
+      let sum = 0;
+      for (let index = start; index < start + window; index++) sum += samples[index] * samples[index];
+      const mean = sum / window;
+      if (mean < 200 * 200) continue;
+      total += mean; count++;
+    }
+    return count > 0 ? Math.sqrt(total / count) : 0;
+  }
+  /**
+   * Gain that brings a voice to the shared loudness. It is limited so one quiet clip is not blown up
+   * (at most +9 dB), and so the loudest sample of this clip never clips.
+   */
+  static gain(level: number, peak: number): number {
+    if (level <= 0) return 1;
+    let gain = Math.max(0.35, Math.min(2.8, CastVoicePolicy.TARGET_LEVEL / level));
+    if (peak > 0) gain = Math.min(gain, 32000 / peak);
+    return Math.abs(gain - 1) < 0.05 ? 1 : gain;
+  }
+  static peak(pcm: ArrayBuffer): number {
+    const samples = new Int16Array(pcm, 0, Math.floor(pcm.byteLength / 2));
+    let peak = 0;
+    for (let index = 0; index < samples.length; index++) {
+      const value = samples[index] < 0 ? -samples[index] : samples[index];
+      if (value > peak) peak = value;
+    }
+    return peak;
+  }
+  static amplify(pcm: ArrayBuffer, gain: number): ArrayBuffer {
+    if (gain === 1) return pcm;
+    const source = new Int16Array(pcm, 0, Math.floor(pcm.byteLength / 2));
+    const target = new Int16Array(source.length);
+    for (let index = 0; index < source.length; index++) {
+      const value = Math.round(source[index] * gain);
+      target[index] = value > 32767 ? 32767 : (value < -32768 ? -32768 : value);
+    }
+    return target.buffer;
+  }
+  /** Float samples in [-1, 1] (what the audio decoder returns) to 16-bit PCM. */
+  static floatToPcm(samples: Float32Array): ArrayBuffer {
+    const target = new Int16Array(samples.length);
+    for (let index = 0; index < samples.length; index++) {
+      const value = Math.round(samples[index] * 32767);
+      target[index] = value > 32767 ? 32767 : (value < -32768 ? -32768 : value);
+    }
+    return target.buffer;
+  }
+
+  /**
+   * Order in which upcoming offline segments are synthesised. The offline engine holds one model at a
+   * time, so segments are grouped by model, starting with the model of the segment needed first:
+   * a narrator on one model and characters on another then cost two model loads per batch instead of
+   * one per sentence. `models[i]` is the model of segment i, '' for segments that are not offline.
+   */
+  static synthesisOrder(models: string[]): number[] {
+    const order: number[] = [];
+    const seen: string[] = [];
+    for (const model of models) {
+      if (model && !seen.includes(model)) seen.push(model);
+    }
+    for (const model of seen) {
+      for (let index = 0; index < models.length; index++) {
+        if (models[index] === model) order.push(index);
+      }
+    }
+    return order;
   }
 
   /** Linear resampling of 16-bit mono PCM, so voices recorded at different rates can share one output stream. */

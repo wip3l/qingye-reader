@@ -23,12 +23,14 @@ struct CastReadingPage {
   @StorageProp('themeRevision') themeRevision: number = 0;
   @StorageProp('castVoiceEnabled') castOn: boolean = false;
   @StorageProp('castVoiceRevision') @Watch('refresh') revision: number = 0;
-  @StorageProp('mimoConfigured') mimoConfigured: boolean = false;
-  @StorageProp('mimoAnalysisAvailable') analysisAvailable: boolean = false;
+  @StorageProp('mimoConfigured') @Watch('refresh') mimoConfigured: boolean = false;
+  @StorageProp('mimoAnalysisAvailable') @Watch('refresh') analysisAvailable: boolean = false;
   @State schemes: CastScheme[] = [];
   @State schemeId: string = '';
   @State untagged: number = 0;
   @State books: number = 0;
+  @State analysisTitle: string = '';
+  @StorageProp('castAnalysisCustom') @Watch('refresh') analysisCustom: boolean = false;
 
   aboutToAppear(): void {
     MimoStore.load();
@@ -45,23 +47,20 @@ struct CastReadingPage {
       this.schemeId = library.schemeId;
       this.untagged = CastVoiceStore.untaggedCount();
       this.books = MimoStore.castSummaries().length;
+      this.analysisTitle = CastVoiceStore.analysisTitle();
     } catch (error) { HdsFeedback.showToast((error as Error).message); }
   }
 
-  private analysisText(): string {
-    if (!this.mimoConfigured) return 'MiMo · 未配置';
-    return this.analysisAvailable ? 'MiMo · 已配置' : 'MiMo · 密钥不能识别人物';
-  }
 
   private async toggle(on: boolean): Promise<void> {
     if (!on) { CastVoiceStore.setEnabled(false); return; }
-    if (!this.mimoConfigured || !this.analysisAvailable) {
+    if (!CastVoiceStore.analysisReady()) {
       const result = await ThemedDialog.showDialog(this.getUIContext(), {
-        title: '先配置人物识别', message: '多角色朗读靠 MiMo 的文本模型识别每句话是谁说的，需要先填一个能用的 MiMo API Key。',
+        title: '先配置分析模型', message: '多角色朗读靠一个文本模型识别每句话是谁说的。可以用 MiMo 的密钥，也可以填别家兼容接口，测试通过后才能开启。',
         buttons: [{ text: '取消', color: ThemeRuntime.subTextColor(this.dark) },
           { text: '去配置', color: ThemeRuntime.accentColor(this.dark) }]
       });
-      if (result.index === 1) router.pushUrl({ url: 'pages/MimoSettings' });
+      if (result.index === 1) router.pushUrl({ url: 'pages/CastAnalysisModel' });
       return;
     }
     try {
@@ -142,8 +141,8 @@ struct CastReadingPage {
 
       this.sectionLabel('人物识别', '', (): void => {})
       Column() {
-        SettingNavRow({ title: '分析模型', value: this.analysisText(), showDivider: false,
-          onTap: (): void => { router.pushUrl({ url: 'pages/MimoSettings' }); } })
+        SettingNavRow({ title: '分析模型', value: this.analysisTitle, showDivider: false,
+          onTap: (): void => { router.pushUrl({ url: 'pages/CastAnalysisModel' }); } })
       }.width('100%').backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
 
       this.sectionLabel('音色方案', '新建', (): void => this.newScheme())
@@ -161,7 +160,7 @@ struct CastReadingPage {
       }.width('100%').backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
 
       Text('识别人物会把正文片段发给分析模型，产生少量用量。离线音色的合成在本机完成；拿不准是谁说的句子由旁白读。' +
-        '返回 MP3 的自定义音色暂时不能用于多角色朗读。')
+        '不同音色的音量会自动拉到差不多一样。')
         .fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.subTextColor(this.dark)).width('100%')
         .padding({ left: AppSpacing.XS, right: AppSpacing.XS })
     }.width('100%').constraintSize({ maxWidth: 760 })

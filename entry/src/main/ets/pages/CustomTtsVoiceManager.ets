@@ -2058,6 +2058,14 @@ struct CustomTtsVoiceManagerPage {
     this.deleteVoice(voice);
   }
 
+  /** 多角色朗读用的音色标签（性别、年龄段、适合读旁白）。 */
+  openActionVoiceTags(): void {
+    const id = this.actionVoiceId;
+    this.closeVoiceActions();
+    if (!id) return;
+    router.pushUrl({ url: 'pages/CastVoiceTags', params: { key: 'http:' + id } });
+  }
+
   exportActionVoice(): void {
     const voice = this.actionVoice();
     if (!voice) return;
@@ -2295,6 +2303,8 @@ struct CustomTtsVoiceManagerPage {
         this.voiceContextActionItem(this.actionVoice()?.enabled ? $r('sys.symbol.minus_circle') :
           $r('sys.symbol.checkmark_circle'), this.actionVoice()?.enabled ? '禁用' : '启用', this.primaryTextColor(),
           () => this.toggleActionVoiceEnabled())
+        this.voiceContextActionItem($r('sys.symbol.person'), '标签', this.primaryTextColor(),
+          () => this.openActionVoiceTags())
         this.voiceContextActionItem($r('sys.symbol.share'), '导出', this.primaryTextColor(),
           () => this.exportActionVoice())
         this.voiceContextActionItem($r('sys.symbol.list_bullet'), '多选', this.primaryTextColor(),

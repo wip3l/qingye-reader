@@ -136,21 +136,29 @@ const castPolicy=vm.runInNewContext(stripTypeScriptTypes(fs.readFileSync(new URL
   .replace(/^import .*;\r?\n/gm,'').replace(/^export \{.*;\r?\n/gm,'').replaceAll('export ','')+'\n({CastVoicePolicy})'),
   {CastVoiceRef:policy.CastVoiceRef,MimoRole}).CastVoicePolicy;
 const castScheme=castPolicy.scheme('s','默认方案');const castUnsupported=new Set();const castSpoken=[];let castPcmWrites=[];
+let customAnalysis=null;const analysisTargets=[];let decodeFails=false;const localLevels=new Map();
 let localBusy=0;let localOverlap=false;
 const castStore={
   blocker:()=>castPolicy.key(castScheme.narrator)&&!castUnsupported.has(castPolicy.key(castScheme.narrator))?'':'音色方案还没有选旁白音色',
   voiceFor:(role,cast)=>castPolicy.voiceFor(role,cast.roles,castScheme,ref=>!castUnsupported.has(castPolicy.key(ref)),()=>'unknown'),
   localModel:ref=>ref.kind==='local'?{id:ref.id}:undefined,customVoice:ref=>ref.kind==='http'?{id:ref.id}:undefined,
-  markUnsupported:key=>castUnsupported.add(key)};
+  markUnsupported:key=>castUnsupported.add(key),
+  modelGroup:ref=>ref.kind==='local'?(ref.id.startsWith('solo')?'model-solo':'model-pack'):'',
+  usesCustomAnalysis:()=>!!customAnalysis,analysis:()=>customAnalysis||{url:'',model:''},analysisKey:async()=>'custom-key'};
+let bumpRevisionOnce=false;
 const localEngine={cancelAll(){},async synthesize(model,text,speed){
+  if(bumpRevisionOnce){bumpRevisionOnce=false;fakeStore.voiceRevision++;}
   if(localBusy)localOverlap=true;localBusy++;await new Promise(r=>setTimeout(r,1));localBusy--;
-  castSpoken.push(['local:'+model.id,text,speed]);
-  return {pcm:new Int16Array(2205).buffer,sampleRate:22050,speed:1,playerSpeed:false,filePath:''};}};
+  castSpoken.push(['local:'+model.id,text,speed]);events.push('local:'+text);
+  const pcm=new Int16Array(2205);const amplitude=localLevels.get(model.id)||0;
+  for(let i=0;i<pcm.length;i++)pcm[i]=Math.round(Math.sin(i/6)*amplitude);
+  return {pcm:pcm.buffer,sampleRate:22050,speed:1,playerSpeed:false,filePath:''};}};
 class FakeHttpReader{stop(){} release(){} discardAudio(){}
   async synthesize(voice,text,speed){castSpoken.push(['http:'+voice.id,text,speed]);
-    if(voice.id==='mp3')return {pcm:new ArrayBuffer(0),sampleRate:0,speed:1,playerSpeed:false,filePath:'/cache/a.mp3'};
+    if(voice.id==='mp3')return {pcm:new ArrayBuffer(0),sampleRate:0,speed:speed,playerSpeed:true,filePath:'/cache/a.mp3'};
     return {pcm:new Int16Array(1600).buffer,sampleRate:16000,speed:speed,playerSpeed:true,filePath:''};}}
 const stretch={stretch16BitMono:(pcm,rate,factor)=>pcm.slice(0,Math.floor(pcm.byteLength/factor/2)*2)};
+const decodeTask={decode:async(path,rate)=>{if(decodeFails)throw Error('bad file');return new Int16Array(rate).buffer;}};
 const settings={multi:false,voice:'白桦',namespace:'test',enabled:true};
 const fakeStore={load:()=>settings,key:async()=>'test-key',onCredentialsChanged:[],
   library:()=>voicePolicy.MimoVoicePolicy.defaults(settings.voice),voiceRevision:0,
@@ -164,11 +172,11 @@ const fakeFiles={accessSync:p=>files.has(p),mkdirSync:()=>{},readTextSync:p=>{if
   writeSync:(p,b)=>{files.set(p,Buffer.from(b));return files.get(p).length},closeSync:()=>{},
   readSync:(p,b)=>{new Uint8Array(b).set(files.get(p));return files.get(p).length},
   renameSync:(a,b)=>{files.set(b,files.get(a));files.delete(a)},unlinkSync:p=>files.delete(p)};
-class Player {write(){return Promise.resolve()} writeSegment(b,s,focus){castPcmWrites.push([b.byteLength,s]);focus();return this.write()} stop(){} release(){} pause(){return Promise.resolve()} resume(){return Promise.resolve()} waitForSegmentEnd(){return Promise.resolve()} drain(){return Promise.resolve()}}
+class Player {write(){return Promise.resolve()} writeSegment(b,s,focus){castPcmWrites.push([b.byteLength,s,castPolicy.peak(b)]);focus();return this.write()} stop(){} release(){} pause(){return Promise.resolve()} resume(){return Promise.resolve()} waitForSegmentEnd(){return Promise.resolve()} drain(){return Promise.resolve()}}
 class Client {
   stop(){clientStops++;}
-  async analyze(key,units,roles,context){
-    events.push('analyze:'+units[0].id);
+  async analyze(key,units,roles,context,onRetry,target){
+    events.push('analyze:'+units[0].id);analysisTargets.push([key,target?target.url:'']);
     await new Promise(r=>setTimeout(r,1));
     return {roles:proposals,assignments:units.map(u=>({unitId:u.id,roleId:assignRole?assignRole(u):'narrator',emotion:'平静',confidence:1}))};
   }
@@ -187,7 +195,7 @@ const Session=vm.runInNewContext(stripTypeScriptTypes(readingSource+'\nMimoReadi
   fs:fakeFiles,MimoStore:fakeStore,MimoClient:Client,TtsPcmAudioPlayer:Player,MimoPolicy,MimoUnit,MimoRole,
   MimoVoicePolicy:voicePolicy.MimoVoicePolicy,MIMO_AGES:voicePolicy.MIMO_AGES,MIMO_GENDERS:voicePolicy.MIMO_GENDERS,MIMO_VOICES:['白桦','苏打','茉莉','冰糖'],
   CastVoiceRef:policy.CastVoiceRef,CastVoicePolicy:castPolicy,CastVoiceStore:castStore,HttpTtsReader:FakeHttpReader,
-  LocalTtsEngine:localEngine,PcmTimeStretch:stretch,
+  LocalTtsEngine:localEngine,PcmTimeStretch:stretch,TtsAudioDecodeTask:decodeTask,MimoAnalysisTarget:class{url='';model='';},
   AppStorage:{get:k=>storage.get(k),setOrCreate:(k,v)=>storage.set(k,v)}});
 const session=new Session();const focus=[];
 const options={book:'book',chapter:'one',sourceOffset:0,speed:1,onAudio:()=>{},onFocus:u=>focus.push(u.text)};
@@ -276,6 +284,7 @@ fakeStore.library=originalLibrary;
 files.clear();savedCast=null;focus.length=0;castSpoken.length=0;castPcmWrites=[];
 const castOptions={...options,cast:true,voiceSpeed:1.5,speakText:t=>t.replace(/\[\d+\]/g,'')};
 await assert.rejects(session.read('他推门进来。',castOptions),/旁白音色/,'a scheme without a narrator voice stops with a clear reason');
+decodeFails=true;
 castScheme.narrator=castPolicy.ref('local','narr','旁白声');
 castScheme.malePool=[castPolicy.ref('local','m1','男一'),castPolicy.ref('http','mp3','压缩男声')];
 castScheme.femalePool=[castPolicy.ref('http','f1','女一')];
@@ -294,9 +303,9 @@ assert.deepEqual(voiceOfLine('沈砚望着窗外'),['local:narr'],'narration use
 assert.deepEqual(voiceOfLine('今晚的雨'),['local:m1'],'the first male character takes the first pool voice');
 assert.ok(castSpoken.some(([voice,text])=>voice==='local:m1'&&!text.includes('[12]')),'footnote markers are removed before synthesis');
 assert.deepEqual(voiceOfLine('那我们就在这里'),['http:f1']);
-assert.deepEqual(voiceOfLine('我去前面看看').at(-1),'local:m1','an MP3 voice is dropped and the line is read by another pool voice');
+assert.deepEqual(voiceOfLine('我去前面看看').at(-1),'local:m1','a voice whose audio cannot be decoded is dropped and another pool voice reads the line');
 assert.ok(voiceOfLine('我去前面看看').includes('http:mp3'));
-assert.ok(castUnsupported.has('http:mp3'),'the MP3 voice is remembered as unsupported');
+assert.ok(castUnsupported.has('http:mp3'),'the undecodable voice is remembered');
 assert.ok(castSpoken.every(([,,speed])=>speed===1.5),'the reading speed reaches every voice');
 assert.ok(castPcmWrites.length>0&&castPcmWrites.every(([,rate])=>rate===24000),'all voices are written at one sample rate');
 assert.ok(castPcmWrites.some(([bytes])=>bytes===4800),'22.05 kHz offline audio is resampled to 24 kHz');
@@ -308,5 +317,67 @@ castSpoken.length=0;focus.length=0;
 await session.read(castText,castOptions);
 assert.deepEqual(voiceOfLine('今晚的雨'),['local:m1']);
 assert.ok(!castSpoken.some(([voice])=>voice==='http:mp3'));
+
+// 二期：MP3 音色解码后和别的音色接在同一路输出里。
+decodeFails=false;castUnsupported.clear();savedCast=null;files.clear();castSpoken.length=0;focus.length=0;castPcmWrites=[];
+await session.read(castText,castOptions);
+assert.equal(focus.join(''),castText);
+assert.deepEqual(voiceOfLine('我去前面看看'),['http:mp3'],'the decoded MP3 voice reads its own line');
+assert.ok(!castUnsupported.has('http:mp3'));
+assert.ok(castPcmWrites.some(([bytes])=>bytes===Math.floor(24000/1.5)*2),'decoded audio is slowed or sped up locally, not by the shared player');
+
+// 重读同一段：识别结果按人物档案和原文缓存，不再请求模型。
+const analysesBefore=events.filter(e=>e.startsWith('analyze:')).length;
+castSpoken.length=0;focus.length=0;
+await session.read(castText,castOptions);
+assert.equal(events.filter(e=>e.startsWith('analyze:')).length,analysesBefore,'a replay reuses the stored analysis');
+assert.deepEqual(voiceOfLine('今晚的雨'),['local:m1'],'characters keep their voices on replay');
+
+// 整章预分析：后面的批次不等读到就接着识别，而且一批一批来。
+savedCast=null;files.clear();events.length=0;focus.length=0;proposals=[];assignRole=null;
+const longChapter=Array.from({length:40},(_,i)=>'这是第'+i+'句足够长的叙述内容不会被合并。').join('');
+await session.read(longChapter,castOptions);
+assert.equal(focus.join(''),longChapter);
+const analysisOrder=events.filter(e=>e.startsWith('analyze:'));
+assert.deepEqual(analysisOrder,['analyze:0','analyze:5','analyze:21','analyze:37'],'every batch of the chapter is analysed once, in order');
+assert.ok(events.indexOf('analyze:37')<events.findIndex(e=>e.includes('这是第30句')),'the last batch is analysed well before playback reaches it');
+
+// 按模型调度：旁白和人物用了两个离线模型时，同一个模型的片段排在一起合成。
+savedCast=null;files.clear();castSpoken.length=0;focus.length=0;
+castScheme.narrator=castPolicy.ref('local','solo-narr','单独的旁白模型');
+castScheme.malePool=[castPolicy.ref('local','m1','男一')];castScheme.femalePool=[];
+proposals=[{id:'shen',name:'沈砚',aliases:[],gender:'male',age:'unknown',ageEvidence:'',ageConfidence:0}];
+assignRole=u=>u.text.startsWith('“')?'shen':'narrator';
+const alternating=Array.from({length:6},(_,i)=>'沈砚停下脚步想了很久才开口说出第'+i+'件事：“这是他说的第'+i+'句足够长的对白内容。”').join('');
+await session.read(alternating,castOptions);
+assert.equal(focus.join(''),alternating,'playback order is unchanged by the synthesis order');
+let switches=0;for(let i=1;i<castSpoken.length;i++){if(castSpoken[i][0]!==castSpoken[i-1][0])switches++;}
+assert.ok(switches<=6,'grouping by model: '+switches+' model switches for 12 alternating segments');
+assert.equal(castSpoken.length,12,'each segment is synthesised once');
+
+// 响度校准：一个很轻、一个很响的音色，写进播放器时差距明显缩小。
+savedCast=null;files.clear();castSpoken.length=0;focus.length=0;castPcmWrites=[];
+castScheme.narrator=castPolicy.ref('local','quiet','轻声旁白');castScheme.malePool=[castPolicy.ref('local','loud','大嗓门')];
+localLevels.set('quiet',1200);localLevels.set('loud',20000);
+await session.read(alternating,castOptions);
+const peaks=castPcmWrites.map(([,,peak])=>peak).filter(peak=>peak>0);
+assert.ok(Math.max(...peaks)/Math.min(...peaks)<2.2,'loudness is evened out: '+Math.min(...peaks)+'..'+Math.max(...peaks));
+assert.ok(Math.max(...peaks)<=32000,'no clipping');
+localLevels.clear();
+
+// 合成期间人物档案变了（后台又认出了新人物）：这段重新走一遍分配，但不重复合成。
+savedCast=null;files.clear();castSpoken.length=0;focus.length=0;proposals=[];assignRole=null;
+castScheme.narrator=castPolicy.ref('local','narr','旁白声');bumpRevisionOnce=true;
+const steady='他推开门走了进去，屋里一个人也没有，桌上的茶还冒着热气。';
+await session.read(steady,castOptions);
+assert.equal(focus.join(''),steady);
+assert.equal(castSpoken.length,1,'a cast change during synthesis does not synthesise the segment twice');
+
+// 自定义分析接口：密钥和地址来自多角色朗读自己的设置。
+savedCast=null;files.clear();analysisTargets.length=0;customAnalysis={url:'https://example.test/v1/chat/completions',model:'some-model'};
+proposals=[];assignRole=null;castScheme.narrator=castPolicy.ref('local','narr','旁白声');
+await session.read('他推开门走了进去，屋里一个人也没有。',castOptions);
+assert.deepEqual(analysisTargets[0],['custom-key','https://example.test/v1/chat/completions']);
+customAnalysis=null;
 assignRole=null;proposals=[];
 console.log('MiMo session checks passed: source focus, cached replay, failed segment retention, short-unit merging, synthesis and analysis prefetch, stale chapter cancellation.');

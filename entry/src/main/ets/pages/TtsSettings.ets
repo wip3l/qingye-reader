@@ -155,7 +155,8 @@ struct TtsSettingsPage {
         SettingNavRow({ title: '多角色朗读', description: this.castVoiceEnabled ?
           `已启用 · ${CastVoiceStore.title().replace('多角色 · ', '')}` : '识别人物与旁白，用离线音色和自定义音色分别朗读',
           onTap: (): void => { this.stopPreview(); router.pushUrl({ url: 'pages/CastReading' }); } })
-        SettingNavRow({ title: 'MiMo 朗读', description: this.mimoEnabled ?
+        SettingNavRow({ title: 'MiMo 朗读', description: this.castVoiceEnabled && this.mimoEnabled ?
+          '多角色朗读开着，MiMo 朗读暂不生效' : this.mimoEnabled ?
           (this.mimoMulti ? '已启用 · 自动多角色 · 自带 API Key' : '已启用 · 单音色 · 自带 API Key') :
           '使用自己的 API Key，自动识别人物与旁白', showDivider: false,
           onTap: (): void => { this.stopPreview(); router.pushUrl({ url: 'pages/MimoSettings' }); } })
@@ -313,6 +314,11 @@ struct TtsSettingsPage {
 
   voiceSelectOptions(): TtsSettingsVoiceSelectOption[] {
     const options: TtsSettingsVoiceSelectOption[] = [];
+    // 多角色朗读开着时它是当前“音色”，排在最前；选下面任何一个常规音色就关掉它。
+    if (this.castVoiceEnabled) {
+      options.push({ value: CastVoiceStore.title(), key: 'cast',
+        selectVoice: (): void => { this.stopPreview(); router.pushUrl({ url: 'pages/CastReading' }); } });
+    }
     this.mimoChoices.forEach((choice: MimoVoiceChoice): void => {
       options.push({ value: choice.label, key: choice.key, selectVoice: (): void => this.selectMimoVoice(choice) });
     });
@@ -784,6 +790,7 @@ struct TtsSettingsPage {
   }
 
   currentVoiceKey(): string {
+    if (CastVoiceStore.enabled()) return 'cast';
     if (MimoStore.load().enabled) return MimoStore.selectedVoiceKey();
     const localVoice = this.currentLocalVoice();
     if (localVoice) {

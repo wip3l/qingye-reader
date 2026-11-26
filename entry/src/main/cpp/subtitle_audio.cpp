@@ -160,11 +160,11 @@ struct DecodeResult {
     int64_t durationMs = 0;
 };
 
-/** 线性插值重采样到 16 kHz。语音识别用的特征本身就有低通，这里不再额外滤波。 */
-std::vector<float> Resample(const std::vector<float> &input, int32_t rate)
+/** 线性插值重采样到目标采样率（默认 16 kHz）。语音识别用的特征本身就有低通，这里不再额外滤波。 */
+std::vector<float> Resample(const std::vector<float> &input, int32_t rate, int32_t targetRate)
 {
-    if (rate == kTargetRate || input.empty()) return input;
-    const double ratio = static_cast<double>(rate) / kTargetRate;
+    if (rate == targetRate || input.empty()) return input;
+    const double ratio = static_cast<double>(rate) / targetRate;
     const size_t count = static_cast<size_t>(std::floor((input.size() - 1) / ratio)) + 1;
     std::vector<float> output(count);
     for (size_t i = 0; i < count; i++) {
@@ -177,7 +177,7 @@ std::vector<float> Resample(const std::vector<float> &input, int32_t rate)
     return output;
 }
 
-DecodeResult Decode(const std::string &path, int64_t startMs, int64_t spanMs)
+DecodeResult Decode(const std::string &path, int64_t startMs, int64_t spanMs, int32_t targetRate)
 {
     Media media;
     Open(media, path);
@@ -274,7 +274,7 @@ DecodeResult Decode(const std::string &path, int64_t startMs, int64_t spanMs)
         OH_AudioCodec_FreeOutputBuffer(media.codec, index);
     }
     Require(pcm.rate > 0 || mono.empty(), "subtitle_codec");
-    result.samples = Resample(mono, pcm.rate > 0 ? pcm.rate : kTargetRate);
+    result.samples = Resample(mono, pcm.rate > 0 ? pcm.rate : targetRate, targetRate);
     return result;
 }
 
@@ -301,11 +301,14 @@ void SetNumber(napi_env env, napi_value object, const char *name, double value)
     napi_set_named_property(env, object, name, number);
 }
 
-/** decode(path, startMs, spanMs) → { samples: Float32Array, sampleRate, startMs, durationMs }。 */
+/**
+ * decode(path, startMs, spanMs, sampleRate?) → { samples: Float32Array, sampleRate, startMs, durationMs }。
+ * sampleRate 缺省 16000（字幕识别用）；朗读把压缩音频解成 PCM 时传播放用的采样率。
+ */
 napi_value DecodeApi(napi_env env, napi_callback_info info)
 {
-    size_t argc = 3;
-    napi_value args[3] = {nullptr};
+    size_t argc = 4;
+    napi_value args[4] = {nullptr};
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     if (argc < 3) {
         napi_throw_error(env, nullptr, "subtitle_args");
@@ -319,8 +322,13 @@ napi_value DecodeApi(napi_env env, napi_callback_info info)
         return nullptr;
     }
     if (spanMs > kMaxSpanMs) spanMs = kMaxSpanMs;
+    int32_t targetRate = kTargetRate;
+    if (argc >= 4) {
+        const int64_t wanted = NumberArg(env, args[3]);
+        if (wanted >= 8000 && wanted <= 48000) targetRate = static_cast<int32_t>(wanted);
+    }
     try {
-        DecodeResult result = Decode(path, startMs, spanMs);
+        DecodeResult result = Decode(path, startMs, spanMs, targetRate);
         void *data = nullptr;
         napi_value buffer;
         napi_value array;
@@ -331,7 +339,7 @@ napi_value DecodeApi(napi_env env, napi_callback_info info)
         napi_value object;
         napi_create_object(env, &object);
         napi_set_named_property(env, object, "samples", array);
-        SetNumber(env, object, "sampleRate", kTargetRate);
+        SetNumber(env, object, "sampleRate", targetRate);
         SetNumber(env, object, "startMs", static_cast<double>(result.startMs));
         SetNumber(env, object, "durationMs", static_cast<double>(result.durationMs));
         return object;

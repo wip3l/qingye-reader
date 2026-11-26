@@ -37,6 +37,7 @@ import { LocalTtsModels } from '../utils/localtts/LocalTtsModels';
 import { LocalTtsSelection } from '../utils/localtts/LocalTtsSelection';
 import { TtsTurnFollow } from '../utils/TtsTurnFollow';
 import { MimoStore } from '../utils/mimo/MimoStore';
+import { CastVoiceStore } from '../utils/mimo/CastVoiceStore';
 import { ReaderProgressCheckpoint } from '../utils/ReaderProgressCheckpoint';
 import { ReadingContinuation, QYBOOK_UTD } from '../utils/ReadingContinuation';
 import { AppIntentActions } from '../utils/AppIntentActions';
@@ -129,6 +130,8 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate('appFilesDir', this.context.filesDir);
     AppIntentActions.install(this.context);
     try { MimoStore.load(); } catch (_) {}
+    // 把多角色朗读的开关状态发布到 AppStorage，朗读设置和播放面板打开时就能读到。
+    CastVoiceStore.enabled();
     AppStorage.setOrCreate('pendingBookSourceImportUri', '');
     AppStorage.setOrCreate('pendingBookSourceImportUrl', '');
     AppStorage.setOrCreate('pendingBookSourceImportNonce', 0);

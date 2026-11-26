@@ -20,6 +20,8 @@ import { AndroidReadRecordImport } from '../core/stats/AndroidReadRecordImport';
 import { AndroidBackupJsonReader } from './AndroidBackupJsonReader';
 import { MimoVoiceLibrary, MimoVoicePolicy } from '../core/mimo/MimoVoicePolicy';
 import { MimoStore } from './mimo/MimoStore';
+import { CastLibrary, CastVoicePolicy } from '../core/mimo/CastVoicePolicy';
+import { CastVoiceStore } from './mimo/CastVoiceStore';
 import { BookAnnotation } from '../model/reader/BookAnnotation';
 import { BookMark, BookMarkRules } from '../model/book/BookMark';
 
@@ -383,6 +385,15 @@ export class AppDataBackupService {
         await AppDataBackupService.ensureDir(assetsRoot);
         await AppDataBackupService.writeText(`${assetsRoot}/mimo_voices.json`, JSON.stringify(voices));
       }
+      // 多角色朗读的音色方案与音色标签；分析接口的密钥在安全存储里，不进备份。
+      const castVoicesPath = `${context.filesDir}/mimo_private/cast_voices.json`;
+      if (AppDataBackupService.exists(castVoicesPath)) {
+        if ((await fs.stat(castVoicesPath)).size > 2 * 1024 * 1024) throw new Error('多角色朗读的音色方案过大，无法备份');
+        const castVoices = CastVoicePolicy.normalize(JSON.parse(await AppDataBackupService.readText(castVoicesPath)) as CastLibrary);
+        for (const endpoint of castVoices.analysis.endpoints) endpoint.verified = false;
+        await AppDataBackupService.ensureDir(assetsRoot);
+        await AppDataBackupService.writeText(`${assetsRoot}/cast_voices.json`, JSON.stringify(castVoices));
+      }
       for (let index = 0; index < AppDataBackupService.ASSET_DIRS.length; index++) {
         const dirName = AppDataBackupService.ASSET_DIRS[index];
         const source = `${context.filesDir}/${dirName}`;
@@ -720,6 +731,18 @@ export class AppDataBackupService {
         await AppDataBackupService.ensureDir(`${context.filesDir}/mimo_private`);
         await AppDataBackupService.writeText(`${context.filesDir}/mimo_private/voices.json`, JSON.stringify(voices));
         MimoStore.reloadVoices();
+        result.settings++;
+      }
+      const castVoicesPath = `${assetsRoot}/cast_voices.json`;
+      if (AppDataBackupService.exists(castVoicesPath)) {
+        if ((await fs.stat(castVoicesPath)).size > 2 * 1024 * 1024) throw new Error('备份中的多角色音色方案过大');
+        const castVoices = CastVoicePolicy.normalize(JSON.parse(await AppDataBackupService.readText(castVoicesPath)) as CastLibrary);
+        // 密钥不随备份走：自定义分析接口要在这台设备上重新填密钥并测试，开关先关上。
+        for (const endpoint of castVoices.analysis.endpoints) endpoint.verified = false;
+        if (castVoices.analysis.activeId) castVoices.enabled = false;
+        await AppDataBackupService.ensureDir(`${context.filesDir}/mimo_private`);
+        await AppDataBackupService.writeText(`${context.filesDir}/mimo_private/cast_voices.json`, JSON.stringify(castVoices));
+        CastVoiceStore.reload();
         result.settings++;
       }
       for (const dirName of assetDirs) {

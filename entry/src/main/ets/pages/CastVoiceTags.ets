@@ -1,3 +1,4 @@
+import { router } from '@kit.ArkUI';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingSwitchRow } from '../components/common/SettingRow';
 import { CastVoiceLine } from '../components/CastVoiceViews';
@@ -12,6 +13,8 @@ import { CastVoicePreview } from '../utils/mimo/CastVoicePreview';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { syncSystemBars } from '../utils/SystemBars';
+
+class CastVoiceTagsParams { key: string = ''; }
 
 /**
  * 给离线音色和自定义音色标性别、年龄段、是否适合读旁白。
@@ -32,10 +35,20 @@ struct CastVoiceTagsPage {
   @State editAge: string = 'unknown';
   @State editNarrator: boolean = false;
   private preview: CastVoicePreview = new CastVoicePreview();
+  /** 从音色管理的长按菜单进来时带着要标的那个音色，页面显示后直接打开它的标签面板。 */
+  private pendingKey: string = '';
 
+  aboutToAppear(): void {
+    this.pendingKey = (router.getParams() as CastVoiceTagsParams)?.key || '';
+  }
   onPageShow(): void {
     syncSystemBars(getContext(this), this.dark, ThemeRuntime.pageColor(this.dark));
     this.refresh();
+    if (!this.pendingKey) return;
+    const wanted = this.items.find((item: CastVoiceItem): boolean => item.key === this.pendingKey);
+    this.pendingKey = '';
+    if (wanted) this.open(wanted);
+    else HdsFeedback.showToast('这个音色已禁用或不可用，启用后才能标');
   }
   onPageHide(): void { this.stopPreview(); }
   aboutToDisappear(): void { this.preview.release(); }

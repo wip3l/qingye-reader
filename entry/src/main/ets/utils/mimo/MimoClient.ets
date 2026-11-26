@@ -33,6 +33,12 @@ class MimoHttpError extends Error {
   }
 }
 
+/** Another OpenAI-compatible chat endpoint used only for telling who is speaking. */
+export class MimoAnalysisTarget {
+  url: string = '';
+  model: string = '';
+}
+
 export class MimoClient {
   private generation: number = 0;
   private aborters: (() => void)[] = [];
@@ -76,12 +82,17 @@ export class MimoClient {
     if (generation !== this.generation) throw new Error('MiMo 请求已停止');
   }
   async analyze(key: string, units: MimoUnit[], roles: MimoRole[], context: string,
-    onRetry?: (delay: number) => void): Promise<MimoAnalysis> {
+    onRetry?: (delay: number) => void, target?: MimoAnalysisTarget): Promise<MimoAnalysis> {
     const body = new MimoRequest();
-    body.model = 'mimo-v2.6-flash';
-    body.thinking = new MimoThinking();
     body.response_format = new MimoResponseFormat();
-    body.max_completion_tokens = 4096;
+    if (target) {
+      // 别家接口不一定认 MiMo 的 thinking 和输出上限字段，只发通用的那几项。
+      body.model = target.model;
+    } else {
+      body.model = 'mimo-v2.6-flash';
+      body.thinking = new MimoThinking();
+      body.max_completion_tokens = 4096;
+    }
     const input = new MimoAnalysisInput();
     input.roles = roles.map((role: MimoRole): MimoRoleProposal => {
       const known = new MimoRoleProposal(); known.id = role.id; known.name = role.name;
@@ -103,17 +114,19 @@ export class MimoClient {
         '儿童不能标为成年；已有角色ID保持稳定。情绪只能选平静、开心、悲伤、愤怒、恐惧、惊讶、温柔、紧张、低语。'),
       new MimoMessage('user', JSON.stringify(input))
     ];
-    const response = await this.json(key, body, onRetry);
-    const content = response.choices[0]?.message?.content || '';
+    const response = await this.json(key, body, onRetry, target?.url || '');
+    // 有的模型不管 response_format，仍把 JSON 包在 ```json 代码块里。
+    const content = (response.choices[0]?.message?.content || '').trim()
+      .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
     let result: MimoAnalysis;
     try { result = JSON.parse(content) as MimoAnalysis; } catch (_) { throw new Error('角色分析没有返回有效标注，请重试'); }
     MimoPolicy.validate(result, units);
     return result;
   }
-  private async json(key: string, body: MimoRequest, onRetry?: (delay: number) => void): Promise<MimoResponse> {
+  private async json(key: string, body: MimoRequest, onRetry?: (delay: number) => void, url: string = ''): Promise<MimoResponse> {
     const generation = this.generation;
     for (let attempt = 0; ; attempt++) {
-      try { return await this.jsonOnce(key, body); } catch (error) {
+      try { return await this.jsonOnce(key, body, url); } catch (error) {
         if (!(error instanceof MimoHttpError) || error.status !== 429 || error.retryAfter > 30000 || attempt >= 2) throw error as Error;
         const delay = Math.max(error.retryAfter, 1000 * Math.pow(2, attempt));
         if (onRetry) onRetry(delay);
@@ -121,24 +134,33 @@ export class MimoClient {
       }
     }
   }
-  private async jsonOnce(key: string, body: MimoRequest): Promise<MimoResponse> {
+  private async jsonOnce(key: string, body: MimoRequest, url: string = ''): Promise<MimoResponse> {
     const generation = this.generation;
     const client = http.createHttp();
     const abort = (): void => client.destroy();
     this.aborters.push(abort);
     try {
       let response: http.HttpResponse;
-      try { response = await client.request(MimoPolicy.endpoint(key), this.options(key, body)); }
-      catch (_) { throw new Error(generation !== this.generation ? 'MiMo 请求已停止' : MimoPolicy.error(0)); }
+      const name = url ? '分析模型' : 'MiMo';
+      try { response = await client.request(url || MimoPolicy.endpoint(key), this.options(key, body)); }
+      catch (_) {
+        throw new Error(generation !== this.generation ? 'MiMo 请求已停止' :
+          (url ? '分析模型连接失败，请检查接口地址和网络' : MimoPolicy.error(0)));
+      }
       if (generation !== this.generation) throw new Error('MiMo 请求已停止');
       if (response.responseCode !== 200) {
+        // 429 仍抛可重试的错误；其余状态码对别家接口不套用 MiMo 的解释。
+        if (url && response.responseCode !== 429) {
+          const detail = MimoPolicy.errorDetail(String(response.result));
+          throw new Error(`分析模型请求未完成（HTTP ${response.responseCode}）` + (detail ? '：' + detail : ''));
+        }
         throw new MimoHttpError(response.responseCode, this.retryDelay(response.header), key, String(response.result));
       }
       let parsed: MimoResponse;
       try { parsed = JSON.parse(String(response.result)) as MimoResponse; }
-      catch (_) { throw new Error('MiMo 响应格式无效'); }
+      catch (_) { throw new Error(name + ' 响应格式无效'); }
       if (parsed.error || !Array.isArray(parsed.choices) || parsed.choices.length === 0 ||
-        parsed.choices[0].finish_reason === 'length') throw new Error('MiMo 返回了不完整的结果，请重试');
+        parsed.choices[0].finish_reason === 'length') throw new Error(name + ' 返回了不完整的结果，请重试');
       return parsed;
     } finally {
       this.aborters = this.aborters.filter((item: () => void): boolean => item !== abort);

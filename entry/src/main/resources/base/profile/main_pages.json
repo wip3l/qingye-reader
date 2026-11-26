@@ -31,6 +31,8 @@
     "pages/CastSchemeEdit",
     "pages/CastBookRoles",
     "pages/CastVoiceTags",
+    "pages/CastAnalysisModel",
+    "pages/CastAnalysisEndpointEdit",
     "pages/CustomTtsVoiceManager",
     "pages/BookshelfSettings",
     "pages/ShelfBackdropSettings",
