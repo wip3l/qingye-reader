@@ -98,9 +98,9 @@ my-theme/
 | `titleBubble` / `titleBubbleDark` | 同 `bubble` | 可选：只给标题强调用的端饰与边框（标题气泡），深色那套按项沿用浅色，规则同 `bubbleDark`。素材 SVG、位图都收，不用声明 `requires`；旧版本应用会忽略。 |
 | `bubbleDark` | 同 `bubble` | 可选：深色模式单独的端饰与边框。端饰、边框各自沿用：深色没写的那一项用 `bubble` 的（边框连同它的拉伸设置）；某一项只在一种模式里有时，两种模式都用它。端饰按原色显示、边框不开 `frameTint` 时也是原色，浅色那套放在深色纸面上看不清时再给。位图边框不用另外声明 `bubble-frame-v1`。旧版本应用会忽略，两种模式都用 `bubble`。 |
 | `homeBackdrop` | `light` / `dark` | 书架、发现和我的页顶部的背景图（位图）。只写一种模式时，另一种模式不显示背景。旧版本应用会忽略这一节。 |
-| `shelfBackdrop` | `companion` / `tile` / `loose` / `compact` | 可选：按书架布局（陪伴、平铺、宽松、紧凑）分别给的背景，每种布局下写 `light` / `dark`（及可选的 `lightCrop` / `darkCrop`）。只在书架页、用这种布局时显示，没写的布局或模式用 `homeBackdrop` 那张；发现、我的等页签始终用 `homeBackdrop`。浅色、深色互不借用。旧版本应用会忽略这一节。 |
+| `shelfBackdrop` | `all` / `companion` / `tile` / `loose` / `compact` | 可选：书架页专用的背景，每个键下写 `light` / `dark`（及可选的 `lightCrop` / `darkCrop`）。`all` 是书架背景，四种布局和分组页共用；`companion` 等按书架布局（陪伴、平铺、宽松、紧凑）单独给。书架页取图顺序：这种布局的 → `all` → `homeBackdrop`；发现、我的等页签始终用 `homeBackdrop`。浅色、深色互不借用。旧版本应用会忽略这一节，不认 `all` 的版本书架用 `homeBackdrop`。 |
 | | `lightCrop` / `darkCrop` | 可选的显示区域，对应同一模式的背景图。 |
-| `shelfBackdropDisplay` | `mode` | 可选：书架页背景的显示方式。`full` 时书架页铺满整屏（`homeBackdrop` 和 `shelfBackdrop` 的图都这样显示），发现、我的页仍只衬在顶部；不写或其他值按原来的顶部淡出。整个包一份，四种布局共用。旧版本应用会忽略这一节，照旧铺在顶部。 |
+| `shelfBackdropDisplay` | `mode` | 可选：书架页背景的显示方式。`full` 时书架页铺满整屏（书架实际用的那张，不论来自 `shelfBackdrop` 还是 `homeBackdrop`，都这样显示），发现、我的页仍只衬在顶部；不写或其他值按原来的顶部淡出。整个包一份，四种布局共用。旧版本应用会忽略这一节，照旧铺在顶部。 |
 | | `fit` | `cover`（默认，裁切铺满）、`contain`（完整显示）、`fill`（拉伸铺满）、`tile`（按原始大小平铺），同阅读背景的整图显示方式。 |
 | | `position` | 0–100，默认 50。只对 `cover` 有效：沿被裁掉的那条轴取景（图比屏幕瘦是上→下，比屏幕胖是左→右）。 |
 | | `gap` | 只对 `contain` 有效：`blur`（默认，空白处用这张图模糊垫底）或 `color`（露出页面底色）。 |
@@ -143,7 +143,10 @@ my-theme/
     "startup": { "light": { "image": "assets/startup.jpg", "title": "夜花园", "subtitle": "月下翻页" } },
     "bubble": { "cap": "assets/bubble_cap.svg" },
     "homeBackdrop": { "light": "assets/home_light.jpg", "dark": "assets/home_dark.jpg" },
-    "shelfBackdrop": { "companion": { "light": "assets/home_companion_light.jpg", "dark": "assets/home_companion_dark.jpg" } },
+    "shelfBackdrop": {
+      "all": { "light": "assets/shelf_light.jpg", "dark": "assets/shelf_dark.jpg" },
+      "companion": { "light": "assets/home_companion_light.jpg", "dark": "assets/home_companion_dark.jpg" }
+    },
     "logo": "assets/logo.svg",
     "radius": { "card": 14, "button": 22 }
   }
@@ -313,7 +316,7 @@ my-theme/
 - 比当前应用新的 `formatVersion`，或 `requires` 里有应用不认识的能力，导入时提示更新应用。
 - 没写的部件按 `baseTheme` 显示，所以只带配色的小包也能完整使用。
 - 没有 `shelfBackdropDisplay` 的主题包书架背景按顶部淡出显示；带着它的包在旧版本应用上也照旧铺在顶部，竖图会被居中裁成 4:5。
-- 没有 `shelfBackdrop` 的主题包（此前制作的都是这样）四种书架布局都用 `homeBackdrop`。只写 `shelfBackdrop`、不写 `homeBackdrop` 也可以，但旧版本应用上就没有背景，所以通用那张建议始终保留。
+- 没有 `shelfBackdrop` 的主题包四种书架布局都用 `homeBackdrop`。只写 `shelfBackdrop`、不写 `homeBackdrop` 也可以，但旧版本应用上就没有背景，发现、我的页也没有，所以通用那张建议始终保留。`shelfBackdrop.all` 在不认它的旧版本应用上被忽略，书架照旧用 `homeBackdrop`。
 - 只有 `covers`、`shelfFrame`、`shelfFolder` 的主题包（此前制作的都是这样）照常使用，浅色、深色显示同一套封面、同一张书架边框和文件夹插画。只写了 `coversDark`、`shelfFrameDark` 或 `shelfFolderDark` 时浅色模式也用它；应用和桌面编辑器导出这种包时会把它写成 `covers`、`shelfFrame`、`shelfFolder`。
 - 没有 `bubbleDark` 的主题包两种模式用同一套端饰和边框。只写了 `bubbleDark` 时浅色也用它，导出时写成 `bubble`；`bubbleDark` 里和 `bubble` 相同的项导出时不重复写。
 - 没有 `commentBubble` 的主题包，段评气泡跟着强调气泡样式走；带包内气泡的主题包，段评按强调底色推导（此前是中性灰）。

@@ -139,9 +139,13 @@ function navIcon(key: string, selected: boolean): HTMLElement {
  * 高度和不透明度取各页传给组件的值，渐变停点照搬组件。浅深色不互相借用。
  */
 function homeBackdrop(mode: Mode, e: Effective, visibleHeight: number, strength: number, shelfLayout = ''): HTMLElement | null {
-  // 书架画面传当前布局：这种布局单独配了图就用它，否则和其他页签一样用通用那张（同应用的 homeBackdrop）。
-  const shelf = shelfLayout ? (project().parts.shelfBackdrop || {})[shelfLayout] || {} : {};
-  const parts = assetUrl(shelf[mode]) ? shelf : project().parts.homeBackdrop || {};
+  // 书架画面传当前布局：这种布局单独配了图就用它，再看书架背景（all），都没有和其他页签一样用页签顶部那张
+  // （同应用的 shelfBackdropFor + homeBackdrop）。
+  const shelfParts = project().parts.shelfBackdrop || {};
+  const own = shelfLayout ? shelfParts[shelfLayout] || {} : {};
+  const all = shelfLayout ? shelfParts.all || {} : {};
+  const parts = assetUrl(own[mode]) ? own : assetUrl(all[mode]) ? all : project().parts.homeBackdrop || {};
+  const sec = shelfLayout && parts !== project().parts.homeBackdrop ? 'shelfBackdrop' : 'homeBackdrop';
   const url = assetUrl(parts[mode]);
   if (!url) return null;
   // 书架设成全屏（ShelfCustomBackdrop）：铺满画面，显示方式同阅读背景，再盖淡化层和顶部一段渐变。
@@ -162,12 +166,12 @@ function homeBackdrop(mode: Mode, e: Effective, visibleHeight: number, strength:
     }
     layers.push(h('i', { style: `background:${mix(wash)}` }));
     layers.push(h('i', { class: 'hbg-scrim', style: `background:linear-gradient(${mix(55)}, ${mix(20)} 60%, transparent)` }));
-    return h('div', { class: 'hbg hbg-full', 'data-sec': 'homeBackdrop', style: `background:${e.c.pageColor}` }, ...layers);
+    return h('div', { class: 'hbg hbg-full', 'data-sec': sec, style: `background:${e.c.pageColor}` }, ...layers);
   }
   const crop = cropStyle(parts[`${mode}Crop`], parts[mode]);
   const stops = mode === 'dark' ? [[0.25, 0], [0.55, 38], [0.9, 70], [1, 100]] : [[0.1, 0], [0.3, 38], [0.85, 72], [1, 100]];
   const gradient = stops.map(([a, at]) => `color-mix(in srgb, ${e.c.pageColor} ${Math.round(a * 100)}%, transparent) ${at}%`).join(', ');
-  return h('div', { class: 'hbg', 'data-sec': 'homeBackdrop', style: visibleHeight ? `height:${visibleHeight}px` : 'aspect-ratio:4 / 5' },
+  return h('div', { class: 'hbg', 'data-sec': sec, style: visibleHeight ? `height:${visibleHeight}px` : 'aspect-ratio:4 / 5' },
     h('img', { src: url, alt: '', style: `opacity:${strength};${crop}` }), h('i', { style: `background:linear-gradient(${gradient})` }));
 }
 
@@ -615,7 +619,7 @@ export function describe(): string[] {
   if (p.navigation && has(p.navigation)) out.push('导航图标');
   if (p.book && ((p.book.covers || []).length || (p.book.coversDark || []).length || p.book.shelfFrame || p.book.shelfFrameDark || p.book.shelfFolder || p.book.shelfFolderDark)) out.push('书籍素材');
   if (p.startup && ((p.startup.light && p.startup.light.image) || (p.startup.dark && p.startup.dark.image))) out.push('启动封面');
-  if (p.homeBackdrop && (p.homeBackdrop.light || p.homeBackdrop.dark)) out.push('首页背景');
+  if (p.homeBackdrop && (p.homeBackdrop.light || p.homeBackdrop.dark)) out.push('页签顶部背景');
   if (Object.values(p.shelfBackdrop || {}).some((entry: any) => entry && (entry.light || entry.dark))) out.push('书架背景');
   if (p.logo) out.push('主题标识');
   if (p.typography && (p.typography.appFont || p.typography.appFontFamily)) out.push('界面字体');

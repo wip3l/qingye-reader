@@ -8,6 +8,7 @@ import {
   normalizeOrnamentInset,
   normalizeOrnamentScale,
   shelfBackdropFor,
+  SHELF_BACKDROP_ALL,
   normalizeShelfBackdropDisplay,
   ThemeImageCrop,
   ThemePackageBubbleSlice,
@@ -411,12 +412,15 @@ export class ThemePackRegistry {
     ThemePackRegistry.packs.forEach((pack: InstalledThemePack) => {
       if (found) return;
       // 书架页按布局取的背景：同一张图可以既是通用背景又是某个布局的专属图，先看这个布局自己记的区域。
+      // 布局没有专属图时书架用书架通用（all）那张，再看它记的区域。
       if (slot === ThemeImageSlots.BACKDROP && shelfLayout) {
-        const item = findShelfBackdrop(pack.shelfBackdrops, shelfLayout);
-        const own = item ? (darkMode ? item.darkCrop : item.lightCrop) : null;
-        if (item && (darkMode ? item.dark : item.light) === src) {
-          found = own && own.image === src ? own : null;
-          return;
+        for (const key of shelfLayout === SHELF_BACKDROP_ALL ? [shelfLayout] : [shelfLayout, SHELF_BACKDROP_ALL]) {
+          const item = findShelfBackdrop(pack.shelfBackdrops, key);
+          const own = item ? (darkMode ? item.darkCrop : item.lightCrop) : null;
+          if (item && (darkMode ? item.dark : item.light) === src) {
+            found = own && own.image === src ? own : null;
+            return;
+          }
         }
       }
       if (slot === ThemeImageSlots.COVER) {

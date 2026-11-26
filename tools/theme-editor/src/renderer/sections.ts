@@ -305,20 +305,15 @@ export const SECTIONS: Section[] = [
     ]
   },
   {
-    id: 'homeBackdrop', group: '素材', name: '首页背景', screen: 'shelf', modal: true,
-    desc: '书架、发现和我的页顶部的背景，不随列表滚动，向下自动淡成页面底色。浅色、深色各做一张；只做一种时另一种模式不显示背景。书架的四种布局还可以各配一张，不配就用通用那张。', fields: [
+    id: 'shelfBackdrop', group: '素材', name: '书架背景', screen: 'shelf', modal: true,
+    desc: '只在书架页显示，四种布局和分组页共用；发现、我的页用“页签顶部背景”。没做时书架也用页签顶部那张。浅色、深色各做一张，互不借用。', fields: [
       { g: '背景图' },
-      { k: 'homeBackdrop.{m}', label: '背景图（通用）', type: 'asset', kinds: ['image'], target: [1080, 1350],
-        spec: '1080 × 1350（4:5），画面放在上半部分；比例不同时居中裁成 4:5' },
-      { g: '按书架布局（可选）' },
-      ...SHELF_LAYOUTS.map(([key, label]): Field => ({
-        k: `shelfBackdrop.${key}.{m}`, label, type: 'asset', kinds: ['image'], target: [1080, 1350],
-        spec: '空着时沿用通用背景',
-        hint: key === 'compact' ? '只在书架页、用这种布局时显示；发现、我的页始终用通用那张。旧版本应用只认通用那张' : undefined
-      })),
-      { g: '书架显示' },
+      { k: 'shelfBackdrop.all.{m}', label: '书架背景', type: 'asset', kinds: ['image'], target: [1080, 1350],
+        spec: '顶部淡出用 1080 × 1350（4:5），画面放在上半部分；全屏用竖图（约 9 : 20）',
+        hint: '旧版本应用不认这一张，书架照旧显示页签顶部背景' },
+      { g: '显示方式' },
       { k: 'shelfBackdropDisplay.mode', label: '显示方式', type: 'select', options: [['', '顶部淡出'], ['full', '全屏']],
-        hint: '全屏时书架页铺满整屏，通用和按布局的书架图都这样显示；发现、我的页仍只衬顶部。全屏建议用竖图（约 9 : 20）。旧版本应用照旧铺在顶部' },
+        hint: '全屏时书架页铺满整屏，按布局单独配的图也这样显示；发现、我的页仍只衬顶部。旧版本应用照旧铺在顶部' },
       { k: 'shelfBackdropDisplay.fit', label: '图片显示', type: 'select', when: shelfFull,
         options: [['cover', '裁切铺满'], ['contain', '完整显示'], ['fill', '拉伸铺满'], ['tile', '平铺']] },
       { k: 'shelfBackdropDisplay.position', label: '取景', type: 'range', min: 0, max: 100, fallback: 50, resetLabel: '居中',
@@ -331,7 +326,21 @@ export const SECTIONS: Section[] = [
       { k: 'shelfBackdropDisplay.darkWash', label: '淡化', type: 'range', min: 0, max: 80, fallback: 45, resetLabel: '默认',
         when: (m: Mode) => shelfFull() && m === 'dark', hint: '盖一层页面底色（百分比），书名更清楚；浅色、深色分开调' },
       { k: 'shelfBackdropDisplay.blur', label: '模糊', type: 'range', min: 0, max: 20, fallback: 0, resetLabel: '不模糊',
-        when: shelfFull }
+        when: shelfFull },
+      { g: '按书架布局单独换（可选）' },
+      ...SHELF_LAYOUTS.map(([key, label]): Field => ({
+        k: `shelfBackdrop.${key}.{m}`, label, type: 'asset', kinds: ['image'], target: [1080, 1350],
+        spec: '空着时沿用上面的书架背景',
+        hint: key === 'compact' ? '只在书架用这种布局时显示' : undefined
+      }))
+    ]
+  },
+  {
+    id: 'homeBackdrop', group: '素材', name: '页签顶部背景', screen: 'explore', modal: true,
+    desc: '发现和我的页顶部的背景，不随列表滚动，向下自动淡成页面底色；没做书架背景时书架也用这张。浅色、深色各做一张；只做一种时另一种模式不显示背景。', fields: [
+      { g: '背景图' },
+      { k: 'homeBackdrop.{m}', label: '背景图', type: 'asset', kinds: ['image'], target: [1080, 1350],
+        spec: '1080 × 1350（4:5），画面放在上半部分；比例不同时居中裁成 4:5' }
     ]
   },
   {

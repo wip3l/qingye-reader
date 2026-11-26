@@ -281,6 +281,24 @@ test('shelf layouts can each carry their own backdrop next to the shared one', a
   assert.equal(files.has('assets/sc.jpg'), false);
 });
 
+test('a shelf-wide backdrop (shelfBackdrop.all) round-trips beside the per-layout ones', async () => {
+  const entries = handWritten();
+  const theme = JSON.parse(strFromU8(entries['night-garden/theme.json']));
+  theme.parts.shelfBackdrop = { all: { light: 'assets/tall.jpg', dark: 'assets/tall.jpg' }, tile: { light: 'assets/home.jpg' } };
+  theme.parts.shelfBackdropDisplay = { mode: 'full', fit: 'cover', position: 40, gap: 'blur', lightWash: 24, darkWash: 40, blur: 0 };
+  entries['night-garden/theme.json'] = json(theme);
+  entries['night-garden/assets/tall.jpg'] = jpg(1080, 2400, 9);
+  const { project, problems } = await io.loadProject(io.readZip(zipSync(entries)));
+  assert.deepEqual(problems, []);
+  assert.equal(project.parts.shelfBackdrop.all.light, 'assets/tall.jpg');
+
+  const files = await io.exportFiles(project);
+  const parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.deepEqual(parts.shelfBackdrop.all, { light: 'assets/tall.jpg', dark: 'assets/tall.jpg' });
+  assert.deepEqual(parts.shelfBackdrop.tile, { light: 'assets/home.jpg' });
+  assert.equal(files.has('assets/tall.jpg'), true);
+});
+
 test('a full-screen shelf backdrop setting round-trips and is dropped when set back to the top', async () => {
   const entries = handWritten();
   const theme = JSON.parse(strFromU8(entries['night-garden/theme.json']));

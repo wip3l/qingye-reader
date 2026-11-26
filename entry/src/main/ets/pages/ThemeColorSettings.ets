@@ -47,8 +47,11 @@ import {
   isPackTitleBubbleStyle,
   packTitleBubbleStyleId,
   packReaderBackgroundId,
+  SHELF_BACKDROP_ALL,
+  ThemePackageShelfBackdrop,
   SHELF_BACKDROP_LAYOUT_NAMES,
   SHELF_BACKDROP_LAYOUTS,
+  shelfBackdropKeyName,
   ThemeImageCrop,
   ThemePackageBubble,
   ThemePackageCommentBubble,
@@ -112,6 +115,7 @@ import { ThemeCroppedImage } from '../components/theme/ThemeCroppedImage';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
 import { TtsPanelThemeStyles } from '../theme/TtsPanelThemeStyles';
 import { HexColor } from '../utils/HexColor';
+import { ShelfBackdropStore } from '../utils/ShelfBackdropStore';
 import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
@@ -358,6 +362,11 @@ struct ThemeColorSettingsPage {
   @State assetIssues: ThemeEditorIssue[] = [];
   /** 书架显示（全屏）拖动滑条途中的值，松手写进素材包后清空。 */
   @State shelfDisplayDraft: ThemePackageShelfBackdropDisplay | null = null;
+  /** 书架背景分组里“按书架布局单独换”是否展开。 */
+  @State shelfLayoutsOpen: boolean = false;
+  /** 本次编辑已把书架设置里的背景放进方案，不再提示。 */
+  @State shelfSettingsImported: boolean = false;
+  @StorageProp('shelfBackdropRevision') shelfBackdropRevision: number = 0;
   @State previewShelfLayout: string = 'companion';
   @State showShelfLayoutMenu: boolean = false;
   private schemeId: string = '';
@@ -783,6 +792,9 @@ struct ThemeColorSettingsPage {
     if (this.editorSection === 'other' && this.openGroup) {
       this.previewScene = this.otherSceneFor(this.openGroup);
     }
+    // 书架背景只在书架画面看得到，页签顶部背景在发现页最直观。
+    if (this.editorSection === 'shelf' && this.openGroup === 'shelfBackdrop') this.previewScene = 'bookshelf';
+    if (this.editorSection === 'shelf' && this.openGroup === 'homeBackdrop') this.previewScene = 'explore';
   }
 
   moreOpen(key: string): boolean {
@@ -915,6 +927,7 @@ struct ThemeColorSettingsPage {
       return this.ownCoverPaths().length > 0 ? `封面 ${this.ownCoverPaths().length} 张` : this.sourceName('book');
     }
     if (key === 'homeBackdrop') return this.ownHomeBackdrop() ? '已上传' : this.sourceName('homeBackdrop');
+    if (key === 'shelfBackdrop') return this.shelfBackdropSummary();
     if (key === 'bubble') return this.bubbleStyleLabel(this.effectiveEmphasis().bubbleStyle) || this.sourceName('bubble');
     if (key === 'comment') return this.commentShapeLabel();
     if (key === 'title') {
@@ -1800,7 +1813,17 @@ struct ThemeColorSettingsPage {
     }
     .editorCard(this.cardColor())
     Column() {
-      this.groupHeader('homeBackdrop', '首页背景', 'split')
+      this.groupHeader('shelfBackdrop', '书架背景', 'split')
+      if (this.openGroup === 'shelfBackdrop') {
+        this.componentSourceRow('homeBackdrop')
+        if (this.assetRevision >= 0) {
+          this.shelfBackdropGroup()
+        }
+      }
+    }
+    .editorCard(this.cardColor())
+    Column() {
+      this.groupHeader('homeBackdrop', '页签顶部背景', 'split')
       if (this.openGroup === 'homeBackdrop') {
         this.componentSourceRow('homeBackdrop')
         if (this.assetRevision >= 0) {
@@ -5133,41 +5156,177 @@ struct ThemeColorSettingsPage {
 
   @Builder
   homeBackdropSlot() {
+    Row({ space: AppSpacing.XL }) {
+      this.assetSlot({ label: '4 : 5', image: this.homeBackdropImage(),
+        state: this.ownHomeBackdrop() ? 'own' : (ThemeColorSettingsPage.hasImage(this.homeBackdropImage()) ? 'inherit' : 'empty'),
+        slotWidth: 64, slotHeight: 80, onTap: () => this.tapHomeBackdrop(),
+        crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.BACKDROP, this.homeBackdropImage(), this.selectedMode === 'dark') })
+      Text('发现、我的页顶部用，画面放上半部分，向下自动淡成页面底色。书架背景没传时书架也用这张。浅色、深色各一张，互不借用')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+  }
+
+  // ---- 书架背景（parts.shelfBackdrop.all，四种布局共用）----
+
+  /** 书架背景这个模式实际显示的图：方案的书架背景，没有就是页签顶部那张。 */
+  shelfAllImage(): ResourceStr {
+    return this.shelfBackdropImage(SHELF_BACKDROP_ALL) || this.homeBackdropImage();
+  }
+
+  shelfAllState(): string {
+    if (this.ownShelfBackdrop(SHELF_BACKDROP_ALL)) return 'own';
+    return ThemeColorSettingsPage.hasImage(this.shelfAllImage()) ? 'inherit' : 'empty';
+  }
+
+  /** 几种布局单独传了图（当前模式）。 */
+  ownLayoutBackdropCount(): number {
+    return SHELF_BACKDROP_LAYOUTS.filter((layout: string): boolean => this.ownShelfBackdrop(layout)).length;
+  }
+
+  shelfBackdropSummary(): string {
+    const display = this.ownPack() && this.shelfDisplay() ? '全屏' : '顶部淡出';
+    if (this.ownShelfBackdrop(SHELF_BACKDROP_ALL)) return `${display} · 已上传`;
+    if (this.ownLayoutBackdropCount() > 0) return `${display} · 按布局`;
+    return '沿用页签顶部背景';
+  }
+
+  /** 书架设置里选了自定义背景且传了图：给“放进方案”。放进过一次后本次编辑不再提示。 */
+  shelfSettingsImportable(): boolean {
+    if (this.shelfSettingsImported || this.shelfBackdropRevision < 0) return false;
+    const config = ShelfBackdropStore.current();
+    return config.source === ShelfBackdropStore.SOURCE_CUSTOM && !!config.lightImage;
+  }
+
+  shelfSettingsThumb(): string {
+    const config = ShelfBackdropStore.current();
+    return this.selectedMode === 'dark' && config.darkImage ? config.darkImage : config.lightImage;
+  }
+
+  @Builder
+  shelfBackdropGroup() {
     Column({ space: AppSpacing.MD }) {
-      Row({ space: AppSpacing.XL }) {
-        this.assetSlot({ label: '通用 4 : 5', image: this.homeBackdropImage(),
-          state: this.ownHomeBackdrop() ? 'own' : (ThemeColorSettingsPage.hasImage(this.homeBackdropImage()) ? 'inherit' : 'empty'),
-          slotWidth: 64, slotHeight: 80, onTap: () => this.tapHomeBackdrop(),
-          crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.BACKDROP, this.homeBackdropImage(), this.selectedMode === 'dark') })
-        Text('书架、发现和我的页顶部共用，画面放上半部分，向下自动淡成页面底色。浅色、深色各一张，互不借用')
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.subTextColor())
+      if (this.shelfSettingsImportable()) {
+        Row({ space: AppSpacing.MD }) {
+          Image(this.shelfSettingsThumb())
+            .width(30)
+            .height(52)
+            .borderRadius(6)
+            .objectFit(ImageFit.Cover)
+          Column({ space: 2 }) {
+            Text('书架设置里有一张自己的背景')
+              .fontSize(AppFontSize.BODY)
+              .fontColor(this.primaryTextColor())
+            Text('连同显示方式一起放进方案')
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.subTextColor())
+          }
           .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+          Button('放进方案', { type: ButtonType.Capsule })
+            .fontSize(AppFontSize.CAPTION)
+            .height(30)
+            .backgroundColor(ThemeRuntime.accentColor(this.appDarkMode))
+            .fontColor(Color.White)
+            .onClick(() => this.importShelfSettings())
+        }
+        .width('100%')
+        .padding(AppSpacing.MD)
+        .borderRadius(12)
+        .backgroundColor(HexColor.withOpacity(ThemeRuntime.accentColor(this.appDarkMode), 0.1))
+      }
+      Row({ space: AppSpacing.XL }) {
+        this.assetSlot({ label: this.modeLabel(), image: this.shelfAllImage(), state: this.shelfAllState(),
+          slotWidth: 58, slotHeight: this.shelfDisplay() ? 126 : 72, onTap: () => this.tapShelfBackdrop(SHELF_BACKDROP_ALL),
+          crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.BACKDROP, this.shelfAllImage(), this.selectedMode === 'dark',
+            SHELF_BACKDROP_ALL) })
+        Column({ space: AppSpacing.SM }) {
+          Text(this.shelfDisplay() ? '全屏：上传不裁切，保留整张竖图（建议约 9 : 20）' :
+            '顶部淡出：按 4 : 5 取景，铺在书架顶部往下淡出')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+          Text('四种书架布局和分组页共用；发现、我的页不受影响，用“页签顶部背景”。没传时书架也用那张')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
       }
       .width('100%')
       .alignItems(VerticalAlign.Top)
-      Text('按书架布局 · 可选')
-        .fontSize(AppFontSize.CAPTION)
-        .fontColor(this.subTextColor())
-        .width('100%')
-      Row() {
-        this.shelfBackdropSlot(SHELF_BACKDROP_LAYOUTS[0], SHELF_BACKDROP_LAYOUT_NAMES[0])
-        this.shelfBackdropSlot(SHELF_BACKDROP_LAYOUTS[1], SHELF_BACKDROP_LAYOUT_NAMES[1])
-        this.shelfBackdropSlot(SHELF_BACKDROP_LAYOUTS[2], SHELF_BACKDROP_LAYOUT_NAMES[2])
-        this.shelfBackdropSlot(SHELF_BACKDROP_LAYOUTS[3], SHELF_BACKDROP_LAYOUT_NAMES[3])
+      if (this.ownPack()) {
+        this.shelfDisplayBlock()
+      }
+      Row({ space: AppSpacing.SM }) {
+        Text('按书架布局单独换')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.primaryTextColor())
+          .layoutWeight(1)
+        Text(this.ownLayoutBackdropCount() > 0 ? `已单独设 ${this.ownLayoutBackdropCount()} 种` : '都用上面这张')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(14)
+          .fontColor([this.subTextColor()])
+          .rotate({ angle: this.shelfLayoutsOpen ? 90 : 0 })
       }
       .width('100%')
-      .justifyContent(FlexAlign.SpaceBetween)
-      Text('只在书架页生效：书架用哪种布局就显示哪一张，没单独上传的布局用上面那张通用背景')
-        .fontSize(AppFontSize.CAPTION)
-        .fontColor(this.subTextColor())
+      .padding({ top: AppSpacing.SM, bottom: AppSpacing.SM })
+      .onClick(() => {
+        this.shelfLayoutsOpen = !this.shelfLayoutsOpen;
+      })
+      if (this.shelfLayoutsOpen) {
+        Row() {
+          this.shelfBackdropSlot(SHELF_BACKDROP_LAYOUTS[0], SHELF_BACKDROP_LAYOUT_NAMES[0])
+          this.shelfBackdropSlot(SHELF_BACKDROP_LAYOUTS[1], SHELF_BACKDROP_LAYOUT_NAMES[1])
+          this.shelfBackdropSlot(SHELF_BACKDROP_LAYOUTS[2], SHELF_BACKDROP_LAYOUT_NAMES[2])
+          this.shelfBackdropSlot(SHELF_BACKDROP_LAYOUTS[3], SHELF_BACKDROP_LAYOUT_NAMES[3])
+        }
         .width('100%')
-      if (this.ownBackdropInUse()) {
-        this.shelfDisplayBlock()
+        .justifyContent(FlexAlign.SpaceBetween)
+        Text('可选。淡色格子沿用上面的书架背景；单独上传后只在书架用这种布局时显示')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .width('100%')
       }
     }
     .width('100%')
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+  }
+
+  async importShelfSettings(): Promise<void> {
+    if (!(await this.ensureAdvanced())) return;
+    const config = ShelfBackdropStore.current();
+    const done = await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.importShelfSettingsBackdrop(getContext(this), this.schemeId,
+        this.sourceValueFor(this.lightSources, 'homeBackdrop'), this.sourceValueFor(this.darkSources, 'homeBackdrop'),
+        config),
+      'homeBackdrop', true, true, '');
+    if (!done) return;
+    this.shelfSettingsImported = true;
+    // 书架设置里的自定义背景盖过主题，不改回去就看不出放进方案后的样子。
+    const result = await ThemedDialog.showDialog(this.getUIContext(), {
+      title: '已放进方案',
+      message: '书架设置里还选着自定义背景，它会盖过主题。要把书架设置改回“跟随主题”吗？',
+      buttons: [
+        { text: '保留', color: this.subTextColor() },
+        { text: '改回跟随主题', color: ThemeRuntime.accentColor(this.appDarkMode) }
+      ]
+    });
+    if (result.index !== 1) return;
+    const next = ShelfBackdropStore.current();
+    next.source = ShelfBackdropStore.SOURCE_THEME;
+    try {
+      await ShelfBackdropStore.save(getContext(this), next);
+      HdsFeedback.showToast('书架已改用主题里的背景');
+    } catch (e) {
+      console.error('书架背景改回跟随主题失败:', e);
+      HdsFeedback.showToast('改回跟随主题失败，可在书架设置里修改');
+    }
   }
 
   /** “首页背景”来源指着方案自己的素材包，且包里有通用或按布局的背景图（任一模式）。 */
@@ -5235,16 +5394,16 @@ struct ThemeColorSettingsPage {
     this.shelfDisplayDraft = null;
   }
 
-  /** 取景滑杆判断哪条轴被裁时用的图：当前模式的通用背景（本机路径）。 */
+  /** 取景滑杆判断哪条轴被裁时用的图：当前模式书架实际用的背景（本机路径）。 */
   shelfDisplayImageUri(): string {
-    const image = this.homeBackdropImage();
+    const image = this.shelfAllImage();
     return typeof image === 'string' ? image : '';
   }
 
   @Builder
   shelfDisplayBlock() {
     Column({ space: AppSpacing.SM }) {
-      Text('书架显示')
+      Text('显示方式')
         .fontSize(AppFontSize.BODY)
         .fontColor(this.primaryTextColor())
         .margin({ top: AppSpacing.SM })
@@ -5260,7 +5419,7 @@ struct ThemeColorSettingsPage {
           this.saveShelfDisplay(index === 1 ? new ThemePackageShelfBackdropDisplay() : null);
         }
       })
-      Text(this.shelfDisplay() ? '书架页铺满整屏，四种布局的书架图都这样显示；发现、我的页仍只衬顶部。全屏建议传竖图（约 9 : 20）' :
+      Text(this.shelfDisplay() ? '书架页铺满整屏，单独换过的布局也这样显示；发现、我的页仍只衬顶部' :
         '按 4 : 5 铺在顶部，往下淡成底色')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
@@ -5327,6 +5486,11 @@ struct ThemeColorSettingsPage {
     return SHELF_BACKDROP_LAYOUT_NAMES[SHELF_BACKDROP_LAYOUTS.indexOf(layout)] || '';
   }
 
+  /** 菜单、提示里书架背景条目的叫法：all 是“书架背景”，布局是“陪伴布局书架背景”这样。 */
+  shelfBackdropTitle(layout: string): string {
+    return layout === SHELF_BACKDROP_ALL ? '书架背景' : `${this.shelfLayoutName(layout)}布局书架背景`;
+  }
+
   async tapShelfBackdrop(layout: string): Promise<void> {
     // 菜单、选图和取景期间用户可能切换浅色/深色，操作的是点开时那个模式的那张。
     const dark = this.selectedMode === 'dark';
@@ -5336,8 +5500,23 @@ struct ThemeColorSettingsPage {
       await this.uploadHomeBackdrop(layout, dark);
       return;
     }
+    if (layout === SHELF_BACKDROP_ALL) {
+      const other = dark ? '浅色' : '深色';
+      const pick = await this.slotMenu(`${dark ? '深色' : '浅色'} · 书架背景`, '替换', `${other}模式也用这张`,
+        '移除，沿用页签顶部背景');
+      if (pick === 0) {
+        await this.replaceGuarded(() => this.uploadHomeBackdrop(layout, dark));
+      } else if (pick === 1) {
+        await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+          SchemeAssetService.copyShelfBackdropToOtherMode(getContext(this), this.schemeId, layout, dark),
+          'homeBackdrop', dark, !dark, `${other}模式的书架背景已换成同一张`);
+      } else if (pick === 2) {
+        await this.clearHomeBackdrop(layout, dark);
+      }
+      return;
+    }
     const choice = await this.slotMenu(`${dark ? '深色' : '浅色'} · ${name}布局背景`, '替换', '其他布局也用这张',
-      '移除，沿用通用背景');
+      '移除，沿用书架背景');
     if (choice === 0) {
       await this.replaceGuarded(() => this.uploadHomeBackdrop(layout, dark));
     } else if (choice === 1) {
@@ -5357,13 +5536,13 @@ struct ThemeColorSettingsPage {
       await this.uploadHomeBackdrop();
       return;
     }
-    const choice = await this.slotMenu(`${this.modeLabel()} · 首页背景`, '替换', `${other}模式也用这张`, '移除');
+    const choice = await this.slotMenu(`${this.modeLabel()} · 页签顶部背景`, '替换', `${other}模式也用这张`, '移除');
     if (choice === 0) {
       await this.replaceGuarded(() => this.uploadHomeBackdrop());
     } else if (choice === 1) {
       await this.runAssetUpload((): Promise<SchemeAssetResult> =>
         SchemeAssetService.copyToOtherMode(getContext(this), this.schemeId, 'homeBackdrop', dark),
-        'homeBackdrop', dark, !dark, `${other}模式的首页背景已换成同一张`);
+        'homeBackdrop', dark, !dark, `${other}模式的页签顶部背景已换成同一张`);
     } else if (choice === 2) {
       await this.clearHomeBackdrop();
     }
@@ -5873,20 +6052,35 @@ struct ThemeColorSettingsPage {
         await check(parts.book.shelfFolder, '文件夹插画', 450, 660, 'shelf', 'book');
         await check(parts.book.shelfFolderDark || '', '深色文件夹插画', 450, 660, 'shelf', 'book');
       }
-      await check(parts.homeBackdropLight, '浅色首页背景', 1080, 1350, 'shelf', 'homeBackdrop');
-      await check(parts.homeBackdropDark, '深色首页背景', 1080, 1350, 'shelf', 'homeBackdrop');
+      await check(parts.homeBackdropLight, '浅色页签顶部背景', 1080, 1350, 'shelf', 'homeBackdrop');
+      await check(parts.homeBackdropDark, '深色页签顶部背景', 1080, 1350, 'shelf', 'homeBackdrop');
       for (const item of parts.shelfBackdrops || []) {
-        const name = this.shelfLayoutName(item.layout);
-        await check(item.light, `浅色${name}布局书架背景`, 1080, 1350, 'shelf', 'homeBackdrop');
-        await check(item.dark, `深色${name}布局书架背景`, 1080, 1350, 'shelf', 'homeBackdrop');
+        const name = shelfBackdropKeyName(item.layout);
+        await check(item.light, `浅色${name}书架背景`, 1080, 1350, 'shelf', 'shelfBackdrop');
+        await check(item.dark, `深色${name}书架背景`, 1080, 1350, 'shelf', 'shelfBackdrop');
+        // 书架背景只传了一种模式：另一种模式书架会退回页签顶部背景，多半不是想要的。
+        if (item.layout === SHELF_BACKDROP_ALL && (!item.light || !item.dark)) {
+          const missingDark = !item.dark;
+          const issue = new ThemeEditorIssue();
+          issue.text = `${missingDark ? '深色' : '浅色'}书架背景没传`;
+          issue.detail = `${missingDark ? '深色' : '浅色'}模式的书架会用页签顶部背景；可在菜单里选“另一模式也用这张”`;
+          issue.section = 'shelf';
+          issue.group = 'shelfBackdrop';
+          issue.mode = missingDark ? 'dark' : 'light';
+          issues.push(issue);
+        }
       }
       // 书架设成全屏裁切铺满时，4 : 5 一类的图会被裁掉左右一大半。
       const display = parts.shelfBackdropDisplay;
       if (display && display.fit === ReaderBackgroundDisplay.FIT_COVER) {
-        const backdrops: string[][] = [[parts.homeBackdropLight, '浅色首页背景'], [parts.homeBackdropDark, '深色首页背景']];
+        // 某个模式有书架背景时书架不再用页签顶部那张，就不必再查它。
+        const all = (parts.shelfBackdrops || []).find((item: ThemePackageShelfBackdrop): boolean =>
+          item.layout === SHELF_BACKDROP_ALL);
+        const backdrops: string[][] = [[all && all.light ? '' : parts.homeBackdropLight, '浅色页签顶部背景'],
+          [all && all.dark ? '' : parts.homeBackdropDark, '深色页签顶部背景']];
         for (const item of parts.shelfBackdrops || []) {
-          const name = this.shelfLayoutName(item.layout);
-          backdrops.push([item.light, `浅色${name}布局书架背景`], [item.dark, `深色${name}布局书架背景`]);
+          const name = shelfBackdropKeyName(item.layout);
+          backdrops.push([item.light, `浅色${name}书架背景`], [item.dark, `深色${name}书架背景`]);
         }
         for (const backdrop of backdrops) {
           if (!backdrop[0]) continue;
@@ -5896,7 +6090,7 @@ struct ThemeColorSettingsPage {
           issue.text = `${backdrop[1]}是 ${size[0]} × ${size[1]}`;
           issue.detail = '书架设成全屏后左右会裁掉一大半，建议传约 9 : 20 的竖图';
           issue.section = 'shelf';
-          issue.group = 'homeBackdrop';
+          issue.group = 'shelfBackdrop';
           issues.push(issue);
         }
       }
@@ -6410,9 +6604,19 @@ struct ThemeColorSettingsPage {
   async uploadHomeBackdrop(shelfLayout: string = '', dark: boolean = this.selectedMode === 'dark'): Promise<void> {
     const picked = await SchemeAssetService.pickImages(getContext(this), 1);
     if (picked.length === 0) return;
-    const name = shelfLayout ? `${this.shelfLayoutName(shelfLayout)}布局书架背景` : '首页背景';
-    const framed = await this.frameImage(picked[0], `${name}取景`, 1080, 1350, 1080, false);
+    const name = shelfLayout ? this.shelfBackdropTitle(shelfLayout) : '页签顶部背景';
+    // 书架设成全屏时书架背景和布局背景不裁切，整张收进来，显示时按显示方式铺、在预览上取景。
+    const whole = !!shelfLayout && !!this.shelfDisplay();
+    if (whole) {
+      const oversize = await AnimatedImagePolicy.oversizeAnimatedMessage(picked[0]);
+      if (oversize) {
+        HdsFeedback.showToast(oversize);
+        return;
+      }
+    }
+    const framed = whole ? new FramedImage() : await this.frameImage(picked[0], `${name}取景`, 1080, 1350, 1080, false);
     if (!framed) return;
+    if (whole) framed.path = picked[0];
     // 来源还是内置主题时记下它（见 SchemeAssetService.rememberHomeBackdropFallback），所以要传点开时那个模式的来源。
     const source = this.sourceValueFor(dark ? this.darkSources : this.lightSources, 'homeBackdrop');
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>

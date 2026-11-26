@@ -206,7 +206,7 @@ function sectionOfMessage(message: string): string {
   const rules: [RegExp, string][] = [
     [/parts\.(light|dark)\.colors/, 'colors'], [/parts\.(light|dark)\.reader/, 'reader'], [/parts\.(light|dark)\.(emphasis|commentBubble)|parts\.bubble/, 'emphasis'],
     [/parts\.(light|dark)\.chapterHead/, 'chapterHead'],
-    [/ttsPanel/, 'tts'], [/homeBackdrop|shelfBackdrop/, 'homeBackdrop'], [/navigation/, 'nav'], [/parts\.book/, 'book'], [/startup/, 'startup'], [/radius|typography/, 'shape'],
+    [/ttsPanel/, 'tts'], [/shelfBackdrop/, 'shelfBackdrop'], [/homeBackdrop/, 'homeBackdrop'], [/navigation/, 'nav'], [/parts\.book/, 'book'], [/startup/, 'startup'], [/radius|typography/, 'shape'],
     [/logo|preview/, 'brand'], [/packageId|名称|清单/, 'meta']
   ];
   for (const [pattern, id] of rules) if (pattern.test(message)) return id;

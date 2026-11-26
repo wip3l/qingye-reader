@@ -19,7 +19,9 @@ import {
   NAVIGATION_ICON_KEYS,
   normalizeOrnamentInset,
   normalizeOrnamentScale,
+  normalizeShelfBackdropKey,
   normalizeShelfBackdropLayout,
+  SHELF_BACKDROP_ALL,
   packThemeId,
   SHELF_BACKDROP_LAYOUTS,
   ThemeImageCrop,
@@ -53,6 +55,7 @@ import { ReaderCustomFontData, ReaderCustomFontItem } from '../core/reader/Reade
 import { ReaderFontHelper } from './ReaderFontHelper';
 import { CustomThemeScheme, CustomThemeSchemeStore } from './CustomThemeSchemeStore';
 import { ThemePackStore } from './ThemePackStore';
+import { ShelfBackdropConfig, ShelfBackdropStore } from './ShelfBackdropStore';
 import { CustomThemeQuota } from '../account/CustomThemeQuota';
 import { ReaderSettingsStore } from './ReaderSettingsStore';
 import { selectDocuments, selectImages } from '../platform/Files';
@@ -941,15 +944,15 @@ export class SchemeAssetService {
   }
 
   /**
-   * 首页背景：浅色、深色各一张，互不借用。shelfLayout 给了书架布局（companion / tile / loose / compact）时，
-   * 设的是那种布局专属的那张，只在书架页用这种布局时显示；不给就是各页签通用的那张。
+   * 首页背景：浅色、深色各一张，互不借用。shelfLayout 给了 all 时设的是书架背景（四种布局共用，只在书架页显示）；
+   * 给了书架布局（companion / tile / loose / compact）时，设的是那种布局专属的那张；不给就是页签顶部的通用背景。
    */
   static async setHomeBackdrop(context: Context, schemeId: string, uri: string, darkMode: boolean,
     baseTheme: string, crop: ThemeImageCrop | null = null, shelfLayout: string = ''): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
-      const layout = normalizeShelfBackdropLayout(shelfLayout);
+      const layout = normalizeShelfBackdropKey(shelfLayout);
       const path = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.IMAGE,
-        layout ? '书架背景' : '首页背景');
+        layout ? '书架背景' : '页签顶部背景');
       SchemeAssetService.rememberHomeBackdropFallback(record, baseTheme, darkMode);
       if (layout) {
         const item = SchemeAssetService.shelfBackdropEntry(record, layout);
@@ -970,11 +973,11 @@ export class SchemeAssetService {
     });
   }
 
-  /** 移除通用首页背景，或（给了 shelfLayout 时）某种书架布局专属的那张，后者移除后回到沿用通用背景。 */
+  /** 移除通用首页背景，或（给了 shelfLayout 时）书架背景 / 某种布局专属的那张，后者移除后回到沿用下一级。 */
   static async clearHomeBackdrop(context: Context, schemeId: string, darkMode: boolean,
     shelfLayout: string = ''): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
-      const layout = normalizeShelfBackdropLayout(shelfLayout);
+      const layout = normalizeShelfBackdropKey(shelfLayout);
       if (layout) {
         // 两种模式都空了的条目由 tidyImageCrops 清掉。
         const item = findShelfBackdrop(record.parts.shelfBackdrops, layout);
@@ -1027,6 +1030,61 @@ export class SchemeAssetService {
           item.lightCrop = SchemeAssetService.attachCrop(crop, image);
         }
       }
+    });
+  }
+
+  /** 书架背景（all）或某种布局专属背景的这个模式，连同显示区域也给另一个模式用。 */
+  static async copyShelfBackdropToOtherMode(context: Context, schemeId: string, shelfLayout: string,
+    fromDark: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const item = findShelfBackdrop(record.parts.shelfBackdrops, normalizeShelfBackdropKey(shelfLayout));
+      const image = item ? (fromDark ? item.dark : item.light) : '';
+      if (!item || !image) throw new Error('这个模式还没有书架背景');
+      const crop = SchemeAssetService.attachCrop((fromDark ? item.darkCrop : item.lightCrop) || null, image);
+      if (fromDark) {
+        item.light = image;
+        item.lightCrop = crop;
+      } else {
+        item.dark = image;
+        item.darkCrop = crop;
+      }
+    });
+  }
+
+  /**
+   * 把书架设置 › 书架背景里的自定义图和显示方式拷进方案，作为书架背景（all）。
+   * 深色没单独传时书架设置用浅色那张，这里也照样给深色一份，免得进了主题深色就没了。
+   * 主题的取景、模糊只有一份，取浅色的；淡化按模式分开拷。顶部淡出时清掉全屏设置。
+   */
+  static async importShelfSettingsBackdrop(context: Context, schemeId: string, lightSource: string,
+    darkSource: string, config: ShelfBackdropConfig): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, lightSource, async (record: ThemePackRecord): Promise<void> => {
+      if (!config.lightImage) throw new Error('书架设置里还没有上传背景');
+      const toPath = (uri: string): string => uri.startsWith('file://') ? new fileUri.FileUri(uri).path : uri;
+      const light = await ThemePackStore.importAsset(context, record.packageId, toPath(config.lightImage),
+        SchemeAssetService.IMAGE, '书架背景');
+      const dark = config.darkImage && config.darkImage !== config.lightImage ?
+        await ThemePackStore.importAsset(context, record.packageId, toPath(config.darkImage), SchemeAssetService.IMAGE,
+          '书架背景') : light;
+      SchemeAssetService.rememberHomeBackdropFallback(record, lightSource, false);
+      SchemeAssetService.rememberHomeBackdropFallback(record, darkSource, true);
+      const item = SchemeAssetService.shelfBackdropEntry(record, SHELF_BACKDROP_ALL);
+      item.light = light;
+      item.lightCrop = null;
+      item.dark = dark;
+      item.darkCrop = null;
+      if (config.display === ShelfBackdropStore.DISPLAY_TOP) {
+        record.parts.shelfBackdropDisplay = null;
+        return;
+      }
+      const display = new ThemePackageShelfBackdropDisplay();
+      display.fit = config.fit;
+      display.position = config.lightPosition;
+      display.gap = config.gap;
+      display.lightWash = config.lightWash;
+      display.darkWash = config.darkWash;
+      display.blur = config.lightBlur;
+      record.parts.shelfBackdropDisplay = normalizeShelfBackdropDisplay(display);
     });
   }
 
@@ -1570,9 +1628,11 @@ export class SchemeAssetService {
   }
 
   /** 方案自己给这种书架布局、这个模式单独传了背景。 */
+  /** 方案自己给书架背景（all）或这种布局、这个模式单独传了图；不算从下一级沿用的。 */
   static hasShelfBackdrop(packageId: string, shelfLayout: string, darkMode: boolean): boolean {
     const pack = ThemePackRegistry.getByPackageId(packageId);
-    return !!pack && !!pack.shelfBackdrop(shelfLayout, darkMode);
+    const item = pack ? findShelfBackdrop(pack.shelfBackdrops, normalizeShelfBackdropKey(shelfLayout)) : null;
+    return !!item && !!(darkMode ? item.dark : item.light);
   }
 
   /** 上传背景前“首页背景”来源所选的内置主题；移除全部背景后来源退回它。没记时为空串。 */

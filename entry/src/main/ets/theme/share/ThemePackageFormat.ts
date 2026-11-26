@@ -764,8 +764,17 @@ export function bookIsEmpty(book: ThemePackageBook | null | undefined): boolean 
 export const SHELF_BACKDROP_LAYOUTS: string[] = ['companion', 'tile', 'loose', 'compact'];
 
 /**
- * 某种书架布局专属的首页背景（包里写在 shelfBackdrop.<布局>）：只在书架页、用这种布局时显示，
- * 没写的模式沿用通用首页背景。浅色、深色互不借用。旧版本应用不认这一节，书架照旧显示通用那张。
+ * 书架通用背景的键（包里写在 shelfBackdrop.all）：四种布局共用，只在书架页显示，发现、我的页不用。
+ * 书架页取图顺序：这种布局专属的 → all → 通用首页背景。旧版本应用不认 all，书架照旧显示通用首页背景。
+ */
+export const SHELF_BACKDROP_ALL: string = 'all';
+
+/** shelfBackdrop 一节认得的全部键，书架通用在前。 */
+export const SHELF_BACKDROP_KEYS: string[] = [SHELF_BACKDROP_ALL, ...SHELF_BACKDROP_LAYOUTS];
+
+/**
+ * 书架专属的背景（包里写在 shelfBackdrop.<键>）：layout 是 all（四种布局共用）或某种布局，只在书架页显示，
+ * 没写的模式沿用下一级（布局 → all → 通用首页背景）。浅色、深色互不借用。旧版本应用不认这一节，书架照旧显示通用那张。
  */
 export class ThemePackageShelfBackdrop {
   layout: string = '';
@@ -784,6 +793,19 @@ export function normalizeShelfBackdropLayout(layout: string | null | undefined):
   return SHELF_BACKDROP_LAYOUTS.includes(value) ? value : '';
 }
 
+/** 同 normalizeShelfBackdropLayout，另外认得 all（书架通用）。 */
+export function normalizeShelfBackdropKey(key: string | null | undefined): string {
+  const value = (key || '').trim().toLowerCase();
+  return SHELF_BACKDROP_KEYS.includes(value) ? value : '';
+}
+
+/** 书架背景条目给人看的名称：all 是“书架通用”，布局是“陪伴布局”这样。 */
+export function shelfBackdropKeyName(key: string): string {
+  if (key === SHELF_BACKDROP_ALL) return '书架通用';
+  const name = SHELF_BACKDROP_LAYOUT_NAMES[SHELF_BACKDROP_LAYOUTS.indexOf(key)];
+  return name ? `${name}布局` : '';
+}
+
 export function findShelfBackdrop(list: ThemePackageShelfBackdrop[] | null | undefined,
   layout: string): ThemePackageShelfBackdrop | null {
   if (!layout || !Array.isArray(list)) return null;
@@ -793,11 +815,19 @@ export function findShelfBackdrop(list: ThemePackageShelfBackdrop[] | null | und
   return null;
 }
 
-/** 某种布局、某个模式的专属背景；没有时返回空串（由调用方退回通用首页背景）。 */
+/**
+ * 书架用某种布局、某个模式时的专属背景：先找这种布局的，再找书架通用（all）的；传 all 只取通用那张。
+ * 都没有时返回空串（由调用方退回通用首页背景）。layout 为空（不是书架页）时也返回空串。
+ */
 export function shelfBackdropFor(list: ThemePackageShelfBackdrop[] | null | undefined, layout: string,
   dark: boolean): string {
-  const item = findShelfBackdrop(list, normalizeShelfBackdropLayout(layout));
-  return item ? ((dark ? item.dark : item.light) || '') : '';
+  const key = normalizeShelfBackdropKey(layout);
+  if (!key) return '';
+  const own = findShelfBackdrop(list, key);
+  const image = own ? ((dark ? own.dark : own.light) || '') : '';
+  if (image || key === SHELF_BACKDROP_ALL) return image;
+  const all = findShelfBackdrop(list, SHELF_BACKDROP_ALL);
+  return all ? ((dark ? all.dark : all.light) || '') : '';
 }
 
 /**
@@ -1938,9 +1968,9 @@ export function tidyImageCrops(parts: ThemePackageParts): void {
   }
   parts.homeBackdropLightCrop = keep(parts.homeBackdropLightCrop, parts.homeBackdropLight || '');
   parts.homeBackdropDarkCrop = keep(parts.homeBackdropDarkCrop, parts.homeBackdropDark || '');
-  // 按固定的布局顺序留下有图的条目，同一布局只留第一条。
+  // 按固定的键顺序（书架通用在前）留下有图的条目，同一个键只留第一条。
   const shelf: ThemePackageShelfBackdrop[] = [];
-  for (const layout of SHELF_BACKDROP_LAYOUTS) {
+  for (const layout of SHELF_BACKDROP_KEYS) {
     const item = findShelfBackdrop(parts.shelfBackdrops, layout);
     if (!item || (!item.light && !item.dark)) continue;
     const tidy = new ThemePackageShelfBackdrop();
@@ -2119,7 +2149,7 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
   const shelfBackdrop = objectField(record, 'shelfBackdrop');
   if (shelfBackdrop) {
     const image: string[] = [ThemePackageAssetKinds.IMAGE];
-    for (const layout of SHELF_BACKDROP_LAYOUTS) {
+    for (const layout of SHELF_BACKDROP_KEYS) {
       const entry = objectField(shelfBackdrop, layout);
       if (!entry) continue;
       const label = `parts.shelfBackdrop.${layout}`;
@@ -2310,7 +2340,7 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
     record['homeBackdrop'] = homeBackdrop;
   }
   const shelfBackdrop: Record<string, Object> = {};
-  for (const layout of SHELF_BACKDROP_LAYOUTS) {
+  for (const layout of SHELF_BACKDROP_KEYS) {
     const item = findShelfBackdrop(parts.shelfBackdrops, layout);
     if (!item || (!item.light && !item.dark)) continue;
     const entry: Record<string, Object> = {};
@@ -2573,9 +2603,9 @@ export function describeParts(parts: ThemePackageParts): string[] {
   }
   const shelfLayouts: string[] = [];
   for (const item of parts.shelfBackdrops || []) {
-    if (item.light || item.dark) shelfLayouts.push(SHELF_BACKDROP_LAYOUT_NAMES[SHELF_BACKDROP_LAYOUTS.indexOf(item.layout)] || '');
+    if (item.light || item.dark) shelfLayouts.push(shelfBackdropKeyName(item.layout));
   }
-  if (shelfLayouts.length > 0) items.push(`书架背景（${shelfLayouts.join('、')}布局）`);
+  if (shelfLayouts.length > 0) items.push(`书架背景（${shelfLayouts.join('、')}）`);
   if (parts.shelfBackdropDisplay && (parts.homeBackdropLight || parts.homeBackdropDark || shelfLayouts.length > 0)) {
     items.push('书架背景全屏');
   }

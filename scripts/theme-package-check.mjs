@@ -743,7 +743,7 @@ test('v2 theme: shelf layouts can each have their own backdrop beside the shared
   assert.equal(format.shelfBackdropFor(paths.shelfBackdrops, 'whatever', false), '');
   assert.deepEqual(paths.shelfBackdrops[0].lightCrop, area('assets/cover_01.jpg'));
   assert.equal(paths.shelfBackdrops[0].darkCrop, null, 'an area recorded for another image is dropped');
-  assert.equal(format.describeParts(parts).includes('书架背景（陪伴、紧凑布局）'), true);
+  assert.equal(format.describeParts(parts).includes('书架背景（陪伴布局、紧凑布局）'), true);
   assert.equal(format.partsAssetRefs(paths).includes('assets/cover_02.jpg'), true);
 
   const exported = new format.ThemePackageTheme();
@@ -762,6 +762,34 @@ test('v2 theme: shelf layouts can each have their own backdrop beside the shared
   assert.equal(only.shelfBackdrops.length, 1);
   assert.throws(() => decode({ shelfBackdrop: { tile: {} }, logo: 'assets/logo.svg' }), /shelfBackdrop\.tile 至少要有 light 或 dark/);
   assert.throws(() => decode({ shelfBackdrop: { tile: { light: 'assets/frame.svg' } } }), /./, 'vector files are not accepted');
+});
+
+test('v2 theme: shelfBackdrop.all is the shelf-wide backdrop between each layout entry and the shared one', () => {
+  const manifest = withAssets(manifestV2(), PARTS_FILES);
+  const decode = json => format.decodeTheme(JSON.stringify({ parts: json }), manifest).parts;
+  const byPath = parts => format.mapPartsAssetRefs(parts, ref => format.findAsset(manifest, format.assetIdFromRef(ref)).path);
+  const json = partsJson();
+  json.homeBackdrop = { light: 'assets/startup.jpg', dark: 'assets/startup.jpg' };
+  json.shelfBackdrop = {
+    tile: { light: 'assets/cover_02.jpg' },
+    all: { light: 'assets/cover_01.jpg' }
+  };
+  const parts = decode(json);
+  const paths = byPath(parts);
+  assert.deepEqual(paths.shelfBackdrops.map(item => item.layout), ['all', 'tile'], 'the shelf-wide entry comes first');
+  // 布局自己的 → all → 空串（调用方再退回 homeBackdrop）；all 不跨模式借用。
+  assert.equal(format.shelfBackdropFor(paths.shelfBackdrops, 'tile', false), 'assets/cover_02.jpg');
+  assert.equal(format.shelfBackdropFor(paths.shelfBackdrops, 'companion', false), 'assets/cover_01.jpg');
+  assert.equal(format.shelfBackdropFor(paths.shelfBackdrops, 'tile', true), '');
+  assert.equal(format.shelfBackdropFor(paths.shelfBackdrops, 'all', false), 'assets/cover_01.jpg');
+  assert.equal(format.shelfBackdropFor(paths.shelfBackdrops, '', false), '', 'other tabs never get the shelf backdrop');
+  assert.equal(format.describeParts(parts).includes('书架背景（书架通用、平铺布局）'), true);
+  const encoded = format.encodeParts(paths);
+  assert.deepEqual(Object.keys(encoded.shelfBackdrop), ['all', 'tile']);
+  assert.deepEqual(encoded.shelfBackdrop.all, { light: 'assets/cover_01.jpg' });
+  const exported = new format.ThemePackageTheme();
+  exported.parts = paths;
+  assert.deepEqual(format.decodeTheme(format.encodeTheme(exported), manifest).parts, parts);
 });
 
 test('scheme overrides travel in settings and are gated by scheme-overrides-v1', () => {
