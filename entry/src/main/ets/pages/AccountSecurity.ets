@@ -16,12 +16,15 @@ import { ThemedDialog } from '../utils/ThemedDialog';
 
 const VIEW_OVERVIEW = '';
 const VIEW_PASSWORD = 'password';
+const VIEW_USERNAME = 'username';
 const VIEW_REGENERATE = 'regenerate';
 const VIEW_DELETE = 'delete';
 const VIEW_CODES = 'codes';
 const DELETION_GRACE_DAYS = 7;
+/** 与服务端 USERNAME_CHANGE_INTERVAL_DAYS 一致。 */
+const USERNAME_CHANGE_INTERVAL_DAYS = 30;
 
-/** 登录与账号安全：华为账号绑定、用户名与密码、恢复码和注销账号。 */
+/** 登录与账号安全：华为账号绑定、用户名（30 天可改一次）、密码、恢复码和注销账号。 */
 @Entry
 @Component
 struct AccountSecurityPage {
@@ -73,6 +76,7 @@ struct AccountSecurityPage {
 
   private title(): string {
     if (this.view === VIEW_PASSWORD) return this.methods.hasPassword ? '修改密码' : '设置用户名和密码';
+    if (this.view === VIEW_USERNAME) return '修改用户名';
     if (this.view === VIEW_REGENERATE) return '重新生成恢复码';
     if (this.view === VIEW_DELETE) return '注销账号';
     if (this.view === VIEW_CODES) return '保存恢复码';
@@ -109,6 +113,8 @@ struct AccountSecurityPage {
         } })
       } else if (this.view === VIEW_PASSWORD) {
         this.passwordForm()
+      } else if (this.view === VIEW_USERNAME) {
+        this.usernameForm()
       } else if (this.view === VIEW_REGENERATE) {
         this.regenerateForm()
       } else if (this.view === VIEW_DELETE) {
@@ -137,7 +143,13 @@ struct AccountSecurityPage {
     Column() {
       this.methodRow($r('sys.symbol.person'), '华为账号',
         'huawei', true)
-      this.methodRow($r('sys.symbol.lock'), '用户名与密码', 'password', false)
+      // 设好用户名密码后拆成两行，各自修改；还没设时合成一行“设置”。
+      if (this.methods.hasPassword) {
+        this.methodRow($r('sys.symbol.person_text_rectangle'), '用户名', 'username', true)
+        this.methodRow($r('sys.symbol.lock'), '密码', 'password', false)
+      } else {
+        this.methodRow($r('sys.symbol.lock'), '用户名与密码', 'password', false)
+      }
     }
     .width('100%')
     .borderRadius(ThemeRuntime.cardRadius())
@@ -201,6 +213,7 @@ struct AccountSecurityPage {
             .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.SM, bottom: AppSpacing.SM })
             .borderRadius(14)
             .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+            .opacity(kind === 'username' && this.usernameCooling() ? 0.45 : 1)
             .enabled(!this.busy)
             .onClick(() => {
               this.runMethodAction(kind);
@@ -225,8 +238,13 @@ struct AccountSecurityPage {
     if (kind === 'huawei') {
       return this.methods.huaweiBound ? '已绑定，可用华为账号一键登录' : '未绑定 · 绑定没领过赠点的华为账号可领 300 点';
     }
+    if (kind === 'username') {
+      return this.usernameCooling() ?
+        `${this.methods.username} · ${this.formatDate(this.methods.usernameChangeAvailableAt)}后可再改` :
+        this.methods.username;
+    }
     if (kind === 'password') {
-      return this.methods.hasPassword ? `用户名 ${this.methods.username}` : '未设置 · 设置后可在任何设备用用户名登录';
+      return this.methods.hasPassword ? '和用户名一起用来登录' : '未设置 · 设置后可在任何设备用用户名登录';
     }
     return this.methods.recoveryCodesRemaining > 0 ?
       `还剩 ${this.methods.recoveryCodesRemaining} 个可用，忘记密码时用来重设` : '已用完，请重新生成';
@@ -235,13 +253,25 @@ struct AccountSecurityPage {
   private methodAction(kind: string): string {
     // 安卓上没有华为账号服务，不提供绑定。
     if (kind === 'huawei') return this.methods.huaweiBound || PlatformInfo.ANDROID ? '' : (this.busy ? '绑定中' : '绑定');
+    if (kind === 'username') return '修改';
     if (kind === 'password') return this.methods.hasPassword ? '修改密码' : '设置';
     return '重新生成';
+  }
+
+  private usernameCooling(): boolean {
+    return this.methods.usernameChangeAvailableAt > Date.now();
   }
 
   private runMethodAction(kind: string): void {
     if (kind === 'huawei') {
       if (!PlatformInfo.ANDROID) this.bindHuawei();
+    } else if (kind === 'username') {
+      if (this.usernameCooling()) {
+        HdsFeedback.showToast(`用户名 ${USERNAME_CHANGE_INTERVAL_DAYS} 天内只能改一次，` +
+          `${this.formatDate(this.methods.usernameChangeAvailableAt)}后可再改`);
+      } else {
+        this.showView(VIEW_USERNAME);
+      }
     } else if (kind === 'password') {
       this.showView(VIEW_PASSWORD);
     } else {
@@ -254,7 +284,7 @@ struct AccountSecurityPage {
     Column({ space: AppSpacing.MD }) {
       if (!this.methods.hasPassword) {
         this.field('username', '用户名', false)
-        Text(`用户名设置后不能修改，${AccountCredentialService.USERNAME_HINT}。`)
+        Text(`用户名${AccountCredentialService.USERNAME_HINT}，设置后 ${USERNAME_CHANGE_INTERVAL_DAYS} 天可修改一次。`)
           .fontSize(AppFontSize.CAPTION)
           .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
           .width('100%')
@@ -279,6 +309,49 @@ struct AccountSecurityPage {
     .padding(AppSpacing.XL)
     .borderRadius(ThemeRuntime.cardRadius())
     .backgroundColor(ThemeRuntime.cardColor(this.appDarkMode))
+  }
+
+  @Builder
+  usernameForm() {
+    Column({ space: AppSpacing.MD }) {
+      Row() {
+        Text('当前用户名 ')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
+        Text(this.methods.username)
+          .fontSize(AppFontSize.BODY)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+      }
+      .width('100%')
+      this.field('username', '新用户名', false)
+      if (this.usernameInput.trim() && !this.errorText) {
+        Text(this.usernameFormatOk() ? '✓ 格式正确，保存时检查是否已被使用' :
+          `用户名需为${AccountCredentialService.USERNAME_HINT}`)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.usernameFormatOk() ? ThemeRuntime.accentColor(this.appDarkMode) :
+            ThemeRuntime.subTextColor(this.appDarkMode))
+          .width('100%')
+      }
+      this.field('current', '当前密码', true)
+      Text(`${AccountCredentialService.USERNAME_HINT}，不区分大小写。\n` +
+        `保存后要用新用户名登录，旧用户名会被释放，别人可以注册；密码和恢复码不变，其他设备不会退出登录。` +
+        `${USERNAME_CHANGE_INTERVAL_DAYS} 天内只能改一次。`)
+        .fontSize(AppFontSize.CAPTION)
+        .lineHeight(18)
+        .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
+        .width('100%')
+      this.errorLine()
+      this.formButtons('保存新用户名', false)
+    }
+    .width('100%')
+    .padding(AppSpacing.XL)
+    .borderRadius(ThemeRuntime.cardRadius())
+    .backgroundColor(ThemeRuntime.cardColor(this.appDarkMode))
+  }
+
+  private usernameFormatOk(): boolean {
+    return !AccountCredentialService.usernameProblem(this.usernameInput);
   }
 
   @Builder
@@ -429,6 +502,8 @@ struct AccountSecurityPage {
   private submit(): void {
     if (this.view === VIEW_PASSWORD) {
       this.savePassword();
+    } else if (this.view === VIEW_USERNAME) {
+      this.saveUsername();
     } else if (this.view === VIEW_REGENERATE) {
       this.regenerate();
     } else if (this.view === VIEW_DELETE) {
@@ -464,6 +539,32 @@ struct AccountSecurityPage {
       }
     } catch (e) {
       this.errorText = this.errorMessage(e, '保存失败，请稍后重试');
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  private async saveUsername(): Promise<void> {
+    if (this.busy) return;
+    const username = this.usernameInput.trim();
+    const problem = AccountCredentialService.usernameProblem(username) ||
+      (username === this.methods.username ? '新用户名和当前用户名相同' : '') ||
+      (!this.currentPassword ? '请输入当前密码' : '');
+    if (problem) {
+      this.errorText = problem;
+      return;
+    }
+    this.busy = true;
+    try {
+      const result = await AccountCredentialService.changeUsername(this.context, username, this.currentPassword);
+      this.methods = result.loginMethods;
+      this.busy = false;
+      HdsFeedback.showToast(`用户名已改为 ${this.methods.username || username}，下次用新用户名登录`);
+      this.showView(VIEW_OVERVIEW);
+    } catch (e) {
+      this.errorText = this.errorMessage(e, '保存失败，请稍后重试');
+      // 冷却期没过（比如在别的设备刚改过）：刷新一下，概览页的按钮跟着变灰。
+      if (e instanceof AccountApiError && e.statusCode === 429) this.load();
     } finally {
       this.busy = false;
     }

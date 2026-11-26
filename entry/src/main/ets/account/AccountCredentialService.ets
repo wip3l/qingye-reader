@@ -73,6 +73,12 @@ export class AccountCredentialService {
       await AccountCredentialService.token(context));
   }
 
+  /** 修改用户名：30 天一次，旧用户名立即释放；密码、恢复码和已登录设备不受影响。 */
+  static async changeUsername(context: Context, username: string,
+    currentPassword: string): Promise<AccountCredentialResponse> {
+    return AccountCommerceApi.changeUsername(username.trim(), currentPassword, await AccountCredentialService.token(context));
+  }
+
   static async regenerateRecoveryCodes(context: Context, currentPassword: string): Promise<AccountCredentialResponse> {
     return AccountCommerceApi.regenerateRecoveryCodes(currentPassword, await AccountCredentialService.token(context));
   }

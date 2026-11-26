@@ -9,6 +9,7 @@ import {
   AccountAuthError,
   bindHuaweiAccount,
   cancelAccountDeletion,
+  changeUsername,
   DELETION_KEEPS_TABLES,
   DELETION_PURGES_TABLES,
   grantHuaweiWelcome,
@@ -168,13 +169,13 @@ test('password setup for Huawei accounts, Huawei binding and one welcome grant p
   assert.ok(other);
   let methods = await loginMethods(query, legacyUser);
   assert.deepEqual(methods, { username: 'OldFriend', hasPassword: true, huaweiBound: true, recoveryCodesRemaining: 8,
-    deletionRequestedAt: null });
+    deletionRequestedAt: null, usernameChangeAvailableAt: null });
   await assert.rejects(setAccountPassword(tx, legacyUser, current, { newPassword: 'efgh5678' }, hasher),
     rejectedCode('WRONG_PASSWORD'));
   const changed = await setAccountPassword(tx, legacyUser, current,
     { username: 'Ignored', newPassword: 'efgh5678', currentPassword: 'abcd1234' }, hasher);
   assert.deepEqual(changed.recoveryCodes, [], '修改密码不重发恢复码');
-  assert.equal((await loginMethods(query, legacyUser)).username, 'OldFriend', '用户名定下后不能改');
+  assert.equal((await loginMethods(query, legacyUser)).username, 'OldFriend', '修改密码不会顺带改用户名');
   await assert.rejects(regenerateRecoveryCodes(tx, legacyUser, 'abcd1234', hasher), rejectedCode('WRONG_PASSWORD'));
   assert.equal((await regenerateRecoveryCodes(tx, legacyUser, 'efgh5678', hasher)).length, 8);
 
@@ -202,6 +203,52 @@ test('password setup for Huawei accounts, Huawei binding and one welcome grant p
   assert.equal(await points(db, legacyUser), 300);
   assert.equal(await grantHuaweiWelcome(query, taken.userId, 'fresh-open-id'), false);
   assert.equal(await points(db, taken.userId), 0);
+});
+
+test('username change: password check, 30-day interval, old name released (embedded PostgreSQL)', async t => {
+  const { db, tx, query } = await database();
+  t.after(() => db.close());
+
+  const reader = await registerPasswordAccount(tx, { username: 'First01', password: 'abcd1234' }, hasher);
+  const other = await registerPasswordAccount(tx, { username: 'Other01', password: 'abcd1234' }, hasher);
+  const device = await session(db, reader.userId);
+  const huaweiOnly = randomUUID();
+  await db.query(`INSERT INTO app_users(id, huawei_open_id, display_name) VALUES ($1, 'hw-rename', '华为用户')`, [huaweiOnly]);
+  await assert.rejects(changeUsername(tx, huaweiOnly, { username: 'Newbie01', currentPassword: 'abcd1234' }),
+    rejectedCode('PASSWORD_NOT_SET'));
+
+  await assert.rejects(changeUsername(tx, reader.userId, { username: '1bad', currentPassword: 'abcd1234' }),
+    rejectedCode('INVALID_USERNAME'));
+  await assert.rejects(changeUsername(tx, reader.userId, { username: 'First01', currentPassword: 'abcd1234' }),
+    rejectedCode('SAME_USERNAME'));
+  await assert.rejects(changeUsername(tx, reader.userId, { username: 'Second01', currentPassword: 'wrong-pass1' }),
+    rejectedCode('WRONG_PASSWORD'));
+  await assert.rejects(changeUsername(tx, reader.userId, { username: 'other01', currentPassword: 'abcd1234' }),
+    rejectedCode('USERNAME_TAKEN'));
+  assert.equal((await loginMethods(query, reader.userId)).username, 'First01', '失败时用户名不变');
+  assert.equal((await loginMethods(query, reader.userId)).usernameChangeAvailableAt, null, '失败不占冷却期');
+
+  await changeUsername(tx, reader.userId, { username: 'Second01', currentPassword: 'abcd1234' });
+  const methods = await loginMethods(query, reader.userId);
+  assert.equal(methods.username, 'Second01');
+  assert.equal(methods.recoveryCodesRemaining, 8, '恢复码不受影响');
+  assert.ok(methods.usernameChangeAvailableAt! > Date.now() + 29.9 * 86400000);
+  assert.deepEqual(await activeSessions(db, reader.userId), [device], '改名不让设备退出');
+  await assert.rejects(passwordLogin(tx, { username: 'first01', password: 'abcd1234' }), rejectedCode('INVALID_CREDENTIALS'));
+  assert.equal((await passwordLogin(tx, { username: 'SECOND01', password: 'abcd1234' })).userId, reader.userId);
+  await recoverWithCode(tx, { username: 'second01', recoveryCode: reader.recoveryCodes[0]!, newPassword: 'abcd1234' }, hasher);
+
+  // 旧用户名立即释放。
+  assert.ok((await registerPasswordAccount(tx, { username: 'first01', password: 'abcd1234' }, hasher)).userId);
+
+  // 30 天内不能再改，只改大小写也算。
+  await assert.rejects(changeUsername(tx, reader.userId, { username: 'SECOND01', currentPassword: 'abcd1234' }),
+    (error: unknown) => error instanceof AccountAuthError && error.code === 'USERNAME_CHANGE_TOO_SOON' && error.retryAfter > 0);
+  await db.query(`UPDATE app_users SET username_changed_at = now() - interval '31 days' WHERE id = $1`, [reader.userId]);
+  assert.equal((await loginMethods(query, reader.userId)).usernameChangeAvailableAt, null);
+  await changeUsername(tx, reader.userId, { username: 'SECOND01', currentPassword: 'abcd1234' });
+  assert.equal((await loginMethods(query, reader.userId)).username, 'SECOND01');
+  assert.ok(other.userId);
 });
 
 test('account deletion: grace period, cancel on login, purge of personal data (embedded PostgreSQL)', async t => {
@@ -316,12 +363,21 @@ test('HTTP routes wire credentials, sessions and error mapping', async t => {
   assert.equal(bind.statusCode, 200);
   assert.equal(bind.json().welcomeGranted, true);
   assert.equal(bind.json().loginMethods.huaweiBound, true);
+  const rename = await app.inject({ method: 'POST', url: '/v1/account/username', headers: auth,
+    payload: { username: 'WebUser2', currentPassword: 'abcd1234' } });
+  assert.equal(rename.statusCode, 200);
+  assert.equal(rename.json().loginMethods.username, 'WebUser2');
+  assert.ok(rename.json().loginMethods.usernameChangeAvailableAt > Date.now());
+  const again = await app.inject({ method: 'POST', url: '/v1/account/username', headers: auth,
+    payload: { username: 'WebUser3', currentPassword: 'abcd1234' } });
+  assert.equal(again.statusCode, 429);
+  assert.equal(again.json().code, 'USERNAME_CHANGE_TOO_SOON');
   const codes = await app.inject({ method: 'POST', url: '/v1/account/recovery-codes', headers: auth,
     payload: { currentPassword: 'abcd1234' } });
   assert.equal(codes.json().recoveryCodes.length, 8);
   const deletion = await app.inject({ method: 'POST', url: '/v1/account/deletion', headers: auth,
     payload: { currentPassword: 'abcd1234' } });
   assert.equal(deletion.statusCode, 200);
-  const login = await app.inject({ method: 'POST', url: '/v1/auth/password', payload: { username: 'WebUser1', password: 'abcd1234' } });
+  const login = await app.inject({ method: 'POST', url: '/v1/auth/password', payload: { username: 'WebUser2', password: 'abcd1234' } });
   assert.equal(login.json().deletionCancelled, true);
 });

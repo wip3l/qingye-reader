@@ -70,6 +70,8 @@ export class AccountLoginMethods {
   huaweiBound: boolean = false;
   recoveryCodesRemaining: number = 0;
   deletionRequestedAt: number | null = null;
+  /** 改过用户名、冷却期没过时为下次能改的时间（毫秒），现在就能改时为 0。 */
+  usernameChangeAvailableAt: number = 0;
 }
 
 export class AccountCredentialResponse {

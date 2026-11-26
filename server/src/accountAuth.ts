@@ -15,6 +15,7 @@ import {
 } from './accountCredentials.js';
 
 export const ACCOUNT_DELETION_GRACE_DAYS = 7;
+export const USERNAME_CHANGE_INTERVAL_DAYS = 30;
 const WELCOME_POINTS = 300;
 const REGISTRATIONS_PER_IP_PER_DAY = 20;
 
@@ -223,15 +224,23 @@ export interface LoginMethods {
   huaweiBound: boolean;
   recoveryCodesRemaining: number;
   deletionRequestedAt: number | null;
+  /** 冷却期内下次能改用户名的时间（毫秒）；现在就能改时为 null。 */
+  usernameChangeAvailableAt: number | null;
 }
+
+/** 上次改名在冷却期内时返回下次能改的时间（毫秒），否则 null。 */
+const USERNAME_NEXT_CHANGE_SQL = `CASE WHEN u.username_changed_at > now() - make_interval(days => ${USERNAME_CHANGE_INTERVAL_DAYS})
+  THEN (extract(epoch FROM u.username_changed_at + make_interval(days => ${USERNAME_CHANGE_INTERVAL_DAYS})) * 1000)::bigint
+  END`;
 
 export async function loginMethods(db: MembershipDb, userId: string): Promise<LoginMethods> {
   const result = await db.query<{ username: string | null; has_password: boolean; huawei_bound: boolean;
-    remaining: string; deletion_ms: string | null }>(`SELECT u.username,
+    remaining: string; deletion_ms: string | null; next_change_ms: string | null }>(`SELECT u.username,
       u.password_hash IS NOT NULL AS has_password,
       u.huawei_open_id IS NOT NULL AS huawei_bound,
       (SELECT count(*) FROM account_recovery_codes c WHERE c.user_id = u.id AND c.used_at IS NULL)::bigint AS remaining,
-      (extract(epoch FROM u.deletion_requested_at) * 1000)::bigint AS deletion_ms
+      (extract(epoch FROM u.deletion_requested_at) * 1000)::bigint AS deletion_ms,
+      ${USERNAME_NEXT_CHANGE_SQL} AS next_change_ms
     FROM app_users u WHERE u.id = $1 AND u.deleted_at IS NULL`, [userId]);
   const row = result.rows[0];
   if (!row) throw new AccountAuthError(404, 'ACCOUNT_NOT_FOUND', '账号不存在');
@@ -240,7 +249,8 @@ export async function loginMethods(db: MembershipDb, userId: string): Promise<Lo
     hasPassword: row.has_password,
     huaweiBound: row.huawei_bound,
     recoveryCodesRemaining: Number(row.remaining || 0),
-    deletionRequestedAt: row.deletion_ms === null ? null : Number(row.deletion_ms)
+    deletionRequestedAt: row.deletion_ms === null ? null : Number(row.deletion_ms),
+    usernameChangeAvailableAt: row.next_change_ms === null ? null : Number(row.next_change_ms)
   };
 }
 
@@ -252,7 +262,7 @@ async function requirePassword(db: MembershipDb, userId: string, hash: string, p
 }
 
 /**
- * 设置或修改密码。没有用户名的账号（华为账号注册）第一次设置时同时定下用户名，之后不能改；
+ * 设置或修改密码。没有用户名的账号（华为账号注册）第一次设置时同时定下用户名，之后改名走 changeUsername；
  * 第一次设置会生成恢复码。修改后其他设备退出登录。
  */
 export async function setAccountPassword(tx: Transaction, userId: string, sessionId: string,
@@ -292,6 +302,45 @@ export async function setAccountPassword(tx: Transaction, userId: string, sessio
     await db.query(`UPDATE auth_sessions SET revoked_at = COALESCE(revoked_at, now())
       WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL`, [userId, sessionId]);
     return { recoveryCodes: row.password_hash ? [] : await storeRecoveryCodes(db, userId, hasher) };
+  });
+}
+
+/**
+ * 修改用户名：要验证当前密码，30 天一次（只改大小写也算）。旧用户名立即释放；
+ * 密码、恢复码和已登录的设备都不受影响。
+ */
+export async function changeUsername(tx: Transaction, userId: string,
+  input: { username?: unknown; currentPassword?: unknown }): Promise<void> {
+  let name: { username: string; key: string };
+  try {
+    name = normalizeUsername(input.username);
+  } catch (error) {
+    fromCredential(error);
+  }
+  await tx(async db => {
+    const result = await db.query<{ username: string | null; password_hash: string | null; next_change_ms: string | null }>(
+      `SELECT u.username, u.password_hash, ${USERNAME_NEXT_CHANGE_SQL} AS next_change_ms
+      FROM app_users u WHERE u.id = $1 AND u.deleted_at IS NULL FOR UPDATE`, [userId]);
+    const row = result.rows[0];
+    if (!row) throw new AccountAuthError(404, 'ACCOUNT_NOT_FOUND', '账号不存在');
+    if (!row.username || !row.password_hash) throw new AccountAuthError(409, 'PASSWORD_NOT_SET', '请先设置用户名和密码');
+    if (row.username === name.username) throw new AccountAuthError(400, 'SAME_USERNAME', '新用户名和当前用户名相同');
+    if (row.next_change_ms !== null) {
+      // 日期由客户端按 loginMethods.usernameChangeAvailableAt 在本地时区显示，这里不写具体日子。
+      throw new AccountAuthError(429, 'USERNAME_CHANGE_TOO_SOON',
+        `用户名 ${USERNAME_CHANGE_INTERVAL_DAYS} 天内只能改一次`,
+        Math.max(1, Math.ceil((Number(row.next_change_ms) - Date.now()) / 1000)));
+    }
+    await requirePassword(db, userId, row.password_hash, input.currentPassword);
+    try {
+      await db.query('SAVEPOINT change_username');
+      await db.query(`UPDATE app_users SET username = $2, username_key = $3, username_changed_at = now(),
+        updated_at = now() WHERE id = $1`, [userId, name.username, name.key]);
+      await db.query('RELEASE SAVEPOINT change_username');
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      throw new AccountAuthError(409, 'USERNAME_TAKEN', '这个用户名已被使用，换一个试试');
+    }
   });
 }
 
@@ -385,7 +434,7 @@ export async function purgeDueAccountDeletions(tx: Transaction, limit = 20): Pro
         await db.query(`DELETE FROM ${table} WHERE user_id = $1`, [id]);
       }
       await db.query(`UPDATE app_users SET huawei_open_id = NULL, huawei_union_id = NULL,
-        username = NULL, username_key = NULL, password_hash = NULL, password_changed_at = NULL,
+        username = NULL, username_key = NULL, username_changed_at = NULL, password_hash = NULL, password_changed_at = NULL,
         failed_login_count = 0, login_locked_until = NULL, registration_ip = NULL,
         display_name = '已注销用户', avatar_url = '', avatar_data = NULL, avatar_mime = NULL,
         profile_customized = TRUE, deleted_at = now(), updated_at = now() WHERE id = $1`, [id]);
@@ -469,6 +518,15 @@ export function registerAccountAuthRoutes(app: FastifyInstance, deps: AccountAut
         currentPassword: request.body?.currentPassword
       }, deps.recoveryHasher);
       return { ...result, loginMethods: await loginMethods(deps.db, userId) };
+    });
+
+  app.post<{ Body: CredentialBody }>('/v1/account/username',
+    { preHandler: deps.authenticate, bodyLimit: 4 * 1024 }, async request => {
+      const userId = deps.userId(request);
+      await deps.limit('account-credentials', userId, 10);
+      await changeUsername(deps.transaction, userId,
+        { username: request.body?.username, currentPassword: request.body?.currentPassword });
+      return { loginMethods: await loginMethods(deps.db, userId) };
     });
 
   app.post<{ Body: CredentialBody }>('/v1/account/recovery-codes',

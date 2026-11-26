@@ -149,6 +149,13 @@ export class AccountCommerceApi {
     return AccountCommerceApi.normalizeCredentialResponse(JSON.parse(value) as AccountCredentialResponse);
   }
 
+  static async changeUsername(username: string, currentPassword: string,
+    sessionToken: string): Promise<AccountCredentialResponse> {
+    const value = await AccountCommerceApi.request('/v1/account/username', 'POST',
+      JSON.stringify({ username: username, currentPassword: currentPassword }), sessionToken);
+    return AccountCommerceApi.normalizeCredentialResponse(JSON.parse(value) as AccountCredentialResponse);
+  }
+
   static async regenerateRecoveryCodes(currentPassword: string,
     sessionToken: string): Promise<AccountCredentialResponse> {
     const value = await AccountCommerceApi.request('/v1/account/recovery-codes', 'POST',
@@ -442,6 +449,8 @@ export class AccountCommerceApi {
     result.recoveryCodesRemaining = Math.max(0, Math.floor(Number(raw?.recoveryCodesRemaining) || 0));
     const deletion = Number(raw?.deletionRequestedAt);
     result.deletionRequestedAt = Number.isFinite(deletion) && deletion > 0 ? deletion : null;
+    const nextChange = Number(raw?.usernameChangeAvailableAt);
+    result.usernameChangeAvailableAt = Number.isFinite(nextChange) && nextChange > 0 ? nextChange : 0;
     return result;
   }
 
