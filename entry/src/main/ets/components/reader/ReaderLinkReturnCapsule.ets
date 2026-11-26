@@ -75,10 +75,11 @@ export struct ReaderLinkReturnCapsule {
 
       Row({ space: 3 }) {
         ForEach([0, 1, 2], (index: number) => {
-          Circle()
+          Column()
             .width(5)
             .height(5)
-            .fill(this.subTextColor)
+            .borderRadius(2.5)
+            .backgroundColor(this.subTextColor)
             .opacity(index < this.turns ? 0.18 : 0.75)
         }, (index: number): string => `${index}`)
       }

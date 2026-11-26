@@ -131,6 +131,7 @@ import {
   ReaderV2CommentDisplay,
   ReaderV2DocumentParser,
   ReaderV2HeadingHint,
+  ReaderV2ImageRef,
   ReaderV2SpeechText
 } from '../core/reader/ReaderV2Document';
 import {
@@ -181,6 +182,9 @@ import { ReaderCustomThemeEditor } from '../components/reader/ReaderCustomThemeE
 import { ReaderTtsCapsule } from '../components/reader/ReaderTtsControls';
 import { ReaderTtsHoldCapsule } from '../components/reader/ReaderTtsHoldCapsule';
 import { ReaderLinkReturnCapsule } from '../components/reader/ReaderLinkReturnCapsule';
+import { ReaderImageViewer } from '../components/reader/ReaderImageViewer';
+import { ReaderImageViewerSpec } from '../core/reader/ReaderImageViewerSpec';
+import { ReaderComicImageExport } from '../core/reader/ReaderComicImageExport';
 import { TtsTurnFollow } from '../utils/TtsTurnFollow';
 import { ReaderAutoScrollCapsule, ReaderAutoScrollSpeedPanel } from '../components/reader/ReaderAutoScrollControls';
 import { ReaderAutoScrollClock } from '../core/reader/ReaderAutoScrollClock';
@@ -342,6 +346,8 @@ const READER_ANNOTATE_NOTE_MENU_ITEM_ID: string = 'reader_annotate_note';
 const READER_EXCERPT_MENU_ITEM_ID: string = 'reader_excerpt';
 // 点按命中划线时借用书源按钮的触摸认领通道，标记以此开头。
 const READER_ANNOTATION_MARKER_PREFIX: string = 'reader-annotation:';
+/** 点中正文插图：后面跟着 ReaderImageViewerSpec 的编码（图片地址与它在窗口里画出的位置）。 */
+const READER_IMAGE_MARKER_PREFIX: string = 'reader-image:';
 
 /** 一章的划线在该章当前文本里的位置；文本或划线数据变了就重算。 */
 /** 镜像阅读页翻页后让后台朗读页换到的位置；连续翻页时只保留最后一次。 */
@@ -684,6 +690,8 @@ struct ReadBookPage {
   private readerLinkJumpSerial: number = 0;
   private readerLinkJumping: boolean = false;
   private readerLinkFlashTimer: number = -1;
+  /** 正在全屏查看的插图；null 为没有打开。 */
+  @State readerImageViewer: ReaderImageViewerSpec | null = null;
   private readerSearchReturnOffset: number = -1;
   private readerSearchResultQuery: string = '';
   private readerSearchHighlightChapter: number = -1;
@@ -1701,6 +1709,10 @@ struct ReadBookPage {
 
   onBackPress(): boolean {
     if (!this.readerFormatResolved || this.readerPdfDispatched) return false;
+    if (this.readerImageViewer) {
+      this.readerImageViewer = null;
+      return true;
+    }
     if (this.keyboardDialogSession.isOpen()) {
       this.closeReaderKeyboardCapture();
       return true;
@@ -4511,6 +4523,10 @@ struct ReadBookPage {
         this.readerTtsHoldCapsule()
       } else if (this.shouldShowReaderLinkReturnCapsule()) {
         this.readerLinkReturnCapsule()
+      }
+
+      if (this.readerImageViewer) {
+        this.readerImageViewerLayer(this.readerImageViewer)
       }
 
       Column().width(1).height(1).position({ x: 0, y: 0 }).hitTestBehavior(HitTestMode.None)
@@ -20009,6 +20025,12 @@ ${leading}` : leading;
       return;
     }
     const now = Date.now();
+    if (marker.startsWith(READER_IMAGE_MARKER_PREFIX)) {
+      if (now - this.readerSourceActionOpenedAt < 500 || this.readerImageViewer) return;
+      this.readerSourceActionOpenedAt = now;
+      this.readerImageViewer = ReaderImageViewerSpec.decode(marker.substring(READER_IMAGE_MARKER_PREFIX.length));
+      return;
+    }
     if (now - this.readerSourceActionOpenedAt < 500) return;
     const action: ReaderActionData | null = ReaderActionMarker.parse(marker);
     if (action && EpubNoteLink.isNote(action.url)) {
@@ -23078,7 +23100,96 @@ ${leading}` : leading;
     const hit: ReaderV2TapResult = ReaderV2GestureRouter.hitTest(page, snapshot, xPx, yPx);
     if (hit.kind === 'action') return hit.marker;
     const annotationId = page ? ReaderV2AnnotationPainter.hitTest(page, xPx, yPx, this.toMeasurePx(10)) : 0;
-    return annotationId > 0 ? `${READER_ANNOTATION_MARKER_PREFIX}${annotationId}` : '';
+    if (annotationId > 0) return `${READER_ANNOTATION_MARKER_PREFIX}${annotationId}`;
+    // 页面在窗口里的原点：点按的窗口坐标减去它在页面里的坐标。
+    return this.readerV2ImageMarkerAt(page, this.readerV2Document(this.currentChapterIndex, this.pagedContentText),
+      xPx, yPx,
+      this.readerTapLayerGlobalX + xVp - px2vp(xPx),
+      this.readerTapLayerGlobalY + this.readerV2SurfaceTopOffset() + yVp - px2vp(yPx));
+  }
+
+  /**
+   * 点中的是不是正文插图：是的话返回打开查看器用的标记。整页插图只有点中间那一列才算，点两侧照常翻页。
+   * originX / originY 是页面左上角在窗口里的位置（vp）。
+   */
+  readerV2ImageMarkerAt(page: ReaderV2PageLayout | null, document: ReaderV2Document | null | undefined, xPx: number,
+    yPx: number, originX: number, originY: number): string {
+    if (!page || this.isReaderComicModeActive()) return '';
+    const fragment = page.fragments.find((item: ReaderV2PageFragment): boolean =>
+      !!item.imageSource && item.imageRect.contains(xPx, yPx, 0, 0));
+    if (!fragment || this.readerV2BrokenImageSources.includes(fragment.imageSource)) return '';
+    const uri = this.readerImageUriForSource(fragment.imageSource);
+    if (!uri) return '';
+    const rect = fragment.imageRect;
+    const ref = document ? document.images.find((image: ReaderV2ImageRef): boolean =>
+      image.source === fragment.imageSource) : undefined;
+    const drawn = ReaderImageViewerSpec.containRect(rect.left, rect.top, rect.width(), rect.height(),
+      ref ? ref.width : 0, ref ? ref.height : 0);
+    if (px2vp(drawn[2]) < 48 && px2vp(drawn[3]) < 48) return '';
+    const content = page.contentRect;
+    if (content.height() > 0 && rect.height() >= content.height() * 0.6) {
+      const third = content.width() / 3;
+      if (xPx < content.left + third || xPx > content.right - third) return '';
+    }
+    const spec = new ReaderImageViewerSpec();
+    spec.source = fragment.imageSource;
+    spec.uri = uri;
+    spec.x = originX + px2vp(drawn[0]);
+    spec.y = originY + px2vp(drawn[1]);
+    spec.width = px2vp(drawn[2]);
+    spec.height = px2vp(drawn[3]);
+    spec.naturalWidth = ref ? ref.width : 0;
+    spec.naturalHeight = ref ? ref.height : 0;
+    return `${READER_IMAGE_MARKER_PREFIX}${spec.encode()}`;
+  }
+
+  saveReaderViewerImage(): void {
+    const spec = this.readerImageViewer;
+    if (!spec) return;
+    ReaderComicImageExport.saveToAlbum(getContext(this) as common.UIAbilityContext, spec.source)
+      .then((saved: boolean): void => {
+        if (saved) HdsFeedback.showToast('已保存到相册');
+      }).catch((error: Error): void => {
+        HdsFeedback.showToast(`保存失败：${error.message || '未知错误'}`);
+      });
+  }
+
+  shareReaderViewerImage(): void {
+    const spec = this.readerImageViewer;
+    if (!spec) return;
+    ReaderComicImageExport.share(getContext(this) as common.UIAbilityContext, spec.source)
+      .catch((error: Error): void => {
+        HdsFeedback.showToast(`分享失败：${error.message || '未知错误'}`);
+      });
+  }
+
+  @Builder
+  readerImageViewerLayer(spec: ReaderImageViewerSpec) {
+    ReaderImageViewer({
+      src: spec.uri,
+      caption: spec.caption,
+      fromX: spec.x,
+      fromY: spec.y,
+      fromWidth: spec.width,
+      fromHeight: spec.height,
+      naturalWidth: spec.naturalWidth,
+      naturalHeight: spec.naturalHeight,
+      viewWidth: this.pageViewWidth > 0 ? this.pageViewWidth : 360,
+      viewHeight: this.pageViewHeight > 0 ? this.pageViewHeight : 720,
+      topInset: this.statusBarSafeHeight,
+      bottomInset: this.navBarHeight,
+      darkMode: this.isReaderThemeDark(),
+      panelColor: this.readerPanelColor(),
+      textColor: this.readerPanelTextColor(),
+      dividerColor: this.readerPanelBorderColor(),
+      onSave: () => { this.saveReaderViewerImage(); },
+      onShare: () => { this.shareReaderViewerImage(); },
+      // 不能按对象比较：@State 里存的是代理，与传进来的 spec 不相等，比较失败会留下一层透明的查看器挡住翻页。
+      onClose: () => { this.readerImageViewer = null; }
+    })
+      .position({ x: 0, y: 0 })
+      .width('100%')
+      .height('100%')
   }
 
   readerV2LocatedPagePoint(xVp: number, yVp: number): number[] {
@@ -24091,7 +24202,9 @@ ${leading}` : leading;
       this.toMeasurePx(this.readerSourceActionHitSlopY));
     if (action) return action.marker;
     const annotationId = ReaderV2AnnotationPainter.hitTest(layout, located[1], located[2], this.toMeasurePx(10));
-    return annotationId > 0 ? `${READER_ANNOTATION_MARKER_PREFIX}${annotationId}` : '';
+    if (annotationId > 0) return `${READER_ANNOTATION_MARKER_PREFIX}${annotationId}`;
+    return this.readerV2ImageMarkerAt(layout, this.readerContinuousV2Documents.get(layout.identity), located[1],
+      located[2], globalX - px2vp(located[1]), globalY - px2vp(located[2]));
   }
 
   selectReaderContinuousV2TextAtPoint(globalX: number, globalY: number, serial: number, attempt: number): void {

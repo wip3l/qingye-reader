@@ -103,7 +103,7 @@ export class EpubOriginalScript {
    */
   static readonly SPREAD_MEDIA: string = '(min-aspect-ratio: 1001/1000), (min-width: 600px) and (min-aspect-ratio: 4/5)';
   static readonly HOST_METHODS: string[] = ['ready', 'position', 'tap', 'link', 'edge', 'stepped', 'gallery',
-    'media', 'annotation'];
+    'media', 'annotation', 'image'];
   /** 朗读高亮的底色：浅色页面正片叠底、深色页面滤色，字的颜色不受影响。 */
   static ttsMarkColor(accent: string, dark: boolean): string {
     const match = /^#(?:([0-9a-fA-F]{2}))?([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/.exec(accent || '');
@@ -1259,6 +1259,25 @@ export class EpubOriginalScript {
       e.preventDefault();
       if (host) host.link(a.href, isNote(a) ? 1 : 0, e.clientX, e.clientY);
       return;
+    }
+    // 点插图打开查看器；整页插图只有点中间那一列才算，点两侧照常翻页。
+    var pic = e.target && e.target.closest ? e.target.closest('img, image') : null;
+    if (pic && host && host.image) {
+      var box = pic.getBoundingClientRect();
+      var third = window.innerWidth / 3;
+      var whole = box.height >= window.innerHeight * 0.6;
+      var src = pic.tagName.toLowerCase() === 'img' ? (pic.currentSrc || pic.src) :
+        (pic.getAttribute('href') || pic.getAttribute('xlink:href') || '');
+      if (src && (box.width >= 48 || box.height >= 48) &&
+        (!whole || (e.clientX >= third && e.clientX <= window.innerWidth - third))) {
+        e.preventDefault();
+        var figure = pic.closest('figure');
+        var caption = figure && figure.querySelector('figcaption') ? figure.querySelector('figcaption').textContent : '';
+        host.image(new URL(src, document.baseURI).href, JSON.stringify({ x: box.left, y: box.top, w: box.width,
+          h: box.height, nw: pic.naturalWidth || 0, nh: pic.naturalHeight || 0,
+          c: (caption || pic.getAttribute('alt') || '').replace(/\s+/g, ' ').trim().slice(0, 80) }));
+        return;
+      }
     }
     var current = window.getSelection ? window.getSelection() : null;
     if (current && !current.isCollapsed) return;

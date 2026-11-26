@@ -101,6 +101,10 @@ import { systemBarContentColor } from '../platform/SystemInsets';
 import { TtsTurnFollow } from '../utils/TtsTurnFollow';
 import { ReaderTtsHoldCapsule } from '../components/reader/ReaderTtsHoldCapsule';
 import { ReaderLinkReturnCapsule } from '../components/reader/ReaderLinkReturnCapsule';
+import { ReaderImageViewer } from '../components/reader/ReaderImageViewer';
+import { ReaderImageViewerSpec } from '../core/reader/ReaderImageViewerSpec';
+import { ReaderComicImageExport } from '../core/reader/ReaderComicImageExport';
+import { fileUri } from '../platform/FileUri';
 
 /** 本书的文件排版设置与位置（书籍变量）。 */
 const SCROLL_KEY = 'epubOriginalScroll';
@@ -206,6 +210,8 @@ class EpubAnnotationBounds {
 class EpubOriginalBridge {
   /** 点到网页里画的划线（见 EpubOriginalScript 的 annoAt）。 */
   onAnnotation: (id: number, bounds: string) => void = (_id: number, _bounds: string): void => {};
+  /** 点了插图：图片地址与它在网页视口里的位置、原图尺寸、图注（JSON）。 */
+  onImage: (src: string, json: string) => void = (_src: string, _json: string): void => {};
   onReady: (count: number, page: number) => void;
   onPosition: (json: string) => void;
   onTap: (x: number, y: number) => void;
@@ -250,6 +256,10 @@ class EpubOriginalBridge {
 
   tap(x: number, y: number): void {
     setTimeout((): void => this.onTap(Number(x), Number(y)), 0);
+  }
+
+  image(src: string, json: string): void {
+    setTimeout((): void => this.onImage(`${src}`, `${json}`), 0);
   }
 
   annotation(id: number, bounds: string): void {
@@ -493,6 +503,8 @@ struct EpubOriginalReadBookPage {
   private linkReturnKey: string = '';
   private linkReturnSettleUntil: number = 0;
   private linkJumpSerial: number = 0;
+  /** 正在全屏查看的插图；null 为没有打开。 */
+  @State imageViewer: ReaderImageViewerSpec | null = null;
   private readyTimer: number = -1;
   /** 上次收起或唤出菜单的时间：网页回报的点按晚一拍到达，紧跟在菜单切换之后的那一下不再重复切换。 */
   private menuToggledAt: number = 0;
@@ -758,6 +770,10 @@ struct EpubOriginalReadBookPage {
   }
 
   onBackPress(): boolean {
+    if (this.imageViewer) {
+      this.imageViewer = null;
+      return true;
+    }
     if (this.annotationMode) {
       this.closeAnnotationLayer();
       return true;
@@ -1838,6 +1854,9 @@ struct EpubOriginalReadBookPage {
       (src: string, title: string): void => { if (id === this.frontSlot) this.onMedia(src, title); }));
     slot.bridge.onAnnotation = (annotationId: number, bounds: string): void => {
       if (id === this.frontSlot) this.openAnnotationById(annotationId, bounds);
+    };
+    slot.bridge.onImage = (src: string, json: string): void => {
+      if (id === this.frontSlot) this.openImageViewer(src, json);
     };
     return slot;
   }
@@ -3334,6 +3353,79 @@ struct EpubOriginalReadBookPage {
     this.linkReturnKey = '';
   }
 
+  // ---- 插图查看 ----
+
+  /** 网页里点了插图：地址换成解压目录里的文件，位置换成窗口坐标，打开查看器。 */
+  private openImageViewer(src: string, json: string): void {
+    if (this.imageViewer || this.menuVisible || this.annotationMode || !this.extractRoot) return;
+    const path = EpubOriginalDocument.pathOf(src);
+    const absolute = path ? `${this.extractRoot}/${path}` : '';
+    if (!absolute || !LocalBookService.exists(absolute)) return;
+    let report: Record<string, Object> = {};
+    try {
+      report = JSON.parse(json) as Record<string, Object>;
+    } catch (_) {
+    }
+    const spec = new ReaderImageViewerSpec();
+    spec.source = absolute;
+    spec.uri = fileUri.getUriFromPath(absolute);
+    spec.caption = String(report['c'] ?? '');
+    spec.x = Number(report['x']) || 0;
+    spec.y = (Number(report['y']) || 0) + this.webInsetTop();
+    spec.width = Number(report['w']) || 0;
+    spec.height = Number(report['h']) || 0;
+    spec.naturalWidth = Number(report['nw']) || 0;
+    spec.naturalHeight = Number(report['nh']) || 0;
+    const drawn = ReaderImageViewerSpec.containRect(spec.x, spec.y, spec.width, spec.height, spec.naturalWidth,
+      spec.naturalHeight);
+    spec.x = drawn[0];
+    spec.y = drawn[1];
+    spec.width = drawn[2];
+    spec.height = drawn[3];
+    this.imageViewer = spec;
+  }
+
+  @Builder
+  imageViewerLayer(spec: ReaderImageViewerSpec) {
+    ReaderImageViewer({
+      src: spec.uri,
+      caption: spec.caption,
+      fromX: spec.x,
+      fromY: spec.y,
+      fromWidth: spec.width,
+      fromHeight: spec.height,
+      naturalWidth: spec.naturalWidth,
+      naturalHeight: spec.naturalHeight,
+      viewWidth: this.viewWidth,
+      viewHeight: this.viewHeight,
+      topInset: this.statusBarHeight,
+      bottomInset: this.navBarHeight,
+      darkMode: this.darkMode,
+      panelColor: this.solidPanelColor(),
+      textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+      dividerColor: this.darkMode ? '#26FFFFFF' : '#14000000',
+      onSave: (): void => {
+        ReaderComicImageExport.saveToAlbum(this.getUIContext().getHostContext() as common.UIAbilityContext,
+          spec.source).then((saved: boolean): void => {
+          if (saved) HdsFeedback.showToast('已保存到相册');
+        }).catch((error: Error): void => {
+          HdsFeedback.showToast(`保存失败：${error.message || '未知错误'}`);
+        });
+      },
+      onShare: (): void => {
+        ReaderComicImageExport.share(this.getUIContext().getHostContext() as common.UIAbilityContext, spec.source)
+          .catch((error: Error): void => {
+            HdsFeedback.showToast(`分享失败：${error.message || '未知错误'}`);
+          });
+      },
+      // 不能按对象比较：@State 里存的是代理，与传进来的 spec 不相等，比较失败会留下一层透明的查看器挡住翻页。
+      onClose: (): void => { this.imageViewer = null; }
+    })
+      .position({ x: 0, y: 0 })
+      .width('100%')
+      .height('100%')
+  }
+
   private shouldShowLinkReturnCapsule(): boolean {
     return this.linkReturnVisible && this.linkReturnChapter >= 0 && this.ready && !this.menuVisible &&
       !this.showTtsPanel && !this.annotationMode && !this.shouldShowTtsHoldCapsule();
@@ -4727,6 +4819,10 @@ struct EpubOriginalReadBookPage {
         this.ttsHoldCapsule()
       } else if (this.shouldShowLinkReturnCapsule()) {
         this.linkReturnCapsule()
+      }
+
+      if (this.imageViewer) {
+        this.imageViewerLayer(this.imageViewer)
       }
 
       if (this.showTtsPanel) {
