@@ -72,7 +72,7 @@ test('font manager reports failed registration as failure instead of returning t
 });
 
 test('reader body/title/rule selection rejects bad fonts and filters missing local files', () => {
-  const { page, state } = pageFixture('ReaderFontSettings', ['registerCustomFont', 'modeAndFamilyByIndex', 'customFonts']);
+  const { page, state } = pageFixture('ReaderFontSettings', ['registerCustomFont', 'modeAndFamilyByIndex', 'customFonts', 'parseCustomFonts']);
   page.readerCustomFontsRaw = JSON.stringify({ fonts: [
     { familyName: 'A', filePath: '/a.ttf', sourceName: 'A' },
     { familyName: 'missing', filePath: '/missing.ttf', sourceName: '已删除' }

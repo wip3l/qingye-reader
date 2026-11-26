@@ -427,9 +427,21 @@ struct CustomFontManagerPage {
     HdsFeedback.showToast('已删除字体');
   }
 
+  /**
+   * 打开管理页时只把文件名迁成 ASCII、更新族名；真正注册（整个字体读进内存）只做正在用的那款。
+   * 以前每次打开都注册全部字体，导入字体多时内存涨到几 GB 被系统结束。
+   */
   registerCustomFonts(): void {
     for (const item of this.customFonts) {
-      this.registerCustomFont(item);
+      if (!item.filePath) {
+        continue;
+      }
+      if (this.readerFontFilePath === item.filePath || this.readerFontFamily === item.familyName) {
+        this.registerCustomFont(item);
+        continue;
+      }
+      item.filePath = ReaderFontHelper.ensureAsciiFontPath(item.filePath);
+      item.familyName = this.familyNameForPath(item.filePath);
     }
   }
 

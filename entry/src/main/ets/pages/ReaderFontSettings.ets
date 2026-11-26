@@ -112,6 +112,9 @@ export struct ReaderFontSettingsEditor {
   private titlePreviewHeight: number = 0;
   @State titlePreviewFrozenHeight: number = 0;
   private customFontPreviewFamilies: Map<string, string> = new Map<string, string>();
+  // customFonts() 每次都要解析 JSON 并逐个检查文件，列表每一行会调好几次；按原始串缓存，字体多时不再拖住主线程。
+  private customFontsCacheRaw: string = '';
+  private customFontsCache: ReaderCustomFontItem[] = [];
   onStylePreviewChanged: (settings: ReaderSettings) => void = (_settings: ReaderSettings): void => {};
   onCloseReady: (close: () => void) => void = (_close: () => void): void => {};
   onShownReady: (show: () => void) => void = (_show: () => void): void => {};
@@ -412,7 +415,7 @@ export struct ReaderFontSettingsEditor {
     const key = font.filePath || font.familyName;
     let family = this.customFontPreviewFamilies.get(key);
     if (family === undefined) {
-      family = this.registerCustomFont(font);
+      family = this.registerCustomFont(font, false);
       this.customFontPreviewFamilies.set(key, family);
     }
     return family || this.applicationFontFamily;
@@ -1031,6 +1034,15 @@ export struct ReaderFontSettingsEditor {
     if (!raw) {
       return [];
     }
+    if (raw === this.customFontsCacheRaw) {
+      return this.customFontsCache;
+    }
+    this.customFontsCache = this.parseCustomFonts(raw);
+    this.customFontsCacheRaw = raw;
+    return this.customFontsCache;
+  }
+
+  parseCustomFonts(raw: string): ReaderCustomFontItem[] {
     try {
       const parsed = JSON.parse(raw) as ReaderCustomFontData | ReaderCustomFontItem[];
       const source = Array.isArray(parsed) ? parsed as ReaderCustomFontItem[] : ((parsed as ReaderCustomFontData).fonts || []);
@@ -1071,7 +1083,8 @@ export struct ReaderFontSettingsEditor {
     return ['global', ''];
   }
 
-  registerCustomFont(font: ReaderCustomFontItem): string {
+  /** withGraphicsText 为 false 时只供界面显示（列表预览），不加载给阅读页排版。 */
+  registerCustomFont(font: ReaderCustomFontItem, withGraphicsText: boolean = true): string {
     if (!font || !font.filePath) {
       return '';
     }
@@ -1079,7 +1092,7 @@ export struct ReaderFontSettingsEditor {
     item.familyName = font.familyName || ReaderFontHelper.normalizeFontFamily(font.filePath);
     item.filePath = font.filePath;
     item.sourceName = ReaderFontHelper.resolveDisplayName(font.sourceName, font.filePath);
-    const result = ReaderFontHelper.registerFont(this.getUIContext(), item);
+    const result = ReaderFontHelper.registerFont(this.getUIContext(), item, withGraphicsText);
     return result.registered ? result.familyName : '';
   }
 

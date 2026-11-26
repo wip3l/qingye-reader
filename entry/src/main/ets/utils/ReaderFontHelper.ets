@@ -35,8 +35,23 @@ class ReaderFontNameRecord {
   displayName: string = '';
 }
 
+/** 一个字体在 ArkUI 里的注册情况。ArkUI 注册没有卸载接口，重复注册会再读一遍整个字体文件。 */
+class ReaderArkUiFontRecord {
+  filePath: string = '';
+  /** 文件大小与修改时间：同一路径换了文件才重新注册。 */
+  stamp: string = '';
+  contexts: UIContext[] = [];
+  arkUiSource: string = '';
+  legacySource: string = '';
+}
+
 export class ReaderFontHelper {
   private static registeredGraphicsFonts: ReaderGraphicsFontRecord[] = [];
+  /**
+   * 进程内 ArkUI 字体注册记账（按族名）。字体设置页、主题排版页会在列表每一行、每次重绘时调 registerFont，
+   * 不记账时每个入口、每次打开都把所有字体重新读进内存，导入字体多的用户几分钟就涨到 4 GB 被系统结束。
+   */
+  private static arkUiFonts: Map<string, ReaderArkUiFontRecord> = new Map<string, ReaderArkUiFontRecord>();
   private static fontNameCache: ReaderFontNameRecord[] = [];
   static normalizeFontFamily(filePath: string): string {
     return ReaderFontHelper.stableFontFamily(filePath);
@@ -55,7 +70,12 @@ export class ReaderFontHelper {
     return ReaderFontHelper.stableFontFamily(filePath);
   }
 
-  static registerFont(uiContext: UIContext | null, item: ReaderFontItem): ReaderFontRegisterResult {
+  /**
+   * 注册给界面（ArkUI）用，withGraphicsText 为 true 时再加载给阅读页排版引擎（graphics.text）。
+   * 只在列表里用字体本身显示名字时传 false：graphics.text 会把整个字体再拷一份进共享内存。
+   */
+  static registerFont(uiContext: UIContext | null, item: ReaderFontItem,
+    withGraphicsText: boolean = true): ReaderFontRegisterResult {
     const result = new ReaderFontRegisterResult();
     if (!item || !item.filePath || !ReaderFontHelper.fontFileExists(item.filePath)) {
       return result;
@@ -65,9 +85,26 @@ export class ReaderFontHelper {
     result.familyName = ReaderFontHelper.runtimeFontFamily(preparedPath);
     const errors: string[] = [];
 
+    const stamp = ReaderFontHelper.fileStamp(preparedPath);
+    let record = ReaderFontHelper.arkUiFonts.get(result.familyName);
+    if (!record || record.filePath !== preparedPath || record.stamp !== stamp) {
+      record = new ReaderArkUiFontRecord();
+      record.filePath = preparedPath;
+      record.stamp = stamp;
+      ReaderFontHelper.arkUiFonts.set(result.familyName, record);
+    }
+    if (uiContext && record.contexts.indexOf(uiContext) >= 0) {
+      result.arkUiRegistered = true;
+      result.arkUiSource = record.arkUiSource;
+    }
+    if (record.legacySource) {
+      result.legacyRegistered = true;
+      result.legacySource = record.legacySource;
+    }
+
     const sources = ReaderFontHelper.fontSources(preparedPath);
     for (const familySrc of sources) {
-      if (uiContext) {
+      if (uiContext && !result.arkUiRegistered) {
         try {
           uiContext.getFont().registerFont({
             familyName: result.familyName,
@@ -75,6 +112,8 @@ export class ReaderFontHelper {
           });
           result.arkUiRegistered = true;
           result.arkUiSource = familySrc;
+          record.contexts.push(uiContext);
+          record.arkUiSource = familySrc;
           console.info(`当前 UIContext 注册阅读字体成功: ${result.familyName}, ${familySrc}`);
           break;
         } catch (e) {
@@ -85,6 +124,9 @@ export class ReaderFontHelper {
     }
 
     for (const familySrc of sources) {
+      if (result.legacyRegistered) {
+        break;
+      }
       try {
         font.registerFont({
           familyName: result.familyName,
@@ -92,6 +134,7 @@ export class ReaderFontHelper {
         });
         result.legacyRegistered = true;
         result.legacySource = familySrc;
+        record.legacySource = familySrc;
         console.info(`全局注册阅读字体成功: ${result.familyName}, ${familySrc}`);
         break;
       } catch (e) {
@@ -99,7 +142,9 @@ export class ReaderFontHelper {
         console.warn(`全局注册阅读字体失败: ${familySrc}`, e);
       }
     }
-    result.graphicsTextRegistered = ReaderFontHelper.registerGraphicsTextFont(result.familyName, preparedPath, result);
+    if (withGraphicsText) {
+      result.graphicsTextRegistered = ReaderFontHelper.registerGraphicsTextFont(result.familyName, preparedPath, result);
+    }
     result.registered = result.arkUiRegistered;
     result.errorSummary = errors.join(' | ');
     return result;
@@ -265,6 +310,15 @@ export class ReaderFontHelper {
       }
     }
     result.push(value);
+  }
+
+  private static fileStamp(path: string): string {
+    try {
+      const stat = fs.statSync(path);
+      return `${stat.size}:${stat.mtime}`;
+    } catch (e) {
+      return '';
+    }
   }
 
   static fontFileExists(path: string): boolean {
