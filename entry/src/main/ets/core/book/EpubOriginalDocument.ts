@@ -137,6 +137,27 @@ export class EpubOriginalDocument {
       `<script>${injection.script}</script></body></html>`;
   }
 
+  /**
+   * 固定版式章节（见 EpubFixedLayout）：每个文件是一页，整份原样放进一个 iframe（srcdoc，与外层同源，
+   * 脚本能找到页里的链接和插图）。地址同样改写成虚拟站点地址、去掉书里的脚本；页里的文字不能选
+   * （划线、朗读在固定版式页里先不支持）。iframe 的大小与位置由脚本排。
+   */
+  static buildFixed(pieces: EpubOriginalPiece[], injection: EpubOriginalInjection, title: string): string {
+    const guard = '<style>html,body{-webkit-user-select:none;user-select:none;overflow:hidden;}</style>';
+    const frames = pieces.map((piece: EpubOriginalPiece): string => {
+      const source = piece.html.replace(/^\uFEFF/, '');
+      const page = EpubOriginalDocument.rewrite(source, EpubOriginalDocument.directoryOf(piece.path), piece.path);
+      const guarded = /<\/head\s*>/i.test(page) ? page.replace(/<\/head\s*>/i, `${guard}</head>`) : `${guard}${page}`;
+      return `<iframe class="legado-fxl-page" data-legado-file="${EpubOriginalDocument.escapeAttribute(piece.path)}" ` +
+        `scrolling="no" tabindex="-1" srcdoc="${EpubOriginalDocument.escapeAttribute(guarded)}"></iframe>`;
+    });
+    return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">' +
+      `<title>${EpubOriginalDocument.escapeText(title)}</title>` +
+      `<style id="legado-layout">${injection.style}</style></head>` +
+      `<body><div id="legado-fxl">${frames.join('')}</div><script>${injection.script}</script></body></html>`;
+  }
+
   /** 头部只留样式：样式表链接与 <style>，地址改成绝对的。 */
   private static headOf(source: string, baseDir: string, filePath: string): string {
     const head = /<head\b[^>]*>([\s\S]*?)<\/head\s*>/i.exec(source);

@@ -2300,6 +2300,7 @@ struct ReadBookPage {
       this.readerTodayReadMs = -1;
       if (this.readerChapterEndEnabled) this.refreshReaderTodayRead();
       this.prewarmReaderWordSegment();
+      this.maybeShowFixedLayoutTip();
       if (loadSerial !== this.bookLoadSerial) {
         return;
       }
@@ -22939,6 +22940,19 @@ ${leading}` : leading;
     }).catch((error: Error): void => {
       console.info('长按分词不可用，保持选中一个字:', error?.message || '');
     });
+  }
+
+  /**
+   * 固定版式 EPUB（文件排版认出来后记在书的变量里）在应用排版里只是提取出的文字：提示一次用文件排版看原样。
+   */
+  maybeShowFixedLayoutTip(): void {
+    const book = this.book;
+    if (!book || book.getVariable('epubFixedLayout') !== '1' || book.getVariable('epubFixedLayoutTip') === '1') return;
+    book.putVariable('epubFixedLayoutTip', '1');
+    AppDatabase.getInstance().updateBook(book, false, 'epub_fixed_layout_tip').catch((error: Error): void => {
+      console.warn('保存固定版式提示状态失败:', error);
+    });
+    HdsFeedback.showToast('这本书是固定版式，切到“文件排版”能看到原样');
   }
 
   /** 进阅读页时空闲预热一次分词引擎，第一次长按不用等它启动。 */

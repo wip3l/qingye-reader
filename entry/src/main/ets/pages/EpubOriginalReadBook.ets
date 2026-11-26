@@ -24,7 +24,7 @@ import { EpubDuokanExtensions, EpubDuokanPackage } from '../core/book/EpubDuokan
 import { util } from '@kit.ArkTS';
 import { EpubOriginalPosition, EpubOriginalSpot } from '../core/book/EpubOriginalPosition';
 import {
-  EpubOriginalLayoutOptions, EpubOriginalMargins, EpubOriginalScript, EpubOriginalTarget
+  EpubFixedScriptConfig, EpubOriginalLayoutOptions, EpubOriginalMargins, EpubOriginalScript, EpubOriginalTarget
 } from '../core/book/EpubOriginalScript';
 import { ReaderImageMarker } from '../core/book/ReaderImageMarker';
 import { ReaderNoteContent } from '../components/reader/ReaderNoteContent';
@@ -105,6 +105,7 @@ import { ReaderImageViewer } from '../components/reader/ReaderImageViewer';
 import { ReaderImageViewerSpec } from '../core/reader/ReaderImageViewerSpec';
 import { ReaderComicImageExport } from '../core/reader/ReaderComicImageExport';
 import { fileUri } from '../platform/FileUri';
+import { EpubFixedLayout, EpubFixedPackage, EpubFixedView } from '../core/book/EpubFixedLayout';
 
 /** 本书的文件排版设置与位置（书籍变量）。 */
 const SCROLL_KEY = 'epubOriginalScroll';
@@ -114,6 +115,8 @@ const READER_FONT_KEY = 'epubOriginalReaderFont';
 const READER_FONT_SCOPE_KEY = 'epubOriginalFontScope';
 const DEFAULT_TAP_ZONES: number[] = [3, 3, 2, 3, 1, 2, 2, 2, 2];
 const POSITION_KEY = 'epubOriginalPosition';
+/** 书的变量：文件排版认出这本书是固定版式（应用排版据此提示一次）。 */
+const FIXED_LAYOUT_KEY = 'epubFixedLayout';
 /** 与普通阅读器共用的章内字符偏移（见 ReadBook 的 READER_PROGRESS_OFFSET_KEY）。 */
 const NATIVE_OFFSET_KEY = 'readProgressCharOffsetV2';
 const NATIVE_OFFSET_CHAPTER_KEY = 'readProgressCharOffsetChapterV2';
@@ -489,6 +492,8 @@ struct EpubOriginalReadBookPage {
   private extractRoot: string = '';
   /** OPF 里的多看扩展：全屏页与“~slim”图。 */
   private duokan: EpubDuokanPackage = new EpubDuokanPackage();
+  /** 固定版式（pre-paginated）声明；整本都不是时 fixed 为 false。 */
+  private fixedPackage: EpubFixedPackage = new EpubFixedPackage();
   private chapters: BookChapter[] = [];
   private documents: Map<string, string> = new Map<string, string>();
   private nativeTexts: Map<number, string> = new Map<number, string>();
@@ -850,6 +855,13 @@ struct EpubOriginalReadBookPage {
       this.chapters = await appDb.getBookChapters(this.bookUrl);
       this.duokan = await this.readDuokanPackage();
       if (!this.alive) return;
+      if (this.fixedPackage.fixed && book.getVariable(FIXED_LAYOUT_KEY) !== '1') {
+        // 记下来：切到应用排版时提示一次“这本书是固定版式”。
+        book.putVariable(FIXED_LAYOUT_KEY, '1');
+        appDb.updateBook(book, false, 'epub_fixed_layout').catch((error: Error): void => {
+          console.warn('[EpubOriginal] save fixed layout flag failed:', error);
+        });
+      }
       if (this.chapters.length === 0) throw new Error('这本书没有可阅读的章节');
       this.book = book;
       this.title = book.name || '文件排版';
@@ -1038,7 +1050,7 @@ struct EpubOriginalReadBookPage {
   private turnByKey(direction: number): void {
     this.refreshScreenTimeout();
     if (this.paged) {
-      this.turnController.turn(direction > 0 ? 1 : -1);
+      this.turnController.turn(this.screenDirection(direction > 0 ? 1 : -1));
     } else {
       ReaderHaptics.pageTurned(ReaderInputKind.NOVEL, false);
       this.run(`__legado.screen(${direction > 0 ? 1 : -1})`);
@@ -1882,6 +1894,7 @@ struct EpubOriginalReadBookPage {
       const opfPath = EpubDuokanExtensions.opfPath(container);
       if (!opfPath || !LocalBookService.exists(`${this.extractRoot}/${opfPath}`)) return new EpubDuokanPackage();
       const opf = await LocalChapterContentLoader.readHtmlFile(`${this.extractRoot}/${opfPath}`);
+      this.fixedPackage = EpubFixedLayout.parsePackage(opf, opfPath);
       return EpubDuokanExtensions.parsePackage(opf, opfPath);
     } catch (error) {
       console.warn('[EpubOriginal] read duokan package failed:', error);
@@ -1905,6 +1918,65 @@ struct EpubOriginalReadBookPage {
       if (absolute.startsWith(`${this.extractRoot}/`)) paths.push(absolute.substring(this.extractRoot.length + 1));
     }
     return paths;
+  }
+
+  /** 固定版式章节：这一章的文件都是 pre-paginated 页。 */
+  private isFixedChapter(index: number): boolean {
+    if (!this.fixedPackage.fixed) return false;
+    const paths = this.chapterPaths(index);
+    return paths.length > 0 && paths.every((path: string): boolean => this.fixedPackage.isFixed(path));
+  }
+
+  /** 当前是从右往左翻的固定版式页：点按、按键、滑动的左右方向反过来（翻页层的方向是屏幕上的方向）。 */
+  private fixedRtl(): boolean {
+    return this.fixedPackage.rtl && this.isFixedChapter(this.chapterIndex);
+  }
+
+  /** 阅读方向（1 往后读）↔ 翻页层的屏幕方向；从右往左翻的书两者相反。 */
+  private screenDirection(direction: number): number {
+    return this.fixedRtl() ? -direction : direction;
+  }
+
+  /**
+   * 固定版式章节的排页信息：各页大小（页面声明 → 书的统一大小 → 页里唯一那张图的尺寸）与单页、对开两种排法。
+   * 整本第一页（封面）单独一屏。
+   */
+  private async fixedConfig(index: number, pieces: EpubOriginalPiece[]): Promise<EpubFixedScriptConfig> {
+    const config = new EpubFixedScriptConfig();
+    for (const piece of pieces) {
+      let size = EpubFixedLayout.pageSize(piece.html);
+      if ((size[0] <= 0 || size[1] <= 0) && this.fixedPackage.width > 0 && this.fixedPackage.height > 0) {
+        size = [this.fixedPackage.width, this.fixedPackage.height];
+      }
+      if (size[0] <= 0 || size[1] <= 0) {
+        const image = this.singleImageOf(piece);
+        if (image) {
+          const natural = await LocalChapterContentLoader.imageSize(`${this.extractRoot}/${image}`);
+          if (natural[0] > 0 && natural[1] > 0) size = natural;
+        }
+      }
+      config.pages.push(size);
+    }
+    const toArray = (view: EpubFixedView): number[] => [view.left, view.right, view.center];
+    config.single = EpubFixedLayout.singleViews(pieces.length).map(toArray);
+    const cover = pieces.length > 0 && pieces[0].path === this.fixedPackage.firstPath;
+    config.spread = EpubFixedLayout.spreadViews(pieces.map((piece: EpubOriginalPiece): string =>
+      this.fixedPackage.sideOf(piece.path)), this.fixedPackage.rtl, cover).map(toArray);
+    config.canSpread = !this.fixedPackage.noSpread;
+    return config;
+  }
+
+  /** 页里只有一张图（常见于漫画式绘本）时那张图的路径（相对解压目录）；否则空串。 */
+  private singleImageOf(piece: EpubOriginalPiece): string {
+    if (EpubHtmlConverter.isImagePath(piece.path)) return piece.path;
+    const pattern = /<(?:img|image)\b[^>]*>/gi;
+    const tags = piece.html.match(pattern) || [];
+    if (tags.length !== 1) return '';
+    const src = EpubHtmlConverter.findHtmlAttribute(tags[0], ['src', 'xlink:href', 'href']);
+    if (!src || /^(?:data:|https?:)/i.test(src)) return '';
+    const resolved = EpubHtmlConverter.resolvePath(EpubOriginalDocument.directoryOf(piece.path),
+      EpubHtmlConverter.decodeEntities(src));
+    return resolved.replace(/^\/+/, '');
   }
 
   /** 多看全屏页：这一章的文件都标了 duokan-page-fullscreen（一般是封面）。 */
@@ -1958,7 +2030,12 @@ struct EpubOriginalReadBookPage {
       loaded.add(path);
       const file = new EpubOriginalPiece();
       file.path = path;
-      if (EpubHtmlConverter.isImagePath(path)) {
+      if (EpubHtmlConverter.isImagePath(path) && this.fixedPackage.isFixed(path)) {
+        // 固定版式里直接放图片的页：图片铺满整页（页面大小就是图片大小）。
+        const name = path.substring(path.lastIndexOf('/') + 1);
+        file.html = '<html><head></head><body style="margin:0"><img src="' + encodeURIComponent(name) +
+          '" style="display:block;width:100%;height:100%"/></body></html>';
+      } else if (EpubHtmlConverter.isImagePath(path)) {
         // spine 里直接放图片的书：包一层页面，图片按一屏大小居中。
         const name = path.substring(path.lastIndexOf('/') + 1);
         file.html = `<html><body><div style="text-align:center"><img src="${encodeURIComponent(name)}" ` +
@@ -1996,8 +2073,16 @@ struct EpubOriginalReadBookPage {
         options.slimTo.push(EpubOriginalDocument.urlFor(this.duokan.slimTo[i]));
       }
     }
-    const html = EpubOriginalDocument.build(pieces, relative, EpubOriginalScript.injection(options),
-      chapter.title || this.title);
+    let html = '';
+    if (this.isFixedChapter(index)) {
+      options.fixed = await this.fixedConfig(index, pieces);
+      options.fixedBackground = ThemeRuntime.pageColor(this.darkMode);
+      if (serial !== slot.serial || !this.alive) return;
+      html = EpubOriginalDocument.buildFixed(pieces, EpubOriginalScript.injection(options), chapter.title || this.title);
+    } else {
+      html = EpubOriginalDocument.build(pieces, relative, EpubOriginalScript.injection(options),
+        chapter.title || this.title);
+    }
     const url = EpubOriginalDocument.chapterUrl(index, serial);
     // 只留两个槽位正在用的章节文档。
     const keep = this.slots[1 - slot.id].url;
@@ -2621,10 +2706,12 @@ struct EpubOriginalReadBookPage {
    * 翻页层盖着当前页截图时，把底下换到相邻页：章内由网页原地换页；到了章首尾就换槽位到相邻章节
    * （下一章通常已预载好，瞬间换过去；没预载的现载，载太久就不播动画）。
    */
-  private async advanceForTurn(direction: number): Promise<boolean> {
+  private async advanceForTurn(screenDirection: number): Promise<boolean> {
     if (!this.alive || !this.ready || !this.paged || this.transitioning || this.pendingSlot >= 0 || this.jumpBusy) {
       return false;
     }
+    // 翻页层给的是屏幕方向；从右往左翻的书往右翻才是往后读。
+    const direction = this.screenDirection(screenDirection);
     this.showNotePopup = false;
     this.refreshScreenTimeout();
     const slot = this.front();
@@ -3121,13 +3208,14 @@ struct EpubOriginalReadBookPage {
       this.toggleMenu();
       return;
     }
-    const action = this.tapZoneAction(x, y);
+    // 从右往左翻的固定版式书：九宫格左右镜像，点左边往后读。
+    const action = this.tapZoneAction(this.fixedRtl() ? 1 - x : x, y);
     if (action === 1) {
       this.toggleMenu();
     } else if (action === 2 || action === 3) {
       const direction = action === 2 ? 1 : -1;
       if (this.paged) {
-        this.turnController.turn(direction);
+        this.turnController.turn(this.screenDirection(direction));
       } else {
         ReaderHaptics.pageTurned(ReaderInputKind.NOVEL, false);
         this.run(`__legado.screen(${direction})`);
@@ -3293,14 +3381,16 @@ struct EpubOriginalReadBookPage {
         this.linkReturnKey = '';
         this.linkReturnSettleUntil = Date.now() + 800;
         this.linkReturnVisible = true;
-        if (index === this.chapterIndex && fragment) {
-          this.run(`__legado.goAnchor(${JSON.stringify(fragment)})`);
+        // 固定版式一个文件是一页：链到文件开头时也要落到那一页，而不是章首。
+        const anchor = fragment || (this.isFixedChapter(index) ? `legado-file:${path}` : '');
+        if (index === this.chapterIndex && anchor) {
+          this.run(`__legado.goAnchor(${JSON.stringify(anchor)})`);
           this.ttsUserMoved();
           return;
         }
         const target = new EpubOriginalTarget();
-        target.kind = fragment ? 'anchor' : 'start';
-        target.anchor = fragment;
+        target.kind = anchor ? 'anchor' : 'start';
+        target.anchor = anchor;
         this.showChapter(index, target, 'fade');
       });
   }
@@ -4139,6 +4229,10 @@ struct EpubOriginalReadBookPage {
   /** 朗读按钮、胶囊、“更多操作”：打开朗读面板，没在念就从当前屏开始念。 */
   private openTtsPanel(): void {
     if (!this.ready || this.failed) return;
+    if (this.isFixedChapter(this.chapterIndex)) {
+      HdsFeedback.showToast('固定版式的页面暂不支持朗读');
+      return;
+    }
     const tts = this.ensureReadAloud();
     tts.prepare();
     this.activePanel = '';
