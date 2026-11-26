@@ -70,6 +70,8 @@ export class ReaderSettings {
   scrollTapTurn: boolean = false;
   /** 书封扉页：第一章之前加一页书封、书名、作者和简介。 */
   frontPageEnabled: boolean = true;
+  /** 章末卡片：一章最后一页正文下方的留白里画本章小结。 */
+  chapterEndCardEnabled: boolean = true;
   /** 夜间模式下插图的处理：保持原色 / 调暗 / 反色 / 自动（见 ReaderNightImage）。 */
   nightImageMode: string = ReaderNightImage.ORIGINAL;
   // 阅读页眉页脚配置。默认页眉关闭、页脚保持现有章节/页码信息。
@@ -172,6 +174,7 @@ export class ReaderSettingsStore {
   static readonly KEY_QUICK_BOOKMARK_ENABLED: string = 'readerQuickBookmarkEnabled';
   static readonly KEY_SCROLL_TAP_TURN: string = 'readerScrollTapTurn';
   static readonly KEY_FRONT_PAGE_ENABLED: string = 'readerFrontPageEnabled';
+  static readonly KEY_CHAPTER_END_CARD_ENABLED: string = 'readerChapterEndCardEnabled';
   static readonly KEY_NIGHT_IMAGE_MODE: string = 'readerNightImageMode';
   static readonly KEY_HEADER_ENABLED: string = 'readerHeaderEnabled';
   static readonly KEY_HEADER_CONTENT_MODE: string = 'readerHeaderContentMode';
@@ -528,6 +531,8 @@ export class ReaderSettingsStore {
       store, ReaderSettingsStore.KEY_SCROLL_TAP_TURN, false);
     settings.frontPageEnabled = await ReaderSettingsStore.getBoolean(
       store, ReaderSettingsStore.KEY_FRONT_PAGE_ENABLED, true);
+    settings.chapterEndCardEnabled = await ReaderSettingsStore.getBoolean(
+      store, ReaderSettingsStore.KEY_CHAPTER_END_CARD_ENABLED, true);
     settings.nightImageMode = ReaderNightImage.normalize(await ReaderSettingsStore.getString(
       store, ReaderSettingsStore.KEY_NIGHT_IMAGE_MODE, ReaderNightImage.ORIGINAL));
     settings.readerHeaderEnabled = await ReaderSettingsStore.getBoolean(
@@ -890,6 +895,17 @@ export class ReaderSettingsStore {
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_SCROLL_TAP_TURN, enabled);
     const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
     await store.put(ReaderSettingsStore.KEY_SCROLL_TAP_TURN, enabled);
+    await ReaderSettingsStore.persistActiveThemeProfile(store, settings);
+    await store.flush();
+  }
+
+  static async saveChapterEndCardEnabled(context: Context, enabled: boolean): Promise<void> {
+    const settings = ReaderSettingsStore.cachedSettings || ReaderSettingsStore.fromStorage();
+    settings.chapterEndCardEnabled = enabled;
+    ReaderSettingsStore.cachedSettings = ReaderSettingsStore.clone(settings);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_CHAPTER_END_CARD_ENABLED, enabled);
+    const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
+    await store.put(ReaderSettingsStore.KEY_CHAPTER_END_CARD_ENABLED, enabled);
     await ReaderSettingsStore.persistActiveThemeProfile(store, settings);
     await store.flush();
   }
@@ -1261,6 +1277,7 @@ export class ReaderSettingsStore {
     await ReaderSettingsStore.saveQuickBookmarkEnabled(context, settings.quickBookmarkEnabled);
     await ReaderSettingsStore.saveScrollTapTurn(context, settings.scrollTapTurn);
     await ReaderSettingsStore.saveFrontPageEnabled(context, settings.frontPageEnabled);
+    await ReaderSettingsStore.saveChapterEndCardEnabled(context, settings.chapterEndCardEnabled);
     await ReaderSettingsStore.saveNightImageMode(context, settings.nightImageMode);
     await ReaderSettingsStore.saveFontSettings(
       context,
@@ -1321,6 +1338,7 @@ export class ReaderSettingsStore {
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_QUICK_BOOKMARK_ENABLED, normalized.quickBookmarkEnabled);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_SCROLL_TAP_TURN, normalized.scrollTapTurn);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_FRONT_PAGE_ENABLED, normalized.frontPageEnabled);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_CHAPTER_END_CARD_ENABLED, normalized.chapterEndCardEnabled);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_NIGHT_IMAGE_MODE, normalized.nightImageMode);
     ReaderSettingsStore.applyReaderChromeToStorage(normalized);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_FONT_FAMILY, normalized.fontFamily);
@@ -1537,6 +1555,7 @@ export class ReaderSettingsStore {
     target.quickBookmarkEnabled = source.quickBookmarkEnabled;
     target.scrollTapTurn = source.scrollTapTurn;
     target.frontPageEnabled = source.frontPageEnabled;
+    target.chapterEndCardEnabled = source.chapterEndCardEnabled;
     target.nightImageMode = source.nightImageMode;
     target.readerHeaderContentMode = source.readerHeaderContentMode;
     target.readerFooterLeftMode = source.readerFooterLeftMode;
@@ -2145,6 +2164,8 @@ export class ReaderSettingsStore {
       (AppStorage.get<boolean>(ReaderSettingsStore.KEY_SCROLL_TAP_TURN) ?? false);
     settings.frontPageEnabled = typeof source.frontPageEnabled === 'boolean' ? source.frontPageEnabled :
       (AppStorage.get<boolean>(ReaderSettingsStore.KEY_FRONT_PAGE_ENABLED) ?? true);
+    settings.chapterEndCardEnabled = typeof source.chapterEndCardEnabled === 'boolean' ? source.chapterEndCardEnabled :
+      (AppStorage.get<boolean>(ReaderSettingsStore.KEY_CHAPTER_END_CARD_ENABLED) ?? true);
     settings.nightImageMode = ReaderNightImage.normalize(source.nightImageMode ??
       (AppStorage.get<string>(ReaderSettingsStore.KEY_NIGHT_IMAGE_MODE) || ReaderNightImage.ORIGINAL));
     settings.readerHeaderEnabled = source.readerHeaderEnabled === true;
@@ -2304,6 +2325,7 @@ export class ReaderSettingsStore {
     settings.quickBookmarkEnabled = AppStorage.get<boolean>(ReaderSettingsStore.KEY_QUICK_BOOKMARK_ENABLED) ?? true;
     settings.scrollTapTurn = AppStorage.get<boolean>(ReaderSettingsStore.KEY_SCROLL_TAP_TURN) ?? false;
     settings.frontPageEnabled = AppStorage.get<boolean>(ReaderSettingsStore.KEY_FRONT_PAGE_ENABLED) ?? true;
+    settings.chapterEndCardEnabled = AppStorage.get<boolean>(ReaderSettingsStore.KEY_CHAPTER_END_CARD_ENABLED) ?? true;
     settings.nightImageMode = ReaderNightImage.normalize(
       AppStorage.get<string>(ReaderSettingsStore.KEY_NIGHT_IMAGE_MODE) || ReaderNightImage.ORIGINAL);
     settings.readerHeaderEnabled = AppStorage.get<boolean>(ReaderSettingsStore.KEY_HEADER_ENABLED) ?? false;

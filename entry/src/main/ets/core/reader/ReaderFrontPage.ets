@@ -264,7 +264,7 @@ export class ReaderFrontPage {
     return top + paragraph.getHeight();
   }
 
-  private static text(text: string, size: number, color: number, family: string, weight: number,
+  static text(text: string, size: number, color: number, family: string, weight: number,
     align: graphicsText.TextAlign, width: number, maxLines: number, letterSpacing: number,
     lineGap: number = 0): graphicsText.Paragraph {
     const resolved = ReaderFontWeight.layoutWeight(family, weight);
@@ -299,12 +299,12 @@ export class ReaderFrontPage {
     return paragraph;
   }
 
-  private static readonly FONT_WEIGHTS: graphicsText.FontWeight[] = [
+  static readonly FONT_WEIGHTS: graphicsText.FontWeight[] = [
     graphicsText.FontWeight.W100, graphicsText.FontWeight.W200, graphicsText.FontWeight.W300,
     graphicsText.FontWeight.W400, graphicsText.FontWeight.W500, graphicsText.FontWeight.W600,
     graphicsText.FontWeight.W700, graphicsText.FontWeight.W800, graphicsText.FontWeight.W900];
 
-  private static color(value: number): common2D.Color {
+  static color(value: number): common2D.Color {
     const color = value >>> 0;
     return { alpha: (color >>> 24) & 0xFF, red: (color >>> 16) & 0xFF, green: (color >>> 8) & 0xFF, blue: color & 0xFF };
   }

@@ -21,6 +21,7 @@ import { ReaderFontStroke } from './ReaderFontStroke';
 import { ReaderPunctuationSqueeze } from './ReaderPunctuationSqueeze';
 import { ReaderPunctuationMetrics } from './ReaderPunctuationMetrics';
 import { ReaderFrontPage } from './ReaderFrontPage';
+import { ReaderChapterEnd } from './ReaderChapterEnd';
 import { EpubNoteLink } from '../book/EpubNoteLink';
 import { ReaderV2CommentCardLayout } from './ReaderV2CommentCard';
 import { ReaderV2ChapterHeadLayout, ReaderV2ChapterHeadMetrics } from './ReaderV2ChapterHead';
@@ -371,6 +372,13 @@ export class ReaderV2Paginator {
         }
         page.contentBottomPx = Math.max(page.contentBottomPx, area.bottom);
       }
+      const chapterEnd = session.document.chapterEnd;
+      if (chapterEnd !== null && session.blockIndex >= session.document.blocks.length) {
+        // 一章的最后一页：卡片只用正文下方的留白，放不下就不放，滚动阅读接在正文后面。
+        const used = ReaderChapterEnd.place(page, chapterEnd, session.snapshot, column.left, column.right,
+          page.contentBottomPx, session.continuous ? Number.POSITIVE_INFINITY : column.bottom - page.contentBottomPx);
+        if (used > 0 && session.continuous) page.contentBottomPx += used;
+      }
       page.sourceStart = session.document.sourceOffsetForDisplay(page.displayStart);
       page.sourceEnd = session.document.sourceOffsetForDisplay(page.displayEnd);
       page.identity = `${session.document.identity}_${session.snapshot.identity}_${session.pageIndex}_` +
@@ -524,15 +532,35 @@ export class ReaderV2Paginator {
             cardEdgeGap = ReaderV2CommentCardLayout.edgeGap(session.snapshot, action.chapter);
           }
           const anchor = pendingCard ? ReaderV2Paginator.bubbleCenterX(page, action.id) - column.left : -1;
-          let card = ReaderV2CommentCardLayout.build(action, session.snapshot, session.width,
+          // 一章末尾的本章说包进章末卡片：往里收卡片的左右内边距、往下让出上内边距，卡片底板从 y + gap 起。
+          const chapterEnd = session.document.chapterEnd;
+          const wrapChapter = action.chapter && chapterEnd !== null &&
+            session.blockIndex === session.document.blocks.length - 1;
+          const wrapInset = wrapChapter ? ReaderChapterEnd.wrapInsetX(session.snapshot) : 0;
+          const cardWidth = session.width - wrapInset * 2;
+          let card = ReaderV2CommentCardLayout.build(action, session.snapshot, cardWidth,
             anchor >= 0 ? anchor : -1);
-          const top = y + gap;
+          const top = y + gap + (wrapChapter ? ReaderChapterEnd.wrapPadTop(session.snapshot) : 0);
           if (action.chapter) {
             // 本章说放不下时先少列几条热评，最后只留标题行；还放不下才整块挪到下一页。
-            let hotCount = Math.min(action.hots.length, ReaderV2CommentCardLayout.CHAPTER_MAX_HOTS);
-            while (hotCount > 0 && top + card.height > columnBottom + 0.01) {
+            // 包进章末卡片时先试着给卡片的“读完 + 下一章”留出位置，留不出就照原样只排本章说。
+            const maxHots = Math.min(action.hots.length, ReaderV2CommentCardLayout.CHAPTER_MAX_HOTS);
+            let hotCount = maxHots;
+            const reserve = wrapChapter && chapterEnd !== null && !session.continuous ?
+              ReaderChapterEnd.minTailHeight(chapterEnd, session.snapshot, session.width) : 0;
+            let reserved = reserve > 0;
+            while (hotCount > 0 && top + card.height > columnBottom - reserve + 0.01) {
               hotCount--;
-              card = ReaderV2CommentCardLayout.build(action, session.snapshot, session.width, -1, hotCount);
+              card = ReaderV2CommentCardLayout.build(action, session.snapshot, cardWidth, -1, hotCount);
+            }
+            if (reserved && top + card.height > columnBottom - reserve + 0.01) {
+              reserved = false;
+              hotCount = maxHots;
+              card = ReaderV2CommentCardLayout.build(action, session.snapshot, cardWidth, -1, hotCount);
+              while (hotCount > 0 && top + card.height > columnBottom + 0.01) {
+                hotCount--;
+                card = ReaderV2CommentCardLayout.build(action, session.snapshot, cardWidth, -1, hotCount);
+              }
             }
           }
           if (hasContent && top + card.height > columnBottom + 0.01) {
@@ -545,10 +573,12 @@ export class ReaderV2Paginator {
           cardFragment.card = card;
           // Keep a trailing card attached to its paragraph when the page bottom is aligned.
           cardFragment.fixedGapBefore = hasContent;
-          cardFragment.paragraphX = column.left;
+          cardFragment.paragraphX = column.left + wrapInset;
           cardFragment.paragraphY = top;
           cardFragment.paragraphHeight = card.height;
-          cardFragment.clipRect = new ReaderV2Rect(column.left, top, column.right, top + card.height);
+          cardFragment.clipRect = new ReaderV2Rect(column.left + wrapInset, top, column.right - wrapInset,
+            top + card.height);
+          if (wrapChapter) page.chapterEndWrapTop = y + gap;
           cardFragment.displayStart = pendingCard ? imageBlock.displayEnd : imageBlock.displayStart;
           cardFragment.displayEnd = imageBlock.displayEnd;
           fragmentActionStarts.push(page.actions.length);
@@ -556,8 +586,8 @@ export class ReaderV2Paginator {
           const hit = new ReaderV2ActionHitArea();
           hit.actionId = action.id;
           hit.marker = action.marker;
-          hit.rect = new ReaderV2Rect(column.left + card.box.left, top + card.box.top - card.tailSize,
-            column.left + card.box.right, top + card.box.bottom);
+          hit.rect = new ReaderV2Rect(column.left + wrapInset + card.box.left, top + card.box.top - card.tailSize,
+            column.left + wrapInset + card.box.right, top + card.box.bottom);
           page.actions.push(hit);
           if (!hasContent) page.displayStart = cardFragment.displayStart;
           page.displayEnd = Math.max(page.displayEnd, cardFragment.displayEnd);

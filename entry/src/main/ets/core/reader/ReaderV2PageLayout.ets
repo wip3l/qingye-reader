@@ -1,6 +1,6 @@
 import graphicsText from '@ohos.graphics.text';
 import { ReaderPaginationBoundary } from './ReaderPaginationIndex';
-import { ReaderV2Rect } from './ReaderV2LayoutSnapshot';
+import { ReaderV2LayoutSnapshot, ReaderV2Rect } from './ReaderV2LayoutSnapshot';
 import { ReaderCommentBubbleStyle } from './ReaderCommentBubble';
 import { ReaderFontStrokeRun } from './ReaderFontStroke';
 import { ReaderV2CommentCard } from './ReaderV2CommentCard';
@@ -130,6 +130,11 @@ export class ReaderV2PageDecoration {
    */
   kind: string = '';
   color: number = 0;
+  /** 章末卡片底板的描边色与圆角。 */
+  strokeColor: number = 0;
+  radius: number = 0;
+  /** 同一组装饰（如章末卡片 ReaderChapterEnd.GROUP），重建时整组换掉。 */
+  group: string = '';
   /** 书封投影按深色阅读主题加重。 */
   shadowDark: boolean = false;
   /** 首字的字形，画在 (glyphX, glyphY)。 */
@@ -177,6 +182,12 @@ export class ReaderV2PageLayout implements ReaderPaginationBoundary {
   lineStretchPx: number = 0;
   /** 书封扉页：第一章之前额外的一页，只有装饰，不占正文偏移，也不计入页码。 */
   frontPage: boolean = false;
+  /** 章末卡片：0 没有，1 小结卡，2 一行落款（见 ReaderChapterEnd）；位置与排版参数留着，数字变了原地重建。 */
+  chapterEndMode: number = 0;
+  chapterEndRect: ReaderV2Rect = new ReaderV2Rect();
+  chapterEndSnapshot: ReaderV2LayoutSnapshot | null = null;
+  /** 本章说包进章末卡片时卡片底板的顶边（本章说已往里收、往下让出内边距）；-1 表示没有包。 */
+  chapterEndWrapTop: number = -1;
   /** 本页最后一个片段的下边缘（含字形出血），滚动阅读用它确定列表项高度。 */
   contentBottomPx: number = 0;
   /** 划线由阅读页按当前划线数据填入；annotationStamp 记填入时的数据版本，版本变了重新填。 */

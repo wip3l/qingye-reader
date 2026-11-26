@@ -95,6 +95,41 @@ export class ReaderFrontPagePainter {
     canvas.detachBrush();
   }
 
+  /** 章末卡片的底板：淡强调色圆角块加一圈细描边。 */
+  static paintPanel(canvas: drawing.Canvas, decoration: ReaderV2PageDecoration): void {
+    const rect = decoration.rect;
+    if (rect.right - rect.left <= 1 || rect.bottom - rect.top <= 1) return;
+    const radius = Math.max(0, Math.min(decoration.radius, (rect.bottom - rect.top) / 2));
+    const shape = new drawing.RoundRect({ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+      radius, radius);
+    const brush = new drawing.Brush();
+    brush.setAntiAlias(true);
+    brush.setColor(ReaderFrontPagePainter.argb(decoration.color));
+    canvas.attachBrush(brush);
+    canvas.drawRoundRect(shape);
+    canvas.detachBrush();
+    if (((decoration.strokeColor >>> 24) & 0xFF) === 0) return;
+    const pen = new drawing.Pen();
+    pen.setAntiAlias(true);
+    pen.setStrokeWidth(1);
+    pen.setColor(ReaderFrontPagePainter.argb(decoration.strokeColor));
+    canvas.attachPen(pen);
+    canvas.drawRoundRect(new drawing.RoundRect({ left: rect.left + 0.5, top: rect.top + 0.5, right: rect.right - 0.5,
+      bottom: rect.bottom - 0.5 }, Math.max(0, radius - 0.5), Math.max(0, radius - 0.5)));
+    canvas.detachPen();
+  }
+
+  /** 章末卡片里的细分隔线：按 rect 填色。 */
+  static paintLine(canvas: drawing.Canvas, decoration: ReaderV2PageDecoration): void {
+    const rect = decoration.rect;
+    if (rect.right - rect.left <= 0 || rect.bottom - rect.top <= 0) return;
+    const brush = new drawing.Brush();
+    brush.setColor(ReaderFrontPagePainter.argb(decoration.color));
+    canvas.attachBrush(brush);
+    canvas.drawRect(rect.left, rect.top, rect.right, rect.bottom);
+    canvas.detachBrush();
+  }
+
   /** 封面图按原比例放大到铺满书形，居中裁掉多出的部分。 */
   private static coverImage(canvas: drawing.Canvas, path: string, rect: ReaderV2Rect): boolean {
     if (!path) return false;

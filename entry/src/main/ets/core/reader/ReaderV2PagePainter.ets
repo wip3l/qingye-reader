@@ -9,6 +9,7 @@ import { ReaderV2RulingPainter } from './ReaderV2RulingPainter';
 import { ReaderRasterAssets } from './ReaderRasterAssets';
 import { ReaderFrontPage } from './ReaderFrontPage';
 import { ReaderFrontPagePainter } from './ReaderFrontPagePainter';
+import { ReaderChapterEnd } from './ReaderChapterEnd';
 import {
   ReaderV2PageFragment,
   ReaderV2PageLayout,
@@ -82,6 +83,10 @@ export class ReaderV2PagePainter {
           ReaderFrontPagePainter.paintRule(canvas, decoration);
         } else if (decoration.kind === ReaderFrontPage.KIND_CHIP) {
           ReaderFrontPagePainter.paintChip(canvas, decoration);
+        } else if (decoration.kind === ReaderChapterEnd.KIND_PANEL) {
+          ReaderFrontPagePainter.paintPanel(canvas, decoration);
+        } else if (decoration.kind === ReaderChapterEnd.KIND_LINE) {
+          ReaderFrontPagePainter.paintLine(canvas, decoration);
         }
         if (decoration.glyph && !(decoration.kind === ReaderFrontPage.KIND_COVER_TEXT && coverDrawn)) {
           decoration.glyph.paint(canvas, decoration.glyphX, decoration.glyphY);

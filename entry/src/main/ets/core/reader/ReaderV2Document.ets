@@ -3,6 +3,7 @@ import { EpubNoteLink } from '../book/EpubNoteLink';
 import { ReaderImageMarker } from '../book/ReaderImageMarker';
 import { ReaderTitleSplit, ReaderTitleSplitSettings } from './ReaderTitleSplit';
 import { ReaderFrontPageSpec } from './ReaderFrontPage';
+import { ReaderChapterEndSpec } from './ReaderChapterEnd';
 
 /**
  * V2 阅读文档只保存语义和稳定偏移，不保存任何 ArkUI 组件状态。
@@ -173,6 +174,8 @@ export class ReaderV2Document {
   identity: string = '';
   /** 书封扉页：只给第一章挂上；翻页模式排成第一章之前的一页，滚动阅读排在第一章标题上方一屏。 */
   frontPage: ReaderFrontPageSpec | null = null;
+  /** 章末卡片：排在这份文档最后一页正文下方的留白里（滚动阅读只挂在一章的最后一块上）。 */
+  chapterEnd: ReaderChapterEndSpec | null = null;
 
   private dropCapBlock: number = -2;
 

@@ -3906,6 +3906,19 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   }
 
   /** 这些地址的阅读记录，所有设备合计；地址由 ReadWorkLinks.urlsOf 给出（同一部作品的各个书源）。 */
+  /** 一本书某一天读了多少毫秒（所有设备合计，当前账号加本机游客记录）；章末卡片用。 */
+  async getBookReadMsOnDay(bookUrl: string, dayKey: string, ownerId: string): Promise<number> {
+    if (!this.store || !bookUrl || !dayKey) return 0;
+    await this.readStatsWriteTask;
+    const resultSet = await this.store.querySql(`SELECT SUM(durationMs) FROM read_stats_records
+      WHERE deletedAt = 0 AND bookUrl = ? AND dayKey = ? AND (ownerId = '' OR ownerId = ?)`, [bookUrl, dayKey, ownerId]);
+    try {
+      return resultSet.goToFirstRow() ? resultSet.getLong(0) : 0;
+    } finally {
+      resultSet.close();
+    }
+  }
+
   async getBookReadStatsRecords(bookUrls: string[], ownerId: string): Promise<BookReadStatsRecord[]> {
     const records: BookReadStatsRecord[] = [];
     const urls = bookUrls.filter((url: string): boolean => !!url);

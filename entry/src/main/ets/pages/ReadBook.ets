@@ -19,6 +19,9 @@ import { ReaderCacheCoordinator } from '../core/book/ReaderCacheCoordinator';
 import { BookCoverResolver } from '../utils/BookCoverResolver';
 import { ReaderFrontPage, ReaderFrontPageSpec } from '../core/reader/ReaderFrontPage';
 import { ReaderFrontPageText } from '../core/reader/ReaderFrontPageText';
+import { ReaderChapterEnd, ReaderChapterEndSpec } from '../core/reader/ReaderChapterEnd';
+import { ReaderChapterEndText } from '../core/reader/ReaderChapterEndText';
+import { ChapterWordCounts } from '../core/book/ChapterWordCounts';
 import { applyReaderSystemBars, restoreReaderNavigation, syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
 import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation';
 import { ReaderScreenScrollMotion } from '../core/reader/ReaderScreenScrollMotion';
@@ -56,7 +59,7 @@ import { TtsVoiceInfo } from '../account/AccountCommerceModels';
 import { AppDatabase, ReaderPaginationCacheRecord } from '../model/data/AppDatabase';
 import { ReadBookEngine } from '../core/book/ReadBookEngine';
 import { ReaderImageMarker } from '../core/book/ReaderImageMarker';
-import { readStatsTracker } from '../core/stats/ReadStatsTracker';
+import { readStatsTracker, ReadStatsTracker } from '../core/stats/ReadStatsTracker';
 import { LocalBookService } from '../core/book/LocalBookService';
 import lazy { WebDavBookService } from '../webdav/WebDavBookService';
 import { BookSourceRuntimeSnapshotStore, BookSourceSettingValue } from '../core/book/BookSourceRuntimeSnapshot';
@@ -1222,6 +1225,14 @@ struct ReadBookPage {
   private readerFrontCoverSerial: number = 0;
   private readerFrontSpecInputs: string = '';
   private readerFrontSpecCache: ReaderFrontPageSpec | null = null;
+  @StorageLink('readerChapterEndCardEnabled') @Watch('onReaderChapterEndEnabledChanged') readerChapterEndEnabled: boolean = true;
+  /** 今天这本书读了多少毫秒（章末卡片）；-1 还没取到。 */
+  private readerTodayReadMs: number = -1;
+  private readerTodayReadFetchedAt: number = 0;
+  private readerTodayReadSerial: number = 0;
+  /** 章末卡片上会变的数字的版本，并进划线版本号：变了就地重建卡片。 */
+  private readerChapterEndVersion: number = 0;
+  private readerChapterWordCache: Map<string, number> = new Map();
   @StorageProp('readerPageTurnHapticsScope') readerPageTurnHapticsScope: number = 0;
   @StorageLink('readerHeaderEnabled') @Watch('onReaderChromeChanged') readerHeaderEnabled: boolean = false;
   @StorageLink('readerFooterEnabled') @Watch('onReaderChromeChanged') readerFooterEnabled: boolean = true;
@@ -2249,6 +2260,9 @@ struct ReadBookPage {
       if (this.readerFrontPageEnabled && !this.isReaderComicModeActive()) {
         await this.resolveReaderFrontCover(Book.hasStartedReading(this.book) ? 0 : READER_FRONT_COVER_WAIT_MS);
       }
+      // 章末卡片上的“今天已读”：空闲时取一次，之后快读到章末时再更新。
+      this.readerTodayReadMs = -1;
+      if (this.readerChapterEndEnabled) this.refreshReaderTodayRead();
       if (loadSerial !== this.bookLoadSerial) {
         return;
       }
@@ -8407,6 +8421,112 @@ struct ReadBookPage {
     this.refreshCurrentReaderV2RetainedPages(true);
   }
 
+  /** 章末卡片的内容；关着或漫画时返回 null。source 是这一章的完整正文（翻页模式是分页用的源文本）。 */
+  readerChapterEndSpecFor(chapterIndex: number, source: string): ReaderChapterEndSpec | null {
+    if (!this.readerChapterEndEnabled || !this.book || this.isReaderComicModeActive() || chapterIndex < 0) return null;
+    const spec = new ReaderChapterEndSpec();
+    const title = this.getChapterTitle(chapterIndex);
+    spec.headLabel = ReaderChapterEndText.headLabel(title);
+    spec.percentText = ReaderChapterEndText.bookPercent(chapterIndex, this.chapters.length);
+    spec.words = this.readerChapterWordCount(chapterIndex, source, title);
+    spec.todayMinutes = ReaderChapterEndText.todayMinutes(this.readerTodayReadMs);
+    let highlights = 0;
+    for (const annotation of this.readerAnnotations) {
+      if (annotation.chapterIndex === chapterIndex) highlights++;
+    }
+    spec.highlights = highlights;
+    if (chapterIndex + 1 < this.chapters.length) {
+      spec.nextTitle = ReaderChapterEndText.nextTitle(this.getChapterTitle(chapterIndex + 1));
+      spec.nextWords = ChapterWordCounts.countOf(this.chapters[chapterIndex + 1], this.book.bookUrl);
+    } else {
+      spec.endText = ReaderChapterEndText.endOfBook(this.book.origin === 'local');
+    }
+    spec.accentColor = ReaderV2Color.parse(this.accentColor(), 0xFF2E5A88);
+    return spec;
+  }
+
+  /** 本章字数，与目录同一种数法（不算章节名、标记和空白），按章记住。 */
+  readerChapterWordCount(chapterIndex: number, source: string, title: string): number {
+    const key = `${chapterIndex}_${source.length}`;
+    const cached = this.readerChapterWordCache.get(key);
+    if (cached !== undefined) return cached;
+    const count = Math.max(0, ChapterWordCounts.count(ReaderActionMarker.strip(source, false)) -
+      ChapterWordCounts.count(title));
+    if (this.readerChapterWordCache.size >= 8) this.readerChapterWordCache.clear();
+    this.readerChapterWordCache.set(key, count);
+    return count;
+  }
+
+  /** 分页缓存键里章末卡片那一段：只看开关，卡片里的数字变了原地重建，不重排。 */
+  readerChapterEndKeyIdentity(): string {
+    return this.readerChapterEndEnabled && !this.isReaderComicModeActive() ? '_end2' : '';
+  }
+
+  /** 数字变了：按原位置重建这一页的章末卡片。 */
+  refreshReaderChapterEndCard(page: ReaderV2PageLayout, chapterIndex: number, source: string): void {
+    const spec = this.readerChapterEndSpecFor(chapterIndex, source);
+    if (spec) ReaderChapterEnd.refresh(page, spec);
+  }
+
+  setReaderChapterEndEnabled(enabled: boolean): void {
+    this.readerChapterEndEnabled = enabled;
+    ReaderSettingsStore.saveChapterEndCardEnabled(getContext(this), enabled).catch((e: Error) => {
+      console.error('保存章末卡片设置失败:', e);
+    });
+  }
+
+  onReaderChapterEndEnabledChanged(): void {
+    if (this.readerEntryInitializing || !this.book || !this.content) return;
+    // 只影响各章最后一页的装饰，阅读位置按字符偏移原样恢复。
+    const readingOffset = this.getReaderStableReflowOffset();
+    const onFront = this.isReaderFrontPageShown();
+    if (!onFront) this.readerTypographyRestoreOffset = readingOffset;
+    this.invalidateReaderTypographyLayout();
+    this.refreshReaderTextRender();
+    this.paginateContent(this.content);
+    if (this.hasPagedReaderArea() && this.pagedContentText) {
+      this.currentPageIndex = onFront ? 0 : this.normalizeReaderSpreadPageIndex(this.findPageIndexByOffset(readingOffset));
+      this.syncCurrentPageText();
+      this.forceCurrentReaderPageRender();
+      this.refreshCurrentReaderV2RetainedPages(true);
+    }
+    if (this.readerChapterEndEnabled) this.refreshReaderTodayRead();
+  }
+
+  /** 快读到一章末尾时（最后两页，或滚动阅读）更新“今天已读”，最多半分钟取一次。 */
+  maybeRefreshReaderTodayRead(): void {
+    if (!this.readerChapterEndEnabled || !this.book || Date.now() - this.readerTodayReadFetchedAt < 30000) return;
+    const nearEnd = this.isReaderNovelContinuousScrollModeActive() ||
+      this.currentPageIndex >= this.contentPages.length - 2;
+    if (nearEnd) this.refreshReaderTodayRead();
+  }
+
+  /** 先把正在计的那一段记进库，再查今天这本书的合计；取到后就地更新章末卡片。 */
+  refreshReaderTodayRead(): void {
+    const bookUrl = this.book?.bookUrl || '';
+    if (!bookUrl) return;
+    this.readerTodayReadFetchedAt = Date.now();
+    const serial = ++this.readerTodayReadSerial;
+    const ownerId = AccountSessionStore.isLoggedIn() ? AccountSessionStore.account().userId : '';
+    // 库查询的回调落在主线程，翻页动画中途回来会掉帧，等动画停了再查。
+    this.runWhenReaderIdle((): void => {
+      readStatsTracker.flushAndWait()
+        .then((): Promise<number> => AppDatabase.getInstance().getBookReadMsOnDay(bookUrl,
+          ReadStatsTracker.dayKeyOf(Date.now()), ownerId))
+        .then((ms: number): void => {
+          if (serial !== this.readerTodayReadSerial || this.book?.bookUrl !== bookUrl) return;
+          const changed = ReaderChapterEndText.todayMinutes(ms) !== ReaderChapterEndText.todayMinutes(this.readerTodayReadMs);
+          this.readerTodayReadMs = ms;
+          if (!changed) return;
+          this.readerChapterEndVersion++;
+          this.refreshReaderPageDecorations();
+        })
+        .catch((error: Error): void => {
+          console.warn('读取今天的阅读时长失败:', error);
+        });
+    }, 1500, (): boolean => this.isReaderPageMotionActive());
+  }
+
   getReaderInfoBarContext(): ReaderInfoBarContext {
     const context = new ReaderInfoBarContext();
     context.bookName = this.book?.name || '';
@@ -9734,6 +9854,7 @@ struct ReadBookPage {
   }
 
   syncCurrentPageText(): void {
+    this.maybeRefreshReaderTodayRead();
     this.setCurrentPageText(this.getCurrentPageText());
   }
 
@@ -10425,6 +10546,7 @@ struct ReadBookPage {
     this.readerQuickBookmarkEnabled = settings.quickBookmarkEnabled;
     this.readerScrollTapTurn = settings.scrollTapTurn;
     this.readerFrontPageEnabled = settings.frontPageEnabled;
+    this.readerChapterEndEnabled = settings.chapterEndCardEnabled;
     this.readerHeaderEnabled = settings.readerHeaderEnabled;
     this.readerFooterEnabled = settings.readerFooterEnabled;
     this.readerInfoBarConfigRaw = settings.readerInfoBarConfig;
@@ -14783,6 +14905,11 @@ struct ReadBookPage {
       this.readerSwitchSettingItem('书封扉页', '第一章前加一页书封、书名和简介，新书第一次打开先停在这页',
         this.readerFrontPageEnabled, (checked: boolean) => {
           this.setReaderFrontPageEnabled(checked);
+        })
+
+      this.readerSwitchSettingItem('章末卡片', '一章最后一页的留白里显示本章字数、今天已读和下一章，放不下就不显示',
+        this.readerChapterEndEnabled, (checked: boolean) => {
+          this.setReaderChapterEndEnabled(checked);
         })
     }
 
@@ -20662,6 +20789,7 @@ ${leading}` : leading;
       this.readerCommentDisplay());
     // 翻页模式的第一章前面加书封扉页（滚动阅读的扉页在第一块正文里，见 runReaderContinuousLayout）。
     document.frontPage = this.readerFrontPageCount(chapterIndex) > 0 ? this.readerFrontPageSpecFor(chapterIndex) : null;
+    document.chapterEnd = this.readerChapterEndSpecFor(chapterIndex, source);
     const session = ReaderV2Paginator.start(document, snapshot, this.buildReaderV2RegexStyles(document));
     const result: ReaderPaginationResult = {
       source: source,
@@ -20804,7 +20932,7 @@ ${leading}` : leading;
   }
 
   readerAnnotationStamp(): string {
-    return `${this.readerAnnotationVersion}_${this.readerAnnotationShowNoteDot ? 1 : 0}_` +
+    return `${this.readerAnnotationVersion}_${this.readerAnnotationShowNoteDot ? 1 : 0}_e${this.readerChapterEndVersion}_` +
       ReaderTextRuling.stamp(this.readerTextRulingSpec());
   }
 
@@ -20874,6 +21002,8 @@ ${leading}` : leading;
     source: string, chunkStart: number): void {
     const stamp = this.readerAnnotationStamp();
     if (page.annotationStamp === stamp) return;
+    // 章末卡片的数字（今天已读、本章划线）跟着这个版本号原地重建。
+    if (page.chapterEndMode > 0) this.refreshReaderChapterEndCard(page, chapterIndex, source);
     page.ruling = this.readerTextRulingSpec();
     if (this.readerAnnotations.length === 0) {
       page.annotationMarks = [];
@@ -22932,6 +23062,10 @@ ${leading}` : leading;
       document.identity = `continuous_${request.key}`;
       // 滚动阅读：书封扉页排在第一章第一块正文的上方一屏。
       if (request.index === 0) document.frontPage = this.readerFrontPageSpecFor(request.chapter);
+      // 章末卡片接在一章最后一块正文后面。
+      if (request.index === this.readerContinuousEndsOf(request.chapter).length - 1) {
+        document.chapterEnd = this.readerChapterEndSpecFor(request.chapter, this.readerContinuousSourceOf(request.chapter));
+      }
       const layout = await ReaderV2Paginator.layoutContinuousAsync(document, request.snapshot,
         this.buildReaderV2RegexStyles(document), valid);
       if (!layout || !valid()) return;
@@ -24003,7 +24137,7 @@ ${leading}` : leading;
       `${this.readerHeaderEnabled}_${this.readerFooterEnabled}_` +
       `${this.readerExtendToStatusBar}_${this.isLandscapeDoublePageActive()}_${this.readerTypographyCacheIdentity()}_` +
       `${this.readerParagraphCommentPaginationIdentity()}_` +
-      `${source.length}_${this.readerPaginationSourceHash(source)}${this.readerFrontPageKeyIdentity(chapterIndex)}`;
+      `${source.length}_${this.readerPaginationSourceHash(source)}${this.readerFrontPageKeyIdentity(chapterIndex)}${this.readerChapterEndKeyIdentity()}`;
   }
 
   readerPaginationSourceHash(source: string): number {
