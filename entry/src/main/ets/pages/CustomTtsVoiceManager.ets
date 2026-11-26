@@ -2506,9 +2506,9 @@ struct CustomTtsVoiceManagerPage {
           this.editInput('内容类型', 'contentType，可留空，如 audio/.*', this.editContentType, (value: string) => {
             this.editContentType = value;
           })
-          this.editInput('并发率', 'concurrentRate，可留空', this.editConcurrentRate, (value: string) => {
+          this.editInput('并发率', '可留空，如 3/1000', this.editConcurrentRate, (value: string) => {
             this.editConcurrentRate = value;
-          })
+          }, '只填一个数字是两次请求的最小间隔（毫秒），一次只发一个请求；写成“次数/毫秒”（如 3/1000，每秒最多 3 个）才能同时发多个。留空不限制。')
           this.editInput('登录URL', 'loginUrl，可留空', this.editLoginUrl, (value: string) => {
             this.editLoginUrl = value;
           })
@@ -2583,7 +2583,7 @@ struct CustomTtsVoiceManagerPage {
   }
 
   @Builder
-  editInput(label: string, placeholder: string, value: string, onChange: (value: string) => void) {
+  editInput(label: string, placeholder: string, value: string, onChange: (value: string) => void, hint: string = '') {
     Column() {
       Text(label)
         .fontSize(AppFontSize.CAPTION)
@@ -2600,6 +2600,13 @@ struct CustomTtsVoiceManagerPage {
           onChange(nextValue);
           this.saveVoiceEditDraft();
         })
+      if (hint) {
+        Text(hint)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .width('100%')
+          .margin({ top: AppSpacing.XS })
+      }
     }
     .width('100%')
   }
