@@ -21,6 +21,8 @@ import { ReaderFrontPage, ReaderFrontPageSpec } from '../core/reader/ReaderFront
 import { ReaderFrontPageText } from '../core/reader/ReaderFrontPageText';
 import { ReaderChapterEnd, ReaderChapterEndSpec } from '../core/reader/ReaderChapterEnd';
 import { ReaderChapterEndText } from '../core/reader/ReaderChapterEndText';
+import { ReaderWordSegmentRange } from '../core/reader/ReaderWordSegmentRange';
+import { textProcessing } from '@kit.NaturalLanguageKit';
 import { ChapterWordCounts } from '../core/book/ChapterWordCounts';
 import { applyReaderSystemBars, restoreReaderNavigation, syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
 import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation';
@@ -1233,6 +1235,10 @@ struct ReadBookPage {
   /** 章末卡片上会变的数字的版本，并进划线版本号：变了就地重建卡片。 */
   private readerChapterEndVersion: number = 0;
   private readerChapterWordCache: Map<string, number> = new Map();
+  /** 长按选中一个汉字后，按系统分词扩成整个词：记下最初的选区（页内显示偏移），用户拖过手柄就不再改。 */
+  private readerWordRefineDisplay: number[] = [];
+  /** 最近一次把初始选区交给系统 Text 的控制器，分词结果晚到时用它改选区。 */
+  private readerV2NativeSelectionAppliedController: TextController | null = null;
   @StorageProp('readerPageTurnHapticsScope') readerPageTurnHapticsScope: number = 0;
   @StorageLink('readerHeaderEnabled') @Watch('onReaderChromeChanged') readerHeaderEnabled: boolean = false;
   @StorageLink('readerFooterEnabled') @Watch('onReaderChromeChanged') readerFooterEnabled: boolean = true;
@@ -2263,6 +2269,7 @@ struct ReadBookPage {
       // 章末卡片上的“今天已读”：空闲时取一次，之后快读到章末时再更新。
       this.readerTodayReadMs = -1;
       if (this.readerChapterEndEnabled) this.refreshReaderTodayRead();
+      this.prewarmReaderWordSegment();
       if (loadSerial !== this.bookLoadSerial) {
         return;
       }
@@ -22542,6 +22549,7 @@ ${leading}` : leading;
         try {
           controller.setTextSelection(this.readerV2NativeSelectionPendingStart,
             this.readerV2NativeSelectionPendingEnd, { menuPolicy: MenuPolicy.SHOW });
+          this.readerV2NativeSelectionAppliedController = controller;
         } catch (_) {
         }
       }, calibrated ? 32 : 0);
@@ -22567,6 +22575,64 @@ ${leading}` : leading;
         .hitTestBehavior(HitTestMode.None)
       }
     }
+  }
+
+  /**
+   * 长按选中的是一个汉字时，在后台用系统分词找出它所在的词，把选区扩成整个词。分词结果晚到、用户已拖过手柄、
+   * 或这台设备没有分词能力时什么都不改（保持只选一个字）。
+   */
+  refineReaderSelectionToWord(page: ReaderV2PageLayout, text: string, position: number, start: number, end: number,
+    serial: number): void {
+    this.readerWordRefineDisplay = [];
+    if (end - start !== 1 || !ReaderWordSegmentRange.isCjk(text.charAt(position)) ||
+      !canIUse('SystemCapability.AI.NaturalLanguage.TextProcessing')) return;
+    const window = ReaderWordSegmentRange.window(text, position);
+    const sentence = text.substring(window[0], window[1]);
+    if (sentence.length < 2) return;
+    const startedAt = Date.now();
+    this.readerWordRefineDisplay = [this.readerV2SelectionDisplayStart, this.readerV2SelectionDisplayEnd];
+    const initial = this.readerWordRefineDisplay;
+    textProcessing.getWordSegment(sentence).then((segments: textProcessing.WordSegment[]): void => {
+      // 晚于 1.5 秒、换了一次长按、选区已被拖动过，都不再改。
+      if (Date.now() - startedAt > 1500 || serial !== this.readerTextSelectionSerial ||
+        this.readerV2NativeSelectionPendingSerial !== serial || this.readerWordRefineDisplay !== initial ||
+        this.readerV2SelectionDisplayStart !== initial[0] || this.readerV2SelectionDisplayEnd !== initial[1]) return;
+      const range = ReaderWordSegmentRange.rangeAt(sentence,
+        segments.map((segment: textProcessing.WordSegment): string => segment.word), position - window[0]);
+      if (!range) return;
+      const wordStart = window[0] + range[0];
+      const wordEnd = window[0] + range[1];
+      if (wordStart === start && wordEnd === end) return;
+      this.readerV2NativeSelectionPendingStart = wordStart;
+      this.readerV2NativeSelectionPendingEnd = wordEnd;
+      this.readerV2SelectionDisplayStart = this.readerV2DisplayOffsetForPageSelection(page, wordStart);
+      this.readerV2SelectionDisplayEnd = this.readerV2DisplayOffsetForPageSelection(page, wordEnd);
+      this.readerWordRefineDisplay = [this.readerV2SelectionDisplayStart, this.readerV2SelectionDisplayEnd];
+      this.readerV2SelectionPaintVersion++;
+      if (this.isReaderDesktopSelection() && this.readerDesktopSelectionPage === page) {
+        this.readerDesktopSelectionStart = wordStart;
+        this.readerDesktopSelectionEnd = wordEnd;
+      }
+      // 系统 Text 已经按一个字选好时改成整个词；还没选好的，等它按改过的 pending 选。
+      const controller = this.readerV2NativeSelectionAppliedController;
+      if (controller) {
+        try {
+          controller.setTextSelection(wordStart, wordEnd, { menuPolicy: MenuPolicy.SHOW });
+        } catch (_) {
+        }
+      }
+      this.refreshReaderSelectionHandles();
+    }).catch((error: Error): void => {
+      console.info('长按分词不可用，保持选中一个字:', error?.message || '');
+    });
+  }
+
+  /** 进阅读页时空闲预热一次分词引擎，第一次长按不用等它启动。 */
+  prewarmReaderWordSegment(): void {
+    if (!this.readerLongPressSelectText || !canIUse('SystemCapability.AI.NaturalLanguage.TextProcessing')) return;
+    this.runWhenReaderIdle((): void => {
+      textProcessing.getWordSegment('开始阅读').catch((): void => {});
+    }, 4000, (): boolean => this.isReaderPageMotionActive());
   }
 
   onReaderV2NativeSelectionChanged(page: ReaderV2PageLayout, chapterIndex: number, pageIndex: number,
@@ -22822,6 +22888,8 @@ ${leading}` : leading;
         this.readerV2SelectionDisplayStart = this.readerV2DisplayOffsetForPageSelection(page, start);
         this.readerV2SelectionDisplayEnd = this.readerV2DisplayOffsetForPageSelection(page, end);
         this.readerV2SelectionPaintVersion++;
+        this.readerV2NativeSelectionAppliedController = null;
+        this.refineReaderSelectionToWord(page, text, position, start, end, serial);
         this.readerV2NativeSelectionHostVersion++;
         // PC / 二合一设备上 setTextSelection(MenuPolicy.SHOW) 不会显示系统菜单。
         // 两种阅读方式共用这个操作条；复制内容随原生选区变化，而非固定取整页。
