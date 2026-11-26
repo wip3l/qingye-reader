@@ -9,11 +9,14 @@ export class ChapterWordCounts {
   private static readonly MAX_BOOKS: number = 12;
   private static books: Map<string, Map<number, number>> = new Map();
 
-  /** 只数文字：去掉图片等占位标记、HTML 标签和实体，空白不算，代理对算一个字。 */
+  /**
+   * 只数文字：去掉图片、段评按钮等占位标记、HTML 标签和实体，空白不算，代理对算一个字。
+   * 标记名里带数字（LEGADO_READER_ACTION_V3），段评标记每段一个、带编码后的热评，漏去掉会把字数撑大好几倍。
+   */
   static count(content: string): number {
     if (!content) return 0;
     const text = content
-      .replace(/\[\[LEGADO_[A-Z_]+:[^\]]*\]\]/g, '')
+      .replace(/\[\[LEGADO_[A-Z0-9_]+:[\s\S]*?\]\]/g, '')
       .replace(/<[^>]*>/g, '')
       .replace(/&(#\d+|#x[0-9a-fA-F]+|[a-zA-Z]+);/g, ' ');
     let total = 0;

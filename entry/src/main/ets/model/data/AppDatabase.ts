@@ -3174,18 +3174,45 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   }
 
   /**
+   * 字数算法的版本，记在 schema_meta。版本 1 没去掉带数字的段评标记（[[LEGADO_READER_ACTION_V3:…]]），
+   * 带段评的章节字数被撑大好几倍；升到 2 时把这些行的字数清成 -1，交给 backfillChapterWordCounts 重算。
+   * 只动正文里有这种标记的行，其余行字数本就对，不重写。
+   */
+  private static readonly WORD_COUNT_REVISION: number = 2;
+
+  async resetOutdatedChapterWordCounts(): Promise<void> {
+    await ReaderCacheCoordinator.run(async (): Promise<void> => {
+      if (!this.store) return;
+      let revision = 0;
+      const rs = await this.store.querySql(`SELECT value FROM schema_meta WHERE key = 'word_count_revision'`);
+      try {
+        if (rs.goToFirstRow()) revision = rs.getLong(0);
+      } finally { rs.close(); }
+      if (revision >= AppDatabase.WORD_COUNT_REVISION) return;
+      await this.store.executeSql('UPDATE book_contents SET contentChars = -1 ' +
+        "WHERE contentChars >= 0 AND instr(content, '[[LEGADO_READER_ACTION_V') > 0");
+      await this.store.executeSql(`DELETE FROM schema_meta WHERE key = 'word_count_revision'`);
+      await this.store.executeSql(`INSERT INTO schema_meta (key, value) VALUES ('word_count_revision', ` +
+        `${AppDatabase.WORD_COUNT_REVISION})`);
+    });
+  }
+
+  /**
    * 升级前写入的正文没有字数，分批补算（本地导入书也算，目录同样显示）；返回本批补了多少行，0 表示已补完。
    * 正文要读出来数，每批少取几行；cacheRevision 对不上说明这期间重写过，新写入自己带了字数，不覆盖。
    */
   async backfillChapterWordCounts(batchSize: number = 40): Promise<number> {
     return await ReaderCacheCoordinator.run(async (): Promise<number> => {
       if (!this.store) return 0;
-      const rs = await this.store.querySql('SELECT rowid AS rid, cacheRevision, content FROM book_contents ' +
-        'WHERE contentChars < 0 LIMIT ?', [batchSize]);
+      const rs = await this.store.querySql('SELECT rowid AS rid, cacheRevision, content, bookUrl, chapterIndex ' +
+        'FROM book_contents WHERE contentChars < 0 LIMIT ?', [batchSize]);
       const rows: number[][] = [];
       try {
         while (rs.goToNextRow()) {
-          rows.push([rs.getLong(0), rs.getLong(1), ChapterWordCounts.count(rs.getString(2))]);
+          const chars = ChapterWordCounts.count(rs.getString(2));
+          rows.push([rs.getLong(0), rs.getLong(1), chars]);
+          // 目录已经读过这本书的，进程内记录一并改掉，不用等下次打开目录。
+          ChapterWordCounts.remember(rs.getString(3), rs.getLong(4), chars);
         }
       } finally { rs.close(); }
       if (rows.length === 0) return 0;
