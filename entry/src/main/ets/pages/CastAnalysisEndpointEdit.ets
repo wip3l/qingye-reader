@@ -36,6 +36,8 @@ struct CastAnalysisEndpointEditPage {
   @State status: string = '';
   private client: MimoClient = new MimoClient();
   private serial: number = 0;
+  /** 测试进行中每秒刷新“已等几秒”，让人知道没卡死。 */
+  private tickTimer: number = -1;
 
   aboutToAppear(): void {
     this.endpointId = (router.getParams() as CastAnalysisEndpointEditParams)?.id || '';
@@ -46,7 +48,19 @@ struct CastAnalysisEndpointEditPage {
       .then((key: string): void => { this.keySaved = key.length > 0; }).catch((): void => {});
   }
   onPageShow(): void { syncSystemBars(getContext(this), this.dark, ThemeRuntime.pageColor(this.dark)); }
-  aboutToDisappear(): void { this.serial++; this.client.stop(); }
+  aboutToDisappear(): void { this.serial++; this.client.stop(); this.stopTicking(); }
+
+  private stopTicking(): void {
+    if (this.tickTimer >= 0) { clearInterval(this.tickTimer); this.tickTimer = -1; }
+  }
+  /** 测试中再点按钮：放弃这次测试。 */
+  private cancelTest(): void {
+    this.serial++;
+    this.client.stop();
+    this.stopTicking();
+    this.testing = false;
+    this.status = '已取消测试';
+  }
 
   private async test(): Promise<void> {
     if (this.testing) return;
@@ -58,6 +72,13 @@ struct CastAnalysisEndpointEditPage {
     if (model.length > 120) { this.status = '模型名称太长'; return; }
     const serial = ++this.serial;
     this.testing = true; this.status = '正在测试…';
+    const startedAt = Date.now();
+    this.stopTicking();
+    this.tickTimer = setInterval((): void => {
+      if (serial !== this.serial || !this.testing) return;
+      const seconds = Math.floor((Date.now() - startedAt) / 1000);
+      this.status = seconds < 15 ? '正在测试…' : `正在测试…已等 ${seconds} 秒（最长 90 秒）。推理模型会先“思考”，可能较慢`;
+    }, 1000);
     try {
       const key = this.apiKey.trim() || (this.endpointId ? await CastVoiceStore.analysisKey(this.endpointId) : '');
       if (serial !== this.serial) return;
@@ -75,7 +96,7 @@ struct CastAnalysisEndpointEditPage {
     } catch (error) {
       if (serial === this.serial) this.status = '测试没通过：' + ((error as Error).message || '未知错误');
     } finally {
-      if (serial === this.serial) this.testing = false;
+      if (serial === this.serial) { this.testing = false; this.stopTicking(); }
     }
   }
 
@@ -120,11 +141,11 @@ struct CastAnalysisEndpointEditPage {
             (this.testing ? ThemeRuntime.subTextColor(this.dark) : ThemeRuntime.dangerColor(this.dark)))
       }
 
-      Button(this.testing ? '正在测试…' : '测试并保存').width('100%').height(44).fontSize(AppFontSize.BODY)
-        .enabled(!this.testing)
-        .backgroundColor(ThemeRuntime.buttonColor(this.dark))
-        .fontColor(ThemeRuntime.onAccentColor(ThemeRuntime.buttonColor(this.dark)))
-        .onClick(() => { this.test(); })
+      Button(this.testing ? '取消测试' : '测试并保存').width('100%').height(44).fontSize(AppFontSize.BODY)
+        .backgroundColor(this.testing ? ThemeRuntime.softFillColor(this.dark) : ThemeRuntime.buttonColor(this.dark))
+        .fontColor(this.testing ? ThemeRuntime.primaryTextColor(this.dark) :
+          ThemeRuntime.onAccentColor(ThemeRuntime.buttonColor(this.dark)))
+        .onClick(() => { if (this.testing) this.cancelTest(); else this.test(); })
 
       Text('接口要兼容 OpenAI 的 chat/completions，并能按要求只输出 JSON。地址填到 /v1 即可，会自动补上 /chat/completions。' +
         '测试会发一句示例对白，产生极少量用量；密钥只保存在这台设备上，不进备份。')

@@ -1,4 +1,5 @@
 import http from '@ohos.net.http';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
 import { MimoAnalysis, MimoRole, MimoRoleProposal, MimoUnit, MimoPolicy, MimoSseParser } from '../../core/mimo/MimoPolicy';
 
@@ -18,12 +19,20 @@ class MimoRequest {
   thinking?: MimoThinking;
   response_format?: MimoResponseFormat;
   max_completion_tokens?: number;
+  /** 硅基流动、阿里云百炼等兼容接口关掉“思考”的字段；不认识它的接口会在第一次 400 后改用精简请求。 */
+  enable_thinking?: boolean;
+  max_tokens?: number;
 }
 class MimoAudioData { data: string = ''; }
 class MimoDelta { content: string = ''; audio?: MimoAudioData; }
 class MimoChoice { message?: MimoDelta; delta?: MimoDelta; finish_reason?: string; }
 class MimoResponse { choices: MimoChoice[] = []; error?: Object; }
 class MimoAnalysisInput { roles: MimoRoleProposal[] = []; units: MimoUnit[] = []; context: string = ''; }
+/** 别家接口返回的非 200（429 除外，429 仍走 MimoHttpError 重试）。 */
+class AnalysisHttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) { super(message); this.status = status; }
+}
 class MimoHttpError extends Error {
   status: number;
   retryAfter: number;
@@ -40,6 +49,11 @@ export class MimoAnalysisTarget {
 }
 
 export class MimoClient {
+  /**
+   * 不认识 enable_thinking / max_tokens / response_format 的接口（返回 400）记在这里，之后只发 model 和 messages。
+   * 键是“地址 模型”，进程内有效。
+   */
+  private static plainEndpoints: Set<string> = new Set<string>();
   private generation: number = 0;
   private aborters: (() => void)[] = [];
 
@@ -85,9 +99,17 @@ export class MimoClient {
     onRetry?: (delay: number) => void, target?: MimoAnalysisTarget): Promise<MimoAnalysis> {
     const body = new MimoRequest();
     body.response_format = new MimoResponseFormat();
+    const plainKey = target ? target.url + ' ' + target.model : '';
     if (target) {
-      // 别家接口不一定认 MiMo 的 thinking 和输出上限字段，只发通用的那几项。
       body.model = target.model;
+      if (MimoClient.plainEndpoints.has(plainKey)) {
+        body.response_format = undefined;
+      } else {
+        // 许多模型默认先“思考”再回答（硅基流动的 Qwen3.5 等）。我们是等整个回复返回才处理，思考几千字要等一两分钟，
+        // 测试像是卡住，朗读也跟不上；标注说话人用不着思考，关掉。输出上限防止模型一直写下去。
+        body.enable_thinking = false;
+        body.max_tokens = 4096;
+      }
     } else {
       body.model = 'mimo-v2.6-flash';
       body.thinking = new MimoThinking();
@@ -114,7 +136,18 @@ export class MimoClient {
         '儿童不能标为成年；已有角色ID保持稳定。情绪只能选平静、开心、悲伤、愤怒、恐惧、惊讶、温柔、紧张、低语。'),
       new MimoMessage('user', JSON.stringify(input))
     ];
-    const response = await this.json(key, body, onRetry, target?.url || '');
+    let response: MimoResponse;
+    try {
+      response = await this.json(key, body, onRetry, target?.url || '');
+    } catch (error) {
+      // 有的兼容接口遇到不认识的字段直接 400：去掉附加字段，只发 model 和 messages 再试一次，并记住这个接口。
+      if (!target || !(error instanceof AnalysisHttpError) || error.status !== 400 || MimoClient.plainEndpoints.has(plainKey)) {
+        throw error as Error;
+      }
+      MimoClient.plainEndpoints.add(plainKey);
+      body.enable_thinking = undefined; body.max_tokens = undefined; body.response_format = undefined;
+      response = await this.json(key, body, onRetry, target.url);
+    }
     // 有的模型不管 response_format，仍把 JSON 包在 ```json 代码块里。
     const content = (response.choices[0]?.message?.content || '').trim()
       .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
@@ -143,24 +176,34 @@ export class MimoClient {
       let response: http.HttpResponse;
       const name = url ? '分析模型' : 'MiMo';
       try { response = await client.request(url || MimoPolicy.endpoint(key), this.options(key, body)); }
-      catch (_) {
-        throw new Error(generation !== this.generation ? 'MiMo 请求已停止' :
-          (url ? '分析模型连接失败，请检查接口地址和网络' : MimoPolicy.error(0)));
+      catch (error) {
+        if (generation !== this.generation) throw new Error('MiMo 请求已停止');
+        // 2300028：超过 readTimeout 还没收完回复。
+        if (url && (error as BusinessError)?.code === 2300028) {
+          throw new Error('分析模型 90 秒内没有返回结果。如果这是会先“思考”的推理模型，请换一个不带思考的模型，或在服务商那里关闭思考');
+        }
+        throw new Error(url ? '分析模型连接失败，请检查接口地址和网络' : MimoPolicy.error(0));
       }
       if (generation !== this.generation) throw new Error('MiMo 请求已停止');
       if (response.responseCode !== 200) {
         // 429 仍抛可重试的错误；其余状态码对别家接口不套用 MiMo 的解释。
         if (url && response.responseCode !== 429) {
           const detail = MimoPolicy.errorDetail(String(response.result));
-          throw new Error(`分析模型请求未完成（HTTP ${response.responseCode}）` + (detail ? '：' + detail : ''));
+          throw new AnalysisHttpError(response.responseCode,
+            `分析模型请求未完成（HTTP ${response.responseCode}）` + (detail ? '：' + detail : ''));
         }
         throw new MimoHttpError(response.responseCode, this.retryDelay(response.header), key, String(response.result));
       }
       let parsed: MimoResponse;
       try { parsed = JSON.parse(String(response.result)) as MimoResponse; }
       catch (_) { throw new Error(name + ' 响应格式无效'); }
-      if (parsed.error || !Array.isArray(parsed.choices) || parsed.choices.length === 0 ||
-        parsed.choices[0].finish_reason === 'length') throw new Error(name + ' 返回了不完整的结果，请重试');
+      if (parsed.error || !Array.isArray(parsed.choices) || parsed.choices.length === 0) {
+        throw new Error(name + ' 返回了不完整的结果，请重试');
+      }
+      if (parsed.choices[0].finish_reason === 'length') {
+        throw new Error(url ? '分析模型的回复超出长度上限被截断。如果这是会先“思考”的推理模型，请换一个不带思考的模型' :
+          name + ' 返回了不完整的结果，请重试');
+      }
       return parsed;
     } finally {
       this.aborters = this.aborters.filter((item: () => void): boolean => item !== abort);

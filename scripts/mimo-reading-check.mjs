@@ -102,6 +102,35 @@ transport=()=>({
 await client.analyze('test',[],[],'',delay=>analysisNotices.push(delay));
 assert.equal(analysisRequests,3);
 assert.deepEqual(analysisNotices,[1000,2000], 'analysis retries notify independently from speech');
+// 别家分析接口：请求关掉思考、限制输出；不认识这些字段（400）时改发精简请求并记住；超时说清原因。
+{
+  const sent=[];
+  const reply=JSON.stringify({choices:[{message:{content:JSON.stringify({roles:[],assignments:[]})}}]});
+  const target={url:'https://api.example.test/v1/chat/completions',model:'thinker'};
+  transport=()=>({destroy(){},request:async(url,options)=>{const body=JSON.parse(options.extraData);sent.push(body);
+    assert.equal(url,target.url);return {responseCode:200,header:{},result:reply};}});
+  await client.analyze('k',[],[],'',undefined,target);
+  assert.equal(sent[0].enable_thinking,false,'thinking is switched off for other endpoints');
+  assert.equal(sent[0].max_tokens,4096);
+  assert.equal(sent[0].thinking,undefined,'MiMo-only fields are not sent');
+  sent.length=0;
+  const strict={url:'https://strict.example.test/v1/chat/completions',model:'m'};
+  transport=()=>({destroy(){},request:async(url,options)=>{const body=JSON.parse(options.extraData);sent.push(body);
+    if('enable_thinking' in body)return {responseCode:400,header:{},result:JSON.stringify({error:{message:'Unrecognized request argument: enable_thinking'}})};
+    return {responseCode:200,header:{},result:reply};}});
+  await client.analyze('k',[],[],'',undefined,strict);
+  assert.equal(sent.length,2,'one retry with a plain request');
+  assert.ok(!('enable_thinking' in sent[1])&&!('max_tokens' in sent[1])&&!('response_format' in sent[1]));
+  sent.length=0;
+  await client.analyze('k',[],[],'',undefined,strict);
+  assert.equal(sent.length,1,'the plain request is remembered');
+  assert.ok(!('enable_thinking' in sent[0]));
+  transport=()=>({destroy(){},request:async()=>{const e=new Error('timeout');e.code=2300028;throw e;}});
+  await assert.rejects(client.analyze('k',[],[],'',undefined,target),/90 秒内没有返回.*思考/);
+  transport=()=>({destroy(){},request:async()=>({responseCode:200,header:{},
+    result:JSON.stringify({choices:[{finish_reason:'length',message:{content:''}}]})})});
+  await assert.rejects(client.analyze('k',[],[],'',undefined,target),/长度上限/);
+}
 // Error bodies are surfaced (sanitized) and Token Plan keys go to their dedicated host.
 transport=fakeStream({status:402,errorBody:JSON.stringify({error:{message:'Insufficient\nbalance',code:'402'}})});
 await assert.rejects(client.synthesize('sk-a','x','白桦','',async()=>{}),/余额不足.*小米返回：Insufficient balance/);
