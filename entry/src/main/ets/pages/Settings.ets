@@ -175,6 +175,8 @@ struct SettingsPage {
   @StorageLink('readerAiProcessingIndicatorEnabled') readerAiProcessingIndicatorEnabled: boolean = true;
   @StorageLink('readerPreloadChapterCount') readerPreloadChapterCount: number = 1;
   @StorageLink('readerQuickBookmarkEnabled') readerQuickBookmarkEnabled: boolean = true;
+  @StorageLink('readerFrontPageEnabled') readerFrontPageEnabled: boolean = true;
+  @StorageLink('readerChapterEndCardEnabled') readerChapterEndEnabled: boolean = true;
   @StorageLink('readerScrollTapTurn') readerScrollTapTurn: boolean = false;
   @StorageProp('readerPageTurnHapticsScope') readerPageTurnHapticsScope: number = 0;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
@@ -856,6 +858,22 @@ struct SettingsPage {
         })
       }
       SettingSwitchRow({
+        title: '书封扉页',
+        description: '第一章前加一页书封、书名和简介，新书第一次打开先停在这页',
+        isOn: this.readerFrontPageEnabled,
+        onChange: (value: boolean) => {
+          this.setReaderFrontPageEnabled(value);
+        }
+      })
+      SettingSwitchRow({
+        title: '章末卡片',
+        description: '一章最后一页的留白里显示本章字数、今天已读和下一章，放不下就不显示',
+        isOn: this.readerChapterEndEnabled,
+        onChange: (value: boolean) => {
+          this.setReaderChapterEndEnabled(value);
+        }
+      })
+      SettingSwitchRow({
         title: '快速添加书签',
         description: '下拉正文添加或删除当前页书签',
         isOn: this.readerQuickBookmarkEnabled,
@@ -1257,6 +1275,8 @@ struct SettingsPage {
     this.readerAiProcessingIndicatorEnabled = settings.aiProcessingIndicatorEnabled;
     this.readerPreloadChapterCount = settings.preloadChapterCount;
     this.readerQuickBookmarkEnabled = settings.quickBookmarkEnabled;
+    this.readerFrontPageEnabled = settings.frontPageEnabled;
+    this.readerChapterEndEnabled = settings.chapterEndCardEnabled;
     this.readerScrollTapTurn = settings.scrollTapTurn;
     this.readerFontFamily = settings.fontFamily || '';
     this.readerFontFilePath = settings.fontFilePath || '';
@@ -2575,6 +2595,20 @@ struct SettingsPage {
     this.readerQuickBookmarkEnabled = enabled;
     ReaderSettingsStore.saveQuickBookmarkEnabled(getContext(this), enabled).catch((e: Error) => {
       console.error('保存快速添加书签设置失败:', e);
+    });
+  }
+
+  setReaderFrontPageEnabled(enabled: boolean): void {
+    this.readerFrontPageEnabled = enabled;
+    ReaderSettingsStore.saveFrontPageEnabled(getContext(this), enabled).catch((e: Error) => {
+      console.error('保存书封扉页设置失败:', e);
+    });
+  }
+
+  setReaderChapterEndEnabled(enabled: boolean): void {
+    this.readerChapterEndEnabled = enabled;
+    ReaderSettingsStore.saveChapterEndCardEnabled(getContext(this), enabled).catch((e: Error) => {
+      console.error('保存章末卡片设置失败:', e);
     });
   }
 
