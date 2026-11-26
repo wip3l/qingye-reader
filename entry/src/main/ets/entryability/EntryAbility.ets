@@ -57,6 +57,7 @@ import { Book, BookSourceRuntimeStore, NativeSourceInteraction, SourceScriptNoti
 import { AppSourceInteraction } from '../utils/AppSourceInteraction';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { CrashReportStore } from '../utils/CrashReportStore';
+import { CrashContextTrail } from '../utils/CrashContextTrail';
 import { AppDatabase } from '../model/data/AppDatabase';
 import fs from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
@@ -108,6 +109,8 @@ export default class EntryAbility extends UIAbility {
     // 执行任何书源之前装好平台的 Cookie 端口（鸿蒙上不装，内核用 ArkWeb Cookie 库）。
     installCookiePort();
     setSpeechCacheDir(this.context.cacheDir);
+    // 本次运行的状态（页面、内存采样）先开始记：上次运行的崩溃事件到达时要按进程号取它那次的记录。
+    CrashContextTrail.start(this.context);
     // 上次运行的闪退/卡死/被系统结束事件在订阅后由系统投递，越早订阅越早拿到。
     CrashReportStore.start(this.context);
     this.networkBootstrapPromise = NetworkSettingsStore.load(this.context).catch((error: Error) => {
@@ -510,6 +513,11 @@ export default class EntryAbility extends UIAbility {
       } catch (error) {
         console.warn('墨水屏灰阶取主窗口失败:', error);
       }
+      try {
+        CrashContextTrail.watchPages(windowStage.getMainWindowSync().getUIContext());
+      } catch (error) {
+        console.warn('记录页面切换失败:', error);
+      }
       this.syncStartupWindow(windowStage);
       this.scheduleDeferredStartupInitialization();
     });
@@ -671,6 +679,7 @@ export default class EntryAbility extends UIAbility {
     AiAccessPolicy.stop();
     ComicColorizer.setAppForeground(false);
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onBackground');
+    CrashContextTrail.flush();
     readStatsTracker.setAppForeground(false);
     // Page.onPageShow is shared by real route returns and a simple Home/lock-screen resume. Publish a
     // background revision so retained pages do not treat the foreground transition as a settings change.

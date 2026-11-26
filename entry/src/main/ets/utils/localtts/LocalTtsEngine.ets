@@ -2,6 +2,7 @@ import worker, { MessageEvents, ErrorEvent } from '@ohos.worker';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { HttpTtsAudio } from '../HttpTtsReader';
 import { LocalTtsModel, LocalTtsModels } from './LocalTtsModels';
+import { CrashContextTrail } from '../CrashContextTrail';
 
 interface LocalTtsReply {
   type: string;
@@ -122,6 +123,7 @@ export class LocalTtsEngine {
     LocalTtsEngine.thread = null;
     if (thread) {
       try { thread.terminate(); } catch (_) {}
+      CrashContextTrail.mark('离线音色模型', '');
     }
   }
 
@@ -153,6 +155,7 @@ export class LocalTtsEngine {
     const thread = new worker.ThreadWorker('../../workers/LocalTtsWorker.ets', { name: 'LocalTts' });
     LocalTtsEngine.thread = thread;
     LocalTtsEngine.modelId = dir;
+    CrashContextTrail.mark('离线音色模型', dir.substring(dir.lastIndexOf('/') + 1));
     LocalTtsEngine.initPromise = new Promise<number>((resolve, reject): void => {
       LocalTtsEngine.initResolve = resolve;
       LocalTtsEngine.initReject = reject;

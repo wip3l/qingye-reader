@@ -3,6 +3,7 @@ import { hiAppEvent } from '@kit.PerformanceAnalysisKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import deviceInfo from '@ohos.deviceInfo';
+import { CrashContextTrail } from './CrashContextTrail';
 
 /** 崩溃记录的种类：闪退（JS 异常或原生崩溃）、卡死被结束、被系统结束（内存、显存等资源管控）。 */
 export type CrashReportKind = 'crash' | 'freeze' | 'killed';
@@ -20,6 +21,8 @@ export interface CrashReportSummary {
 /**
  * 本地崩溃记录。订阅系统的 APP_CRASH / APP_FREEZE / APP_KILLED 事件：这些事件在出事后的下一次启动时由系统投递，
  * 每条存成 crash_reports/<id>.json，系统附带的完整日志（external_log）复制成 <id>.log，最多留 MAX_REPORTS 条。
+ * 每条还附上那次运行的状态（CrashContextTrail：页面、在用功能、内存采样）；“被系统结束”本身不带堆栈，全靠它判断原因。
+ * 系统的内存超限预警（RESOURCE_OVERLIMIT）单独存进 overlimit.json，按进程号附到同一次运行的记录里。
  * 不联网上传，用户在“关于 › 交流与反馈 › 崩溃记录”里查看并自行分享。
  *
  * 每条新记录挂起一次启动提示（pending_notice 文件，同步到 AppStorage 的 KEY_PENDING_NOTICE），
@@ -40,6 +43,8 @@ export class CrashReportStore {
   private static readonly FREEZE_KILL_REASON: RegExp = /block|freeze|lifecycle.?timeout/i;
   /** 卡死日志要十几秒才生成，APP_FREEZE 常比 APP_KILLED 晚到；这段时间内先不为后者弹提示。 */
   private static readonly FREEZE_PAIR_WAIT_MS: number = 40000;
+  private static readonly OVERLIMIT_FILE: string = 'overlimit.json';
+  private static readonly MAX_OVERLIMITS: number = 10;
   private static dir: string = '';
   private static started: boolean = false;
   private static writeChain: Promise<void> = Promise.resolve();
@@ -55,7 +60,8 @@ export class CrashReportStore {
         name: CrashReportStore.WATCHER_NAME,
         appEventFilters: [{
           domain: hiAppEvent.domain.OS,
-          names: [hiAppEvent.event.APP_CRASH, hiAppEvent.event.APP_FREEZE, hiAppEvent.event.APP_KILLED]
+          names: [hiAppEvent.event.APP_CRASH, hiAppEvent.event.APP_FREEZE, hiAppEvent.event.APP_KILLED,
+            hiAppEvent.event.RESOURCE_OVERLIMIT]
         }],
         onReceive: (_domain: string, groups: Array<hiAppEvent.AppEventGroup>): void => {
           for (const group of groups) {
@@ -109,6 +115,16 @@ export class CrashReportStore {
     }
     if (record.stack) {
       lines.push('', '==== 调用栈 ====', record.stack);
+    }
+    if (record.trail) {
+      lines.push('', '==== 出事前的状态 ====', record.trail);
+    }
+    const overlimits = CrashReportStore.overlimitsOf(record.pid || 0);
+    if (overlimits.length > 0) {
+      lines.push('', '==== 系统资源超限预警 ====');
+      for (const item of overlimits) {
+        lines.push(`${CrashReportStore.formatTime(item.time)}  ${item.type}`, item.detail);
+      }
     }
     if (record.hilog.length > 0) {
       lines.push('', '==== 最近日志 ====');
@@ -178,6 +194,10 @@ export class CrashReportStore {
 
   private static async save(name: string, info: hiAppEvent.AppEventInfo): Promise<void> {
     const params = (info.params || {}) as Record<string, Object>;
+    if (name === hiAppEvent.event.RESOURCE_OVERLIMIT) {
+      CrashReportStore.saveOverlimit(params);
+      return;
+    }
     const kind: CrashReportKind = name === hiAppEvent.event.APP_FREEZE ? 'freeze' :
       (name === hiAppEvent.event.APP_KILLED ? 'killed' : 'crash');
     if (kind === 'killed' && CrashReportStore.ignoredKill(params)) return;
@@ -222,8 +242,11 @@ export class CrashReportStore {
         detailParams[key] = value;
       }
     }
+    const pid = CrashReportStore.pidOf(params);
     const record: StoredCrashRecord = {
       summary: summary,
+      pid: pid,
+      trail: CrashContextTrail.describe(pid, time),
       device: `${deviceInfo.marketName || deviceInfo.productModel || ''} (${deviceInfo.productModel || ''})`,
       os: `${deviceInfo.displayVersion || ''} · API ${deviceInfo.sdkApiVersion}`,
       detail: JSON.stringify(detailParams, null, 2),
@@ -242,6 +265,53 @@ export class CrashReportStore {
       return;
     }
     CrashReportStore.postNotice(id);
+  }
+
+  /** 事件里的进程号：闪退/卡死在顶层 pid，被系统结束在 last_exit_detail_info.pid。 */
+  private static pidOf(params: Record<string, Object>): number {
+    const direct = CrashReportStore.numberOf(params['pid']);
+    if (direct) return direct;
+    const detail = params['last_exit_detail_info'];
+    if (detail !== undefined && detail !== null && typeof detail === 'object') {
+      return CrashReportStore.numberOf((detail as Record<string, Object>)['pid']);
+    }
+    return 0;
+  }
+
+  /** 系统的资源超限预警（内存泄漏等）：不单独成记录、不弹提示，留着给同一进程后来的崩溃记录参考。 */
+  private static saveOverlimit(params: Record<string, Object>): void {
+    const item = new StoredOverlimit();
+    item.time = CrashReportStore.numberOf(params['time']) || Date.now();
+    item.pid = CrashReportStore.pidOf(params);
+    item.type = CrashReportStore.textOf(params['resource_type']) || '未知资源';
+    const detail: Record<string, Object> = {};
+    for (const key of Object.keys(params)) {
+      if (key === 'external_log' || key === 'bundle_name' || key === 'bundle_version' || key === 'time' ||
+        key === 'pid' || key === 'uid' || key === 'resource_type') continue;
+      detail[key] = params[key];
+    }
+    item.detail = JSON.stringify(detail, null, 2);
+    CrashReportStore.ensureDir();
+    const list = CrashReportStore.readOverlimits();
+    list.push(item);
+    const kept = list.slice(Math.max(0, list.length - CrashReportStore.MAX_OVERLIMITS));
+    CrashReportStore.writeText(`${CrashReportStore.dir}/${CrashReportStore.OVERLIMIT_FILE}`, JSON.stringify(kept));
+  }
+
+  private static overlimitsOf(pid: number): StoredOverlimit[] {
+    if (!pid) return [];
+    return CrashReportStore.readOverlimits().filter((item: StoredOverlimit): boolean => item.pid === pid);
+  }
+
+  private static readOverlimits(): StoredOverlimit[] {
+    const text = CrashReportStore.readText(`${CrashReportStore.dir}/${CrashReportStore.OVERLIMIT_FILE}`);
+    if (!text) return [];
+    try {
+      const list = JSON.parse(text) as StoredOverlimit[];
+      return Array.isArray(list) ? list : [];
+    } catch (error) {
+      return [];
+    }
   }
 
   private static postNotice(id: string): void {
@@ -418,4 +488,14 @@ interface StoredCrashRecord {
   /** 旧记录没有这个字段。 */
   stack?: string;
   hilog: string[];
+  /** 出事进程号与那次运行的状态摘要（CrashContextTrail）；旧记录没有。 */
+  pid?: number;
+  trail?: string;
+}
+
+class StoredOverlimit {
+  time: number = 0;
+  pid: number = 0;
+  type: string = '';
+  detail: string = '';
 }

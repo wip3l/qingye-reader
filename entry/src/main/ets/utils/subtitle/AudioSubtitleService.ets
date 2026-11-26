@@ -11,6 +11,7 @@ import { RemoteAudioPlayback } from '../RemoteAudioPlayback';
 import { AudioPrefetch } from '../AudioPrefetch';
 import { AudioBookSettingsStore } from '../AudioBookSettingsStore';
 import { SubtitleModelStore } from './SubtitleModelStore';
+import { CrashContextTrail } from '../CrashContextTrail';
 import { AccountSessionStore } from '../../account/AccountSessionStore';
 
 /** 每段识别 16 秒，前后各多解 1 秒给边界的字补上下文。 */
@@ -589,6 +590,7 @@ export class AudioSubtitleService {
       }
       const thread = new worker.ThreadWorker('../../workers/AudioSubtitleWorker.ets', { name: 'AudioSubtitle' });
       this.thread = thread;
+      CrashContextTrail.mark('AI 字幕模型', '已加载');
       this.threadReady = false;
       thread.onmessage = (event: MessageEvents): void => {
         const reply = event.data as SubtitleWorkerReply;
@@ -668,6 +670,7 @@ export class AudioSubtitleService {
     }
     if (thread) {
       try { thread.terminate(); } catch (_) {}
+      CrashContextTrail.mark('AI 字幕模型', '');
     }
   }
 
