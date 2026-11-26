@@ -151,13 +151,58 @@ export class MimoPolicy {
   }
 
   /** Analysis batches: a small first batch so the opening starts quickly, then larger ones. */
+  // 第一批只有 5 句，起播不用久等；之后每批 30 句：一段来回的对话尽量落在同一批里，模型才分得清谁接谁的话。
   static batchStart(index: number): number {
-    return index < 5 ? 0 : 5 + Math.floor((index - 5) / 16) * 16;
+    return index < 5 ? 0 : 5 + Math.floor((index - 5) / MimoPolicy.BATCH) * MimoPolicy.BATCH;
   }
+  static readonly BATCH: number = 30;
 
   static batchEnd(start: number, total: number): number {
-    return Math.min(total, start === 0 ? 5 : start + 16);
+    return Math.min(total, start === 0 ? 5 : start + MimoPolicy.BATCH);
   }
+
+  /**
+   * 原文里写明了是谁说的对白，不必问模型：引号前紧挨着“林晚轻声说：”，或引号后紧跟着“林晚笑道。”这类说话提示。
+   * 说话提示要以人物的名字或别名开头（两个字以上，取最长的那个），并且含有说话的动词；
+   * 用“他”“她”指代、名字不在开头（“听见林晚说”）、几个人物同名的，都不认，留给模型判断。
+   * prev / next 是这句前后紧挨着的原文。返回人物 id，认不出返回空串。
+   */
+  static taggedSpeaker(prev: string, unit: string, next: string, roles: MimoRole[]): string {
+    if (!/^[“「『"]/.test(unit.trimStart())) return '';
+    const speakerOf = (clause: string): string => {
+      const text = clause.trim();
+      if (!text || !MimoPolicy.SPEECH_VERB.test(text)) return '';
+      let best = '';
+      let bestLength = 0;
+      let ambiguous = false;
+      for (const role of roles) {
+        if (role.id === 'narrator') continue;
+        for (const name of [role.name].concat(role.aliases || [])) {
+          const value = (name || '').trim();
+          if (value.length < 2 || !text.startsWith(value)) continue;
+          if (value.length > bestLength) { best = role.id; bestLength = value.length; ambiguous = false; }
+          else if (value.length === bestLength && role.id !== best) ambiguous = true;
+        }
+      }
+      return ambiguous ? '' : best;
+    };
+    // 引号前：上一段以冒号或逗号收尾，取最后一个分句（“这时，林晚轻声说：” → “林晚轻声说”）。
+    const before = prev.replace(/\s+$/, '');
+    if (/[：:，,]$/.test(before)) {
+      const clauses = before.slice(0, -1).split(/[。！？!?…\n”」』，,；;]/);
+      const speaker = speakerOf(clauses[clauses.length - 1] || '');
+      if (speaker) return speaker;
+    }
+    // 引号后：下一段不是对白、也不是在引出下一句对白（以冒号或逗号收尾），取它的第一个分句（“林晚笑道。”）。
+    const after = next.replace(/^\s+/, '');
+    if (after && !/^[“「『"]/.test(after) && !/[：:，,]\s*$/.test(after)) {
+      const first = after.split(/[，,。！？!?：:；;…\n]/)[0];
+      return speakerOf(first);
+    }
+    return '';
+  }
+  private static readonly SPEECH_VERB: RegExp =
+    /说|道|问|答|喊|叫|嚷|吼|笑|叹|骂|劝|应|哭|嘀咕|低语|开口|补充|解释|追问|反问|喝|吩咐|嘟囔|喃喃|吐槽|感慨|提醒|安慰|命令|回应|回答/;
 
   static letters(text: string): number {
     const matches = text.match(/[\p{L}\p{N}]/gu);

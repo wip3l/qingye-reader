@@ -308,13 +308,15 @@ export class MimoReadingSession {
     this.trimCache(directory, 64 * 1024 * 1024);
   }
   private async analyze(key: string, batch: MimoUnit[], book: string, bookName: string, context: string,
-    generation: number, target: MimoAnalysisTarget | undefined, chapter: string, sourceOffset: number): Promise<void> {
+    generation: number, target: MimoAnalysisTarget | undefined, chapter: string, sourceOffset: number,
+    after: string = ''): Promise<void> {
     const cast = MimoStore.cast(book);
     const directory = this.directory('mimo_analysis');
     // 识别结果按句存（这本书的这份人物档案、这一章、这句话在章里的位置和原文）。从哪儿开始读，分批的边界就在哪儿，
     // 按批存的话换个起点就全都对不上；按句存，读过的句子不管从哪儿开始都不再请求模型、不再消耗用量。
     // 清除人物档案后 epoch 变了，旧结果自然作废。
-    const storePath = directory + '/' + MimoStore.hash('units-v1:' +
+    // v2：请求开始附带下文、批次加大，旧的识别结果作废重来。
+    const storePath = directory + '/' + MimoStore.hash('units-v2:' +
       (target ? target.url + '|' + target.model : 'mimo-v2.6-flash:' + MimoStore.load().namespace) + '|' +
       book + '|' + (cast.epoch || 0) + '|' + chapter) + '.json';
     let stored: Record<string, MimoAssignment> = {};
@@ -337,7 +339,7 @@ export class MimoReadingSession {
     const analysisCached = !!analysis;
     if (!analysis) {
       const client = generation < 0 ? this.aheadClient : this.client;
-      try { analysis = await client.analyze(key, batch, cast.roles.slice(-100), context, undefined, target); }
+      try { analysis = await client.analyze(key, batch, cast.roles.slice(-100), context, undefined, target, after); }
       catch (error) { throw new Error('MIMO_ANALYSIS:' + (error as Error).message); }
       await this.readyFor(generation);
       // 请求期间别的批次可能已经写过这个文件：重新读一遍再并进去。
@@ -378,14 +380,27 @@ export class MimoReadingSession {
       latest.roles.push(role);
       changed = true;
     }
-    for (const unit of batch) {
+    let tagged = 0;
+    let overruled = 0;
+    for (let position = 0; position < batch.length; position++) {
+      const unit = batch[position];
       const item = analysis.assignments.find((assignment): boolean => assignment.unitId === unit.id);
       if (!item) throw new Error('角色标注不完整');
       const known = latest.roles.some((role: MimoRole): boolean => role.id === item.roleId);
       unit.uncertain = !known || item.confidence < 0.7;
       unit.roleId = unit.uncertain ? 'narrator' : item.roleId;
       unit.emotion = MimoPolicy.emotion(item.emotion);
+      // 原文写明了是谁说的，以原文为准（用户的逐句纠正在朗读时仍优先）。
+      const prev = position > 0 ? batch[position - 1].text : context;
+      const next = position < batch.length - 1 ? batch[position + 1].text : after;
+      const speaker = MimoPolicy.taggedSpeaker(prev, unit.text, next, latest.roles);
+      if (speaker) {
+        tagged++;
+        if (speaker !== unit.roleId) overruled++;
+        unit.roleId = speaker; unit.uncertain = false;
+      }
     }
+    if (tagged > 0) console.info(`[TTS] role tags: units=${batch[0].id}-${batch[batch.length - 1].id},tagged=${tagged},overruled=${overruled}`);
     if (changed) MimoStore.saveCast(book, latest, bookName);
   }
 
@@ -519,9 +534,10 @@ export class MimoReadingSession {
       // 和 read 的第一批完全一样地切：识别结果按句落盘，下一章读到时直接取用，不再请求。
       const end = MimoPolicy.batchEnd(0, units.length);
       const context = ahead.text.slice(Math.max(0, units[0].start - 800), units[0].start);
+      const following = ahead.text.slice(units[end - 1].end, units[end - 1].end + 300);
       try {
         await this.analyze(key, units.slice(0, end), ahead.book, options.bookName || '', context, generation, target,
-          ahead.chapter, ahead.sourceOffset);
+          ahead.chapter, ahead.sourceOffset, following);
       } finally {
         analysisDone();
       }
@@ -657,11 +673,12 @@ export class MimoReadingSession {
         if (!task) {
           const batch = units.slice(start, MimoPolicy.batchEnd(start, units.length));
           const context = text.slice(Math.max(0, units[start].start - 800), units[start].start);
+          const following = text.slice(batch[batch.length - 1].end, batch[batch.length - 1].end + 300);
           // 第一批如果提前准备时已经在识别，等它落盘再读结果，不重复请求。
           const opening: Promise<void> = start === 0 && adoptedAnalysis !== null ?
             adoptedAnalysis.catch((): void => {}) : Promise.resolve();
           const created = opening.then((): Promise<void> => this.analyze(key, batch, options.book,
-            options.bookName || '', context, generation, target, options.chapter, options.sourceOffset))
+            options.bookName || '', context, generation, target, options.chapter, options.sourceOffset, following))
             .then((): void => {
               analyzed.add(start);
               // 多角色朗读：一批识别完接着识别下一批，直到本章结束。后面的片段早早知道是谁说的，

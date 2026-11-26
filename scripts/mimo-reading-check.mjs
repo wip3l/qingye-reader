@@ -131,6 +131,36 @@ assert.deepEqual(analysisNotices,[1000,2000], 'analysis retries notify independe
     result:JSON.stringify({choices:[{finish_reason:'length',message:{content:''}}]})})});
   await assert.rejects(client.analyze('k',[],[],'',undefined,target),/长度上限/);
 }
+// 原文写明的说话人直接认，不靠模型。
+{
+  const role=(id,name,aliases=[])=>Object.assign(new MimoRole(),{id,name,aliases});
+  const cast=[new MimoRole(),role('lin','林晚',['阿晚']),role('shen','沈砚'),role('shenmu','沈砚之')];
+  const tag=(prev,unit,next)=>MimoPolicy.taggedSpeaker(prev,unit,next,cast);
+  assert.equal(tag('这时，林晚轻声说：','“走吧。”',''),'lin','tag before the quote');
+  assert.equal(tag('他们沉默了很久。','“走吧。”','林晚笑道。'),'lin','tag after the quote');
+  assert.equal(tag('','“走吧。”','阿晚叹了口气，转身离开。'),'lin','aliases count');
+  assert.equal(tag('','“走吧。”','沈砚之回答。'),'shenmu','the longest name wins');
+  assert.equal(tag('','“走吧。”','他说。'),'','pronouns are left to the model');
+  assert.equal(tag('','“走吧。”','听见林晚说。'),'','a name not at the start is not the speaker');
+  assert.equal(tag('','“走吧。”','林晚推开了门。'),'','no speech verb, no tag');
+  assert.equal(tag('','“甲的话。”','沈砚说：'),'','narration that introduces the next quote does not belong to this one');
+  assert.equal(tag('林晚说：','他走了。',''),'','narration is never tagged');
+  const units=MimoPolicy.split('沈砚说：“雨停了。”“我们走吧。”林晚答道。');
+  assert.deepEqual(Array.from(units,u=>u.text),['沈砚说：','“雨停了。”','“我们走吧。”','林晚答道。']);
+  assert.equal(tag(units[0].text,units[1].text,units[2].text),'shen');
+  assert.equal(tag(units[1].text,units[2].text,units[3].text),'lin');
+}
+// 识别请求附带下文，提示模型说话人可能在对白之后交代。
+{
+  let sentBody=null;
+  transport=()=>({destroy(){},request:async(url,options)=>{sentBody=JSON.parse(options.extraData);
+    return {responseCode:200,header:{},result:JSON.stringify({choices:[{message:{content:JSON.stringify({roles:[],assignments:[]})}}]})};}});
+  await client.analyze('k',[],[],'前文','',undefined,'林晚说。'+'后'.repeat(400));
+  const payload=JSON.parse(sentBody.messages[1].content);
+  assert.equal(payload.context,'前文');
+  assert.ok(payload.after.startsWith('林晚说。')&&payload.after.length===300,'up to 300 characters of following text');
+  assert.match(sentBody.messages[0].content,/after 是下文/);
+}
 // Error bodies are surfaced (sanitized) and Token Plan keys go to their dedicated host.
 transport=fakeStream({status:402,errorBody:JSON.stringify({error:{message:'Insufficient\nbalance',code:'402'}})});
 await assert.rejects(client.synthesize('sk-a','x','白桦','',async()=>{}),/余额不足.*小米返回：Insufficient balance/);
@@ -264,7 +294,7 @@ assert.equal(focus.join(''),many);
 const analyzeNext=events.indexOf('analyze:5');
 const lastOfFirstBatch=events.findIndex(e=>e.includes('这是第4句'));
 assert.ok(analyzeNext>=0&&analyzeNext<lastOfFirstBatch,'batch 2 analysis starts while batch 1 plays');
-assert.equal(MimoPolicy.batchStart(4),0);assert.equal(MimoPolicy.batchStart(5),5);assert.equal(MimoPolicy.batchStart(21),21);
+assert.equal(MimoPolicy.batchStart(4),0);assert.equal(MimoPolicy.batchStart(5),5);assert.equal(MimoPolicy.batchStart(34),5);assert.equal(MimoPolicy.batchStart(35),35);
 holdNext=true;
 const old=session.read('旧章节。',options);const oldError=old.catch(e=>e);
 while(!held)await Promise.resolve();
@@ -373,8 +403,8 @@ const longChapter=Array.from({length:40},(_,i)=>'这是第'+i+'句足够长的�
 await session.read(longChapter,castOptions);
 assert.equal(focus.join(''),longChapter);
 const analysisOrder=events.filter(e=>e.startsWith('analyze:'));
-assert.deepEqual(analysisOrder,['analyze:0','analyze:5','analyze:21','analyze:37'],'every batch of the chapter is analysed once, in order');
-assert.ok(events.indexOf('analyze:37')<events.findIndex(e=>e.includes('这是第30句')),'the last batch is analysed well before playback reaches it');
+assert.deepEqual(analysisOrder,['analyze:0','analyze:5','analyze:35'],'every batch of the chapter is analysed once, in order');
+assert.ok(events.indexOf('analyze:35')<events.findIndex(e=>e.includes('这是第30句')),'the last batch is analysed well before playback reaches it');
 
 // 按模型调度：旁白和人物用了两个离线模型时，同一个模型的片段排在一起合成。
 savedCast=null;files.clear();castSpoken.length=0;focus.length=0;
