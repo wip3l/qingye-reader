@@ -10,13 +10,15 @@ const compile = text => stripTypeScriptTypes(text.replace(/^import [\s\S]*?;\r?\
 // The graphics enum is deliberately zero-based like the SDK, unlike ArkUI's numeric font weight.
 const context = vm.createContext({
   graphicsText: { FontWeight: Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`W${(i + 1) * 100}`, i])) },
-  ReaderCommentBubbleStyle: class { identity() { return 'bubble'; } }
+  ReaderCommentBubbleStyle: class { identity() { return 'bubble'; } },
+  // Glyph measurement needs the native text engine; no squeeze is applied in this check.
+  ReaderPunctuationMetrics: { spaceOf: () => null }
 });
 const typography = read('components/reader/ReaderLayoutSettings.ets');
 const fields = typography.slice(typography.indexOf('export class ReaderTypographyField'), typography.indexOf('/**\n * 正文排版') > 0 ?
   typography.indexOf('/**\n * 正文排版') : typography.indexOf('/**\r\n * 正文排版'));
 vm.runInContext([
-  'core/reader/ReaderCommentBubbleSize.ts', 'core/reader/ReaderFontWeight.ts', 'core/reader/ReaderV2LayoutSnapshot.ets',
+  'core/reader/ReaderCommentBubbleSize.ts', 'core/reader/ReaderFontWeight.ts', 'core/reader/ReaderPunctuationSqueeze.ts', 'core/reader/ReaderV2LayoutSnapshot.ets',
   'core/reader/ReaderV2PageLayout.ets', 'core/reader/ReaderV2Style.ets', 'core/reader/ReaderV2Paginator.ets'
 ].map(file => compile(read(file))).join('\n') + '\n' + compile(fields) + `
   globalThis.api = { ReaderFontWeight, ReaderTypographyField, ReaderV2LayoutInput,

@@ -98,6 +98,7 @@ jobs:
       - run: node --experimental-strip-types scripts/reader-screen-scroll-check.mjs
       - run: node --experimental-strip-types scripts/reader-scroll-gesture-check.mjs
       - run: node --experimental-strip-types scripts/reader-font-weight-check.mjs
+      - run: node --experimental-strip-types scripts/reader-punctuation-squeeze-check.mjs
       - run: node --experimental-strip-types scripts/reader-brightness-check.mjs
       - run: node --experimental-strip-types scripts/reader-settings-persistence-check.mjs
       - run: node --experimental-strip-types scripts/reader-style-editor-check.mjs

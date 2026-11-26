@@ -18,6 +18,8 @@ import { ReaderCommentBubblePainter } from './ReaderCommentBubble';
 import { ReaderMixedPageLayout } from './ReaderMixedPageLayout';
 import { ReaderFontWeight } from './ReaderFontWeight';
 import { ReaderFontStroke } from './ReaderFontStroke';
+import { ReaderPunctuationSqueeze } from './ReaderPunctuationSqueeze';
+import { ReaderPunctuationMetrics } from './ReaderPunctuationMetrics';
 import { EpubNoteLink } from '../book/EpubNoteLink';
 import { ReaderV2CommentCardLayout } from './ReaderV2CommentCard';
 import { ReaderV2ChapterHeadLayout, ReaderV2ChapterHeadMetrics } from './ReaderV2ChapterHead';
@@ -1408,6 +1410,11 @@ export class ReaderV2Paginator {
         }
       }
     }
+    // 相邻全角标点的前一个单独成段，挤压用的负字距只加在它身上。
+    for (const owner of ReaderPunctuationSqueeze.pairOwners(block.text, sliceStart, sliceEnd)) {
+      boundaries.push(owner);
+      boundaries.push(owner + 1);
+    }
     boundaries.sort((left: number, right: number): number => left - right);
     const unique: number[] = [];
     for (const value of boundaries) {
@@ -1491,11 +1498,28 @@ export class ReaderV2Paginator {
       // ReadBook, while this paragraph remains the single source of truth for glyph metrics and baselines.
       // Repainting the text in an ArkUI Text containing ImageSpans gives that copy a different line box and
       // makes decorated and ordinary text on the same line visibly drift vertically.
-      return ReaderV2Paginator.resolveWeight(base,
-        ReaderV2Paginator.requestedWeightAt(document, block, absoluteOffset, snapshot, regexStyles));
+      return ReaderV2Paginator.squeezePunctuation(block, absoluteOffset, decorationReservation,
+        ReaderV2Paginator.resolveWeight(base,
+          ReaderV2Paginator.requestedWeightAt(document, block, absoluteOffset, snapshot, regexStyles)));
     }
-    return ReaderV2Paginator.resolveWeight(base,
-        ReaderV2Paginator.requestedWeightAt(document, block, absoluteOffset, snapshot, regexStyles));
+    return ReaderV2Paginator.squeezePunctuation(block, absoluteOffset, decorationReservation,
+      ReaderV2Paginator.resolveWeight(base,
+        ReaderV2Paginator.requestedWeightAt(document, block, absoluteOffset, snapshot, regexStyles)));
+  }
+
+  /**
+   * 标点挤压：这个字和下一个字是相邻的全角标点时，用负字距收掉两者之间的一部分空白（见 ReaderPunctuationSqueeze）。
+   * 字符已由 styleBoundaries 单独切出。它后面紧跟着装饰框的预留空白时不收，免得吃掉装饰的位置。
+   */
+  private static squeezePunctuation(block: ReaderV2Block, absoluteOffset: number, decorationReservation: number,
+    style: graphicsText.TextStyle): graphicsText.TextStyle {
+    if (decorationReservation > 0) return style;
+    const local = absoluteOffset - block.displayStart;
+    if (!ReaderPunctuationSqueeze.ownsPair(block.text, local)) return style;
+    const em = ReaderPunctuationSqueeze.squeezeEm(ReaderPunctuationMetrics.spaceOf(style, block.text[local]),
+      ReaderPunctuationMetrics.spaceOf(style, block.text[local + 1]));
+    if (em > 0) style.letterSpacing = (style.letterSpacing ?? 0) - em * (style.fontSize ?? 0);
+    return style;
   }
 
   /**
