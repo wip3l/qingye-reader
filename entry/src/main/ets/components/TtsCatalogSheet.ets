@@ -39,7 +39,32 @@ export class CatalogTitleDataSource implements CatalogTitleSource {
   }
 }
 
+/** 搜索结果的数据源：每一项是命中章节在目录里的显示序号。 */
+class CatalogMatchDataSource implements IDataSource {
+  private indexes: number[] = [];
+  private listeners: DataChangeListener[] = [];
+
+  totalCount(): number { return this.indexes.length; }
+
+  getData(index: number): number { return this.indexes[index] ?? 0; }
+
+  registerDataChangeListener(listener: DataChangeListener): void {
+    if (!this.listeners.includes(listener)) this.listeners.push(listener);
+  }
+
+  unregisterDataChangeListener(listener: DataChangeListener): void {
+    const index = this.listeners.indexOf(listener);
+    if (index >= 0) this.listeners.splice(index, 1);
+  }
+
+  replace(indexes: number[]): void {
+    this.indexes = indexes;
+    for (const listener of this.listeners) listener.onDataReloaded();
+  }
+}
+
 const CATALOG_SCROLLBAR_MIN_SCROLL_INTERVAL_MS = 90;
+const CATALOG_SEARCH_INPUT_KEY = 'tts_catalog_search_input';
 const CATALOG_COVER_WIDTH = 52;
 const CATALOG_COVER_HEIGHT = 68;
 
@@ -50,7 +75,7 @@ const CATALOG_COVER_HEIGHT = 68;
  * (ReadBook.readerFloatingTocPanel / tocPanelSummary / tocChapterList):
  *   - shown by the host as a system half-modal sheet (immersive material on API 26+)
  *   - cover + book name (+ optional subtitle) header with a circular close button
- *   - summary row carrying "共 N 章", the order toggle and optional actions
+ *   - summary row carrying "共 N 章", the order toggle, title search and optional actions
  *   - list rows with a `•` / `·` leader, hairline separators and a cache chip
  *
  * The caller keeps the data source in *display order*, so every index this
@@ -69,9 +94,9 @@ export struct TtsCatalogSheet {
   @Prop bookUrl: string = '';
   @Prop cover: ResourceStr = '';
   @Prop bookSubtitle: string = '';
-  @Prop count: number = 0;
+  @Prop @Watch('onCatalogChanged') count: number = 0;
   @Prop currentDisplayIndex: number = 0;
-  @Prop reverseOrder: boolean = false;
+  @Prop @Watch('onCatalogChanged') reverseOrder: boolean = false;
   @Prop bottomInset: number = 0;
   @Prop viewportHeight: number = 720;
   /** 章节标记文字；有声书标的是音频已下载。 */
@@ -85,6 +110,13 @@ export struct TtsCatalogSheet {
   @State visibleItemCount: number = 1;
   @State scrollbarDragging: boolean = false;
   @State dragOffset: number = 0;
+  @State searchVisible: boolean = false;
+  @State searchQuery: string = '';
+  /** 已按关键词筛过：列表只显示命中的章节。 */
+  @State searchActive: boolean = false;
+  @State searchMatchCount: number = 0;
+  private matchSource: CatalogMatchDataSource = new CatalogMatchDataSource();
+  private searchScroller: ListScroller = new ListScroller();
   scroller: ListScroller = new ListScroller();
   source: CatalogTitleSource = new CatalogTitleDataSource();
   isCached: (displayIndex: number) => boolean = () => false;
@@ -182,10 +214,11 @@ export struct TtsCatalogSheet {
    */
   @Builder
   catalogSummary() {
+    Column({ space: AppSpacing.MD }) {
     Row({ space: AppSpacing.SM }) {
       Column({ space: AppSpacing.XXS }) {
         Row() {
-          Text(`共 ${this.count} 章`)
+          Text(this.searchActive ? `找到 ${this.searchMatchCount} 章` : `共 ${this.count} 章`)
             .fontSize(AppFontSize.BODY)
             .fontColor(this.subTextColor)
             .height(34)
@@ -219,6 +252,22 @@ export struct TtsCatalogSheet {
       .alignItems(HorizontalAlign.Start)
       .padding({ left: AppSpacing.MD })
 
+      ImmersiveBackButton({
+        icon: $r('sys.symbol.magnifyingglass'),
+        iconOffsetX: 0,
+        iconSize: 18,
+        iconColor: this.searchVisible ? this.accentColor : this.controlIconColor,
+        darkMode: this.darkMode,
+        buttonSize: 36,
+        containerWidth: 36,
+        containerHeight: 36,
+        startInset: 0,
+        materialScale: 0.75,
+        compactLayout: true,
+        accessibilityLabel: this.searchVisible ? '关闭目录搜索' : '搜索目录',
+        onBack: () => this.toggleSearch()
+      })
+
       if (this.actionLabel) {
         ImmersiveBackButton({
           icon: $r('sys.symbol.download'),
@@ -239,6 +288,48 @@ export struct TtsCatalogSheet {
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)
+
+    if (this.searchVisible) {
+      Row({ space: AppSpacing.MD }) {
+        SymbolGlyph($r('sys.symbol.magnifyingglass'))
+          .fontSize(18)
+          .fontColor([this.subTextColor])
+        TextInput({ text: this.searchQuery, placeholder: '搜索章节名称' })
+          .key(CATALOG_SEARCH_INPUT_KEY)
+          .defaultFocus(true)
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.primaryTextColor)
+          .layoutWeight(1)
+          .height(38)
+          .padding({ left: 0, right: 0 })
+          .backgroundColor(Color.Transparent)
+          .enterKeyType(EnterKeyType.Search)
+          .onChange((value: string) => {
+            this.searchQuery = value;
+          })
+          .onSubmit(() => this.submitSearch())
+        if (this.searchQuery) {
+          Text('×')
+            .fontSize(AppFontSize.TITLE)
+            .fontColor(this.subTextColor)
+            .width(32)
+            .height(38)
+            .textAlign(TextAlign.Center)
+            .accessibilityText('清空目录搜索')
+            .onClick(() => {
+              this.clearSearchResult();
+              setTimeout(() => focusControl.requestFocus(CATALOG_SEARCH_INPUT_KEY), 50);
+            })
+        }
+      }
+      .width('100%')
+      .height(40)
+      .padding({ left: AppSpacing.LG, right: AppSpacing.MD })
+      .borderRadius(20)
+      .backgroundColor(ThemeRuntime.hairlineColor(this.darkMode))
+    }
+    }
+    .width('100%')
     .padding({ left: AppSpacing.XXL, right: AppSpacing.XL, top: AppSpacing.XL, bottom: AppSpacing.MD })
   }
 
@@ -247,43 +338,41 @@ export struct TtsCatalogSheet {
     Stack({ alignContent: Alignment.TopEnd }) {
       // 半模态的内容在宿主把它打开之后才创建，宿主那时调 scrollToIndex 列表还没挂上，是空操作。
       // 所以定位到当前章由这里负责：首次布局从当前章附近排起，挂上后再居中。
+      if (this.searchActive) {
+        List({ space: 0, scroller: this.searchScroller }) {
+          if (this.searchMatchCount === 0) {
+            ListItem() {
+              Column({ space: AppSpacing.MD }) {
+                SymbolGlyph($r('sys.symbol.magnifyingglass'))
+                  .fontSize(28)
+                  .fontColor([this.subTextColor])
+                Text('未找到匹配章节')
+                  .fontSize(AppFontSize.BODY)
+                  .fontColor(this.subTextColor)
+              }
+              .width('100%')
+              .padding({ top: 44, bottom: 44 })
+            }
+          }
+          LazyForEach(this.matchSource, (displayIndex: number) => {
+            ListItem() {
+              this.catalogRow(this.source.getData(displayIndex), displayIndex)
+            }
+          }, (displayIndex: number) => `m_${displayIndex}_${this.isCached(displayIndex) ? 1 : 0}`)
+        }
+        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+        .width('100%')
+        .height('100%')
+        .scrollBar(BarState.Off)
+        .onScrollIndex((start: number, end: number) => {
+          this.firstVisibleIndex = Math.max(0, start);
+          this.visibleItemCount = Math.max(1, end - start + 1);
+        })
+      } else {
       List({ space: 0, scroller: this.scroller, initialIndex: this.initialListIndex() }) {
         LazyForEach(this.source, (title: string, index: number) => {
           ListItem() {
-            Row({ space: AppSpacing.MD }) {
-              Text(index === this.currentDisplayIndex ? '•' : '·')
-                .fontSize(index === this.currentDisplayIndex ? 22 : 18)
-                .fontColor(index === this.currentDisplayIndex ? this.accentColor : this.subTextColor)
-                .width(18)
-                .textAlign(TextAlign.Center)
-
-              Text(title || `第${this.canonicalIndex(index) + 1}章`)
-                .fontSize(AppFontSize.BODY_LARGE)
-                .fontWeight(index === this.currentDisplayIndex ? FontWeight.Medium : FontWeight.Regular)
-                .fontColor(this.catalogTitleColor(index))
-                .maxLines(2)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .layoutWeight(1)
-
-              if (this.isCached(index)) {
-                Text(this.cachedLabel)
-                  .fontSize(AppFontSize.MICRO)
-                  .fontColor(ThemeRuntime.successColor(this.darkMode))
-                  .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: AppSpacing.XXS, bottom: AppSpacing.XXS })
-                  .backgroundColor(ThemeRuntime.successSurfaceColor(this.darkMode))
-                  .borderRadius(ThemeRuntime.mediumRadius())
-              }
-            }
-            .width('100%')
-            .padding({ left: AppSpacing.LG, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
-            .backgroundColor(index === this.currentDisplayIndex ?
-              this.selectedRowBackgroundColor() : Color.Transparent)
-            .border({ width: { bottom: 0.5 },
-              color: ThemeRuntime.softFillColor(this.darkMode) })
-            .onClick(() => this.onSelect(index))
-            .gesture(LongPressGesture({ repeat: false }).onAction(() => {
-              if (this.onLongPress) this.onLongPress(index);
-            }))
+            this.catalogRow(title, index)
           }
           // 标记变了键也跟着变，数据源重载时这一行才会重建；否则目录开着时下载完的章节不显示标记。
         }, (title: string, index: number) => `${index}_${title}_${this.isCached(index) ? 1 : 0}`)
@@ -297,6 +386,7 @@ export struct TtsCatalogSheet {
         this.firstVisibleIndex = Math.max(0, start);
         this.visibleItemCount = Math.max(1, end - start + 1);
       })
+      }
 
       this.catalogScrollbar()
     }
@@ -305,6 +395,45 @@ export struct TtsCatalogSheet {
     .onAreaChange((_oldValue: Area, newValue: Area) => {
       this.listViewportHeight = Number(newValue.height);
     })
+  }
+
+  /** 目录的一行；index 始终是完整目录里的显示序号，搜索结果里也一样。 */
+  @Builder
+  catalogRow(title: string, index: number) {
+    Row({ space: AppSpacing.MD }) {
+      Text(index === this.currentDisplayIndex ? '•' : '·')
+        .fontSize(index === this.currentDisplayIndex ? 22 : 18)
+        .fontColor(index === this.currentDisplayIndex ? this.accentColor : this.subTextColor)
+        .width(18)
+        .textAlign(TextAlign.Center)
+
+      Text(title || `第${this.canonicalIndex(index) + 1}章`)
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontWeight(index === this.currentDisplayIndex ? FontWeight.Medium : FontWeight.Regular)
+        .fontColor(this.catalogTitleColor(index))
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+
+      if (this.isCached(index)) {
+        Text(this.cachedLabel)
+          .fontSize(AppFontSize.MICRO)
+          .fontColor(ThemeRuntime.successColor(this.darkMode))
+          .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: AppSpacing.XXS, bottom: AppSpacing.XXS })
+          .backgroundColor(ThemeRuntime.successSurfaceColor(this.darkMode))
+          .borderRadius(ThemeRuntime.mediumRadius())
+      }
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.LG, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+    .backgroundColor(index === this.currentDisplayIndex ?
+      this.selectedRowBackgroundColor() : Color.Transparent)
+    .border({ width: { bottom: 0.5 },
+      color: ThemeRuntime.softFillColor(this.darkMode) })
+    .onClick(() => this.onSelect(index))
+    .gesture(LongPressGesture({ repeat: false }).onAction(() => {
+      if (this.onLongPress) this.onLongPress(index);
+    }))
   }
 
   @Builder
@@ -364,6 +493,67 @@ export struct TtsCatalogSheet {
     } catch (_) {}
   }
 
+  /** 当前列表的行数：搜索时是命中的章数。 */
+  private listCount(): number {
+    return this.searchActive ? this.searchMatchCount : this.count;
+  }
+
+  private activeScroller(): ListScroller {
+    return this.searchActive ? this.searchScroller : this.scroller;
+  }
+
+  /** 目录换了顺序或章数变了，显示序号跟着变，搜索结果要重算。 */
+  onCatalogChanged(): void {
+    if (!this.searchActive) return;
+    setTimeout(() => {
+      if (this.searchActive) this.submitSearch();
+    }, 50);
+  }
+
+  private toggleSearch(): void {
+    if (this.searchVisible) {
+      this.searchVisible = false;
+      this.clearSearchResult();
+      return;
+    }
+    this.searchVisible = true;
+    setTimeout(() => focusControl.requestFocus(CATALOG_SEARCH_INPUT_KEY), 50);
+  }
+
+  private submitSearch(): void {
+    const keyword = this.searchQuery.trim().toLowerCase();
+    if (!keyword) {
+      this.clearSearchResult();
+      return;
+    }
+    const total = this.source.totalCount();
+    const matches: number[] = [];
+    for (let index = 0; index < total; index++) {
+      if (this.source.getData(index).toLowerCase().includes(keyword)) matches.push(index);
+    }
+    this.matchSource.replace(matches);
+    this.searchMatchCount = matches.length;
+    this.firstVisibleIndex = 0;
+    this.visibleItemCount = 1;
+    if (this.searchActive) {
+      try {
+        this.searchScroller.scrollToIndex(0, false, ScrollAlign.START);
+      } catch (_) {}
+    }
+    this.searchActive = true;
+  }
+
+  /** 退出筛选；完整目录的列表会重新创建，并回到当前章。 */
+  private clearSearchResult(): void {
+    this.searchQuery = '';
+    if (!this.searchActive) return;
+    this.searchActive = false;
+    this.searchMatchCount = 0;
+    this.matchSource.replace([]);
+    this.firstVisibleIndex = 0;
+    this.visibleItemCount = 1;
+  }
+
   canonicalIndex(displayIndex: number): number {
     return this.reverseOrder ? this.count - 1 - displayIndex : displayIndex;
   }
@@ -387,16 +577,16 @@ export struct TtsCatalogSheet {
   }
 
   shouldShowScrollbar(): boolean {
-    return this.listViewportHeight > 0 && this.count > this.visibleItemCount;
+    return this.listViewportHeight > 0 && this.listCount() > this.visibleItemCount;
   }
 
   thumbLength(): number {
-    return VirtualListScrollbar.thumbLength(this.listViewportHeight, this.count, this.visibleItemCount);
+    return VirtualListScrollbar.thumbLength(this.listViewportHeight, this.listCount(), this.visibleItemCount);
   }
 
   thumbOffset(): number {
     return VirtualListScrollbar.thumbOffset(this.listViewportHeight, this.thumbLength(),
-      this.count, this.firstVisibleIndex, this.visibleItemCount);
+      this.listCount(), this.firstVisibleIndex, this.visibleItemCount);
   }
 
   displayedThumbOffset(): number {
@@ -450,8 +640,8 @@ export struct TtsCatalogSheet {
     this.dragOffset = offset;
     // 滑块到底时最后一行贴底，否则按首行定位。
     const atEnd = VirtualListScrollbar.reachesEnd(this.listViewportHeight, thumbLength, offset);
-    const targetIndex = atEnd ? this.count - 1 : VirtualListScrollbar.firstVisibleIndex(this.listViewportHeight,
-      thumbLength, this.count, this.visibleItemCount, offset);
+    const targetIndex = atEnd ? this.listCount() - 1 : VirtualListScrollbar.firstVisibleIndex(this.listViewportHeight,
+      thumbLength, this.listCount(), this.visibleItemCount, offset);
     this.firstVisibleIndex = targetIndex;
     const now = Date.now();
     if (this.scrollbarDragging && now - this.lastScrollbarScrollAt < CATALOG_SCROLLBAR_MIN_SCROLL_INTERVAL_MS) {
@@ -459,7 +649,7 @@ export struct TtsCatalogSheet {
     }
     this.lastScrollbarScrollAt = now;
     try {
-      this.scroller.scrollToIndex(targetIndex, false, atEnd ? ScrollAlign.END : ScrollAlign.START);
+      this.activeScroller().scrollToIndex(targetIndex, false, atEnd ? ScrollAlign.END : ScrollAlign.START);
     } catch (_) {}
   }
 }
