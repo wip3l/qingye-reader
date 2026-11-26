@@ -4,7 +4,7 @@ import { LengthMetrics } from '@ohos.arkui.node';
 import { ReaderCommentCardSettings } from '../utils/ReaderCommentCardSettings';
 import { motion } from '@kit.MultimodalAwarenessKit';
 import deviceInfo from '@ohos.deviceInfo';
-import { Book, BookGroup, SearchBook, BookChapter, BookFieldSanitizer, BookSource, BookTypeSupport, BookUrlResolver, SourceEventCallback } from '@legado/sourceengine';
+import { Book, BookGroup, SearchBook, BookChapter, BookFieldSanitizer, BookSource, BookTypeSupport, BookUrlResolver, NativeSourceService, SourceEventCallback } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { WebBookService } from '../core/book/WebBookService';
 import { syncSystemBars } from '../utils/SystemBars';
@@ -95,6 +95,9 @@ struct SearchBookDetailPage {
   /** 当前书源能打开作者主页（回调脚本处理作者点击）：点作者名的确认框换成“搜索这位作者 / 作者主页”两项。 */
   @State sourceHasAuthorHome: boolean = false;
   private authorHomeSource: BookSource | null = null;
+  /** 原生书源在详情里给出的作者主页地址（书籍字段 authorUrl）；有它时不走事件回调，直接打开。 */
+  private authorHomeUrl: string = '';
+  private currentSource: BookSource | null = null;
   @State name: string = '';
   @State author: string = '';
   @State kind: string = '';
@@ -952,6 +955,8 @@ struct SearchBookDetailPage {
     this.customButtonSource = null;
     this.sourceHasCustomButton = false;
     this.authorHomeSource = null;
+    this.authorHomeUrl = '';
+    this.currentSource = null;
     this.sourceHasAuthorHome = false;
     if (!origin) return;
     const db = AppDatabase.getInstance();
@@ -959,10 +964,12 @@ struct SearchBookDetailPage {
       .then(() => db.getBookSource(origin))
       .then((source: BookSource | null): void => {
         if (origin !== this.origin || !source) return;
+        this.currentSource = source;
         if (SourceEventCallback.handles(source, SourceEventCallback.CLICK_AUTHOR)) {
           this.authorHomeSource = source;
           this.sourceHasAuthorHome = true;
         }
+        this.refreshNativeAuthorHome();
         if (!SourceEventCallback.hasCustomButton(source)) return;
         this.customButtonSource = source;
         this.sourceCustomButtonLabel = SourceEventCallback.customButtonLabel(source) || '书源功能';
@@ -976,9 +983,20 @@ struct SearchBookDetailPage {
       this.sourceCustomButtonLabel);
   }
 
-  /** 作者主页：交给书源的事件回调，书源要求打开网页时用应用内网页打开。 */
+  /** 原生书源的作者主页地址跟着书籍变量走：书源查到了、详情取回来了都要重新看一次。 */
+  refreshNativeAuthorHome(): void {
+    this.authorHomeUrl = NativeSourceService.authorUrlOf(this.currentSource, this.bookVariable);
+    if (this.authorHomeUrl) this.sourceHasAuthorHome = true;
+    else if (!this.authorHomeSource) this.sourceHasAuthorHome = false;
+  }
+
+  /** 作者主页：原生书源给了地址就直接打开；兼容书源交给事件回调，由它要求打开网页。都在底部弹层里显示。 */
   openAuthorHome(): Promise<void> {
     this.closeAuthorSearchDialog();
+    if (this.authorHomeUrl) {
+      this.openSourceWebSheet(this.authorHomeUrl);
+      return Promise.resolve();
+    }
     return this.runSourceEvent(this.authorHomeSource, SourceEventCallback.CLICK_AUTHOR, '作者主页');
   }
 
@@ -2484,7 +2502,7 @@ struct SearchBookDetailPage {
         this.authorChoiceRow($r('sys.symbol.magnifyingglass'), '搜索这位作者', '用作者名在书源里搜',
           () => this.confirmAuthorSearch())
         this.authorChoiceRow($r('sys.symbol.person'), '作者主页',
-          `由${this.authorHomeSource?.bookSourceName || '书源'}提供`, () => { this.openAuthorHome(); })
+          `由${this.originName || this.currentSource?.bookSourceName || '书源'}提供`, () => { this.openAuthorHome(); })
         Text('取消')
           .fontSize(AppFontSize.BODY_LARGE)
           .fontColor(this.secondaryTextColor())
@@ -2636,6 +2654,7 @@ struct SearchBookDetailPage {
     this.updateTime = book.updateTime || this.updateTime;
     this.bookType = book.type || this.bookType;
     this.bookVariable = book.variable || this.bookVariable;
+    this.refreshNativeAuthorHome();
     if (shelfRecord) {
       this.shelfGroupId = book.group > 0 ? book.group : 0;
       this.refreshShelfGroupName();
