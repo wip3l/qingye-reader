@@ -51,6 +51,20 @@ export interface TtsReadOptions {
   localVoice?: LocalTtsModel;
   focusBreakOffsets?: number[];
   keepAudioOutputOnFinish?: boolean;
+  /**
+   * 连续朗读：本章最后一段已经送去合成（每次朗读最多一次）。调用方这时把下一章的朗读文本交给 prepareNext，
+   * 让下一章开头几段赶在本章放完之前合成好。系统音色不触发。
+   */
+  onTailQueued?: () => void;
+}
+
+/**
+ * 跨章提前合成的结果，键是“路线|音色|倍速|送去合成的文字”。下一章开读时按同样的键取用；取不到（文本、音色或
+ * 倍速对不上）就照常合成，所以猜错只是白合成几段，不会读错。
+ */
+class TtsAheadAudio {
+  cloud: Map<string, Promise<CloudTtsAudio>> = new Map<string, Promise<CloudTtsAudio>>();
+  audio: Map<string, Promise<HttpTtsAudio>> = new Map<string, Promise<HttpTtsAudio>>();
 }
 
 export interface TtsVoiceDownloadCallbacks {
@@ -250,6 +264,19 @@ export class SystemTtsReader {
    * 下一章的语音直接排在这段尾巴后面；不再接着读时要先 drainQueuedTail 再停，免得切掉结尾。
    */
   private queuedTailPending: boolean = false;
+  /** 排着的结尾在 httpReader 的输出里（云端、自定义、离线音色），不在 pcmPlayer 里（系统音色）。 */
+  private queuedTailOnHttp: boolean = false;
+  /** 为下一章提前合成的开头几段（prepareNext 写入），下一章 start 时整份接过去。 */
+  private aheadAudio: TtsAheadAudio = new TtsAheadAudio();
+  /** 这一章开读时接过来的提前合成结果；按键取用，剩下没用上的在本章结束时放掉。 */
+  private adoptedAhead: TtsAheadAudio = new TtsAheadAudio();
+  private onTailQueued?: () => void;
+  private tailQueuedGeneration: number = -1;
+  /** 本章最后送出的那段合成完成：下一章的提前合成排在它后面，不和本章抢接口并发与带宽。 */
+  private tailGate: Promise<void> = Promise.resolve();
+  /** 自定义音色提前合成下一章开头约这么多字（大约 15 秒），且不超过音色允许的并发数。 */
+  private static readonly AHEAD_CUSTOM_CHARS: number = 60;
+  private static readonly AHEAD_LOCAL_CHUNKS: number = 2;
 
   static async listAvailableVoices(): Promise<TtsVoiceOption[]> {
     try {
@@ -470,6 +497,12 @@ export class SystemTtsReader {
       this.releaseSystemAudioSession();
     }
     const generation = ++this.readGeneration;
+    // 上一章排着的结尾后面紧接着就是这次的语音，不再需要单独放完。
+    this.queuedTailPending = false;
+    this.discardAhead(this.adoptedAhead);
+    this.adoptedAhead = this.aheadAudio;
+    this.aheadAudio = new TtsAheadAudio();
+    this.onTailQueued = options?.onTailQueued;
     this.paused = false;
     this.onFinished = options?.onFinished;
     this.onSpeechless = options?.onSpeechless;
@@ -533,6 +566,10 @@ export class SystemTtsReader {
         sourceOffset: options.mimoSourceOffset || 0, speed: options.speed || 1,
         cast: options.castVoices === true, voiceSpeed: this.getTtsSpeed(),
         speakText: (value: string): string => this.normalizeChunkForSpeech(value),
+        onTailQueued: (): void => {
+          const callback = this.onTailQueued;
+          if (callback && generation === this.readGeneration && this.active) callback();
+        },
         onFocus: (unit: MimoUnit, index: number): void => {
           if (generation !== this.readGeneration || !this.active) return;
           const chunk: TtsChunk = { text: unit.text, start: unit.start, end: unit.end };
@@ -796,6 +833,10 @@ export class SystemTtsReader {
     this.currentAudioWritePromise = Promise.resolve();
     this.currentFocusRetryCount = 0;
     this.ttsPcmPlayType = 0;
+    this.onTailQueued = undefined;
+    this.queuedTailPending = false;
+    this.discardAhead(this.aheadAudio);
+    this.discardAhead(this.adoptedAhead);
     this.resetSystemPcmPipeline();
     this.clearSpeakWatchdog();
     this.httpReader.stop();
@@ -961,6 +1002,10 @@ export class SystemTtsReader {
   private finish(notify: boolean): void {
     const keepPcmOutput = notify && this.keepsPcmOutputOnFinish();
     this.readGeneration++;
+    // 本章开读时接过来、没用上的提前合成结果放掉；为下一章准备的只在不再接着读时放掉。
+    this.discardAhead(this.adoptedAhead);
+    if (!keepPcmOutput) this.discardAhead(this.aheadAudio);
+    this.onTailQueued = undefined;
     this.active = false;
     this.paused = false;
     this.chunks = [];
@@ -1015,12 +1060,14 @@ export class SystemTtsReader {
    * 下一章要等用户解锁才开始。现在下一章的语音紧接着写在尾巴后面，流里一直有数据。
    * 返回 true 表示已经报了完成，调用方不必再 drain。
    */
-  private finishWhenQueued(generation: number): boolean {
+  private finishWhenQueued(generation: number, httpOutput: boolean = false): boolean {
     if (this.readGeneration !== generation || !this.active || !this.keepsPcmOutputOnFinish()) return false;
-    console.info(`[TTS] chapter audio fully queued, handing off before playback drains: ${this.audioDebugState()}`);
+    console.info(`[TTS] chapter audio fully queued, handing off before playback drains: http=${httpOutput},` +
+      `${this.audioDebugState()}`);
     this.queuedTailPending = true;
+    this.queuedTailOnHttp = httpOutput;
     // 普通蓝牙等非 offload 通道只预收零点几秒：下一章合成出来之前垫静音，不让流断数据转入待机。
-    this.pcmPlayer.startGapFill();
+    if (httpOutput) this.httpReader.startGapFill(); else this.pcmPlayer.startGapFill();
     this.finish(true);
     return true;
   }
@@ -1037,7 +1084,7 @@ export class SystemTtsReader {
     let timer = -1;
     try {
       await Promise.race([
-        this.pcmPlayer.drain(),
+        this.queuedTailOnHttp ? this.httpReader.drain() : this.pcmPlayer.drain(),
         new Promise<void>((resolve: () => void): void => {
           timer = setTimeout(resolve, 20000);
         })
@@ -1061,6 +1108,7 @@ export class SystemTtsReader {
       this.drainQueuedTail().then((): void => {
         if (this.active || this.readGeneration !== generation) return;
         console.info('[TTS] releasing idle pcm output after chapter handoff grace period');
+        this.discardAhead(this.aheadAudio);
         this.pcmPlayer.stop();
         this.httpReader.stop();
       });
@@ -1104,6 +1152,7 @@ export class SystemTtsReader {
     this.fillCloudAudioJobs(generation, voiceId, jobs, 1);
     while (this.readGeneration === generation && this.active) {
       if (jobs.length === 0) {
+        if (this.finishWhenQueued(generation, true)) return;
         await this.httpReader.drain();
         if (this.readGeneration === generation && this.active) {
           // Cloud audio plays through httpReader's renderer, not this.pcmPlayer. Stopping it here
@@ -1158,7 +1207,15 @@ export class SystemTtsReader {
       const normalized = this.normalizeChunkForSpeechWithMap(chunk.text);
       const speakText = normalized.text;
       if (!speakText) continue;
-      const promise = this.cloudReader.synthesize(voiceId, speakText, this.getTtsSpeed())
+      const speed = this.getTtsSpeed();
+      const aheadKey = this.aheadKey('cloud', this.cloudAheadVoiceKey(voiceId, this.optionCloudVoiceTier), speed, speakText);
+      const ahead = this.adoptedAhead.cloud.get(aheadKey);
+      if (ahead) {
+        this.adoptedAhead.cloud.delete(aheadKey);
+        console.info(`[TTS] using audio prepared ahead: route=cloud,chars=${speakText.length}`);
+      }
+      const promise = (ahead ? ahead.catch((): Promise<CloudTtsAudio> =>
+        this.cloudReader.synthesize(voiceId, speakText, speed)) : this.cloudReader.synthesize(voiceId, speakText, speed))
         .then((audio: CloudTtsAudio): CloudTtsAudioResult => {
           if (this.readGeneration !== generation || !this.active) {
             return { error: new Error('在线音色合成已停止') };
@@ -1169,6 +1226,8 @@ export class SystemTtsReader {
       jobs.push({ index, chunk, text: speakText,
         sourceToSpeechOffsets: normalized.sourceToSpeechOffsets, promise });
     }
+    this.noteTailQueued(generation, jobs.length > 0 ?
+      jobs[jobs.length - 1].promise.then((): void => {}) : Promise.resolve());
   }
 
   private cloudTtsPrefetchWindow(): number {
@@ -1406,6 +1465,7 @@ export class SystemTtsReader {
     this.prefetchCustomAudioAfterHeadStart(generation, voice, jobs);
     while (this.readGeneration === generation && this.active) {
       if (jobs.length === 0) {
+        if (this.finishWhenQueued(generation, true)) return;
         await this.httpReader.drain();
         if (this.readGeneration === generation && this.active) {
           this.finish(true);
@@ -1503,6 +1563,8 @@ export class SystemTtsReader {
       }
       jobs.push(this.createCustomAudioJob(generation, voice, chunk, index, speakText));
     }
+    this.noteTailQueued(generation, jobs.length > 0 ?
+      jobs[jobs.length - 1].promise.then((): void => {}) : Promise.resolve());
   }
 
   private customTtsPrefetchWindow(voice: HttpTTS): number {
@@ -1526,7 +1588,9 @@ export class SystemTtsReader {
 
   private createCustomAudioJob(generation: number, voice: HttpTTS, chunk: TtsChunk, index: number,
     speakText: string): CustomTtsAudioJob {
-    const promise = this.httpReader.synthesize(voice, speakText, this.getTtsSpeed())
+    const speed = this.getTtsSpeed();
+    const promise = this.aheadOr('custom', this.customAheadVoiceKey(voice), speed, speakText,
+      (): Promise<HttpTtsAudio> => this.httpReader.synthesize(voice, speakText, speed))
       .then((audio: HttpTtsAudio): CustomTtsAudioResult => {
         if (this.readGeneration !== generation || !this.active) {
           return { error: new Error('自定义音色合成已停止') };
@@ -1566,6 +1630,7 @@ export class SystemTtsReader {
     this.fillLocalAudioJobs(generation, voice, jobs);
     while (this.readGeneration === generation && this.active) {
       if (jobs.length === 0) {
+        if (this.finishWhenQueued(generation, true)) return;
         await this.httpReader.drain();
         if (this.readGeneration === generation && this.active) {
           this.finish(true);
@@ -1624,11 +1689,135 @@ export class SystemTtsReader {
       if (!speakText) {
         continue;
       }
-      const promise = LocalTtsEngine.synthesize(voice, speakText, this.getTtsSpeed())
+      const speed = this.getTtsSpeed();
+      const promise = this.aheadOr('local', voice.id, speed, speakText,
+        (): Promise<HttpTtsAudio> => LocalTtsEngine.synthesize(voice, speakText, speed))
         .then((audio: HttpTtsAudio): CustomTtsAudioResult => ({ audio }))
         .catch((error: Error): CustomTtsAudioResult => ({ error }));
       jobs.push({ index, chunk, text: speakText, promise });
     }
+    this.noteTailQueued(generation, jobs.length > 0 ?
+      jobs[jobs.length - 1].promise.then((): void => {}) : Promise.resolve());
+  }
+
+  /**
+   * 连续朗读本章最后一段送去合成后（onTailQueued），调用方把下一章的朗读文本交过来：按开读时同样的切段、音色和
+   * 倍速，先合成下一章开头几段，排在本章最后一段合成完之后。下一章开读时按“音色+倍速+文字”取用，对不上就照常合成。
+   * 系统音色不做：它本来就写完即交接，系统引擎同一时间也只能合成一样东西，提前合成会挤占本章。
+   */
+  prepareNext(text: string, options: TtsReadOptions): void {
+    const generation = this.readGeneration;
+    if (!this.active) return;
+    const cleanText = this.normalizeText(text);
+    if (!cleanText.trim()) return;
+    const speed = options.speed === undefined ? this.getTtsSpeed() : Math.max(0.5, Math.min(3, options.speed));
+    if (options.mimo) {
+      this.mimoReader.prepare(cleanText, {
+        book: options.mimoBook || 'preview', bookName: options.mimoBookName || '',
+        chapter: options.mimoChapter || 'preview',
+        sourceOffset: options.mimoSourceOffset || 0, speed: options.speed || 1,
+        cast: options.castVoices === true, voiceSpeed: speed,
+        speakText: (value: string): string => this.normalizeChunkForSpeech(value),
+        onFocus: (): void => {}, onAudio: (): void => {}
+      });
+      return;
+    }
+    const cloudVoiceId = options.cloudVoiceId || '';
+    const localVoice = cloudVoiceId ? undefined : (options.localVoice || LocalTtsSelection.current());
+    const customVoice = cloudVoiceId || localVoice ? null : this.getCurrentCustomVoice();
+    if (!cloudVoiceId && !localVoice && !customVoice) return;
+    const ahead = this.aheadAudio;
+    this.tailGate.then((): void => {
+      if (this.readGeneration !== generation || !this.active || this.aheadAudio !== ahead) return;
+      const keys: string[] = [];
+      if (cloudVoiceId) {
+        const tier = (options.cloudVoiceTier || '').toUpperCase() === 'PREMIUM' ? 'PREMIUM' : 'STANDARD';
+        const chunks = this.coalescePunctuationOnlyChunks(this.splitCloudText(cleanText, tier), cleanText);
+        // 云端的第一段约 100 字（20 多秒），一段就够盖住换章。
+        for (const chunk of chunks) {
+          const speakText = this.normalizeChunkForSpeechWithMap(chunk.text).text;
+          if (!speakText) continue;
+          const key = this.aheadKey('cloud', this.cloudAheadVoiceKey(cloudVoiceId, tier), speed, speakText);
+          if (!ahead.cloud.has(key)) {
+            const task = this.cloudReader.synthesize(cloudVoiceId, speakText, speed);
+            task.catch((): void => { if (ahead.cloud.get(key) === task) ahead.cloud.delete(key); });
+            ahead.cloud.set(key, task);
+          }
+          keys.push(key);
+          break;
+        }
+      } else {
+        const chunks = this.coalescePunctuationOnlyChunks(
+          this.splitCustomText(cleanText, SystemTtsReader.CUSTOM_TTS_CHUNK_LENGTH), cleanText);
+        const limit = localVoice ? SystemTtsReader.AHEAD_LOCAL_CHUNKS :
+          this.customTtsPrefetchWindow(customVoice as HttpTTS);
+        let chars = 0;
+        for (const chunk of chunks) {
+          if (keys.length >= limit || (customVoice && chars >= SystemTtsReader.AHEAD_CUSTOM_CHARS)) break;
+          const speakText = this.normalizeChunkForSpeech(chunk.text);
+          if (!speakText) continue;
+          const key = localVoice ? this.aheadKey('local', localVoice.id, speed, speakText) :
+            this.aheadKey('custom', this.customAheadVoiceKey(customVoice as HttpTTS), speed, speakText);
+          if (!ahead.audio.has(key)) {
+            const task = localVoice ? LocalTtsEngine.synthesize(localVoice, speakText, speed) :
+              this.httpReader.synthesize(customVoice as HttpTTS, speakText, speed);
+            task.catch((): void => { if (ahead.audio.get(key) === task) ahead.audio.delete(key); });
+            ahead.audio.set(key, task);
+          }
+          keys.push(key);
+          chars += speakText.length;
+        }
+      }
+      console.info(`[TTS] next chapter audio prepared ahead: segments=${keys.length}`);
+    });
+  }
+
+  private aheadKey(route: string, voice: string, speed: number, speakText: string): string {
+    return route + '|' + voice + '|' + speed.toFixed(3) + '|' + speakText;
+  }
+
+  private cloudAheadVoiceKey(voiceId: string, tier: string): string {
+    return voiceId + '|' + tier;
+  }
+
+  private customAheadVoiceKey(voice: HttpTTS): string {
+    return String(voice.id) + '|' + (voice.url || '');
+  }
+
+  /** 有提前合成好的就用它（失败了再现合成一次），没有就现合成。 */
+  private aheadOr(route: string, voice: string, speed: number, speakText: string,
+    synthesize: () => Promise<HttpTtsAudio>): Promise<HttpTtsAudio> {
+    const key = this.aheadKey(route, voice, speed, speakText);
+    const task = this.adoptedAhead.audio.get(key);
+    if (!task) return synthesize();
+    this.adoptedAhead.audio.delete(key);
+    console.info(`[TTS] using audio prepared ahead: route=${route},chars=${speakText.length}`);
+    return task.catch((): Promise<HttpTtsAudio> => synthesize());
+  }
+
+  /** 放掉没用上的提前合成结果（自定义音色占着的缓存文件要释放）。 */
+  private discardAhead(store: TtsAheadAudio): void {
+    store.audio.forEach((task: Promise<HttpTtsAudio>): void => {
+      task.then((audio: HttpTtsAudio): void => this.httpReader.discardAudio(audio)).catch((): void => {});
+    });
+    store.audio.clear();
+    store.cloud.forEach((task: Promise<CloudTtsAudio>): void => { task.catch((): void => {}); });
+    store.cloud.clear();
+  }
+
+  /** 本章的段全部送去合成后通知一次调用方（onTailQueued），并记下最后那段何时合成完。 */
+  private noteTailQueued(generation: number, settled: Promise<void>): void {
+    if (this.chunkIndex < this.chunks.length || this.tailQueuedGeneration === generation ||
+      this.readGeneration !== generation || !this.active) {
+      return;
+    }
+    this.tailQueuedGeneration = generation;
+    this.tailGate = settled;
+    const callback = this.onTailQueued;
+    if (!callback) return;
+    setTimeout((): void => {
+      if (this.readGeneration === generation && this.active) callback();
+    }, 0);
   }
 
   private handleCustomVoiceError(generation: number, voice: HttpTTS, error: Error): void {
@@ -3526,12 +3715,12 @@ export class SystemTtsReader {
     });
   }
 
-  private splitCloudText(text: string): TtsChunk[] {
+  private splitCloudText(text: string, tier?: string): TtsChunk[] {
     const chunks: TtsChunk[] = [];
+    const premium = (tier === undefined ? this.optionCloudVoiceTier : tier) === 'PREMIUM';
     let start = 0;
     while (start < text.length) {
       const firstChunk = chunks.length === 0;
-      const premium = this.optionCloudVoiceTier === 'PREMIUM';
       const firstChunkLength = premium ?
         SystemTtsReader.CLOUD_TTS_PREMIUM_FIRST_CHUNK_LENGTH :
         SystemTtsReader.CLOUD_TTS_STANDARD_FIRST_CHUNK_LENGTH;

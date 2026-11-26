@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 
 const policySource = fs.readFileSync(new URL('../entry/src/main/ets/core/mimo/MimoPolicy.ts', import.meta.url), 'utf8');
 const policy = vm.runInNewContext(stripTypeScriptTypes(policySource.replaceAll('export ', '') +
-  '\n({MimoPolicy,MimoSseParser,MimoRole,MimoUnit,MimoVoicePreset,CastVoiceRef})'));
+  '\n({MimoPolicy,MimoSseParser,MimoRole,MimoUnit,MimoVoicePreset,CastVoiceRef,MimoAssignment,MimoAnalysis})'));
 const { MimoPolicy, MimoSseParser, MimoRole, MimoUnit } = policy;
 const voiceSource=fs.readFileSync(new URL('../entry/src/main/ets/core/mimo/MimoVoicePolicy.ts',import.meta.url),'utf8')
   .replace(/^import .*;\r?\n/gm,'').replace(/^export \{.*;\r?\n/gm,'').replaceAll('export ','');
@@ -141,7 +141,8 @@ let localBusy=0;let localOverlap=false;
 const castStore={
   blocker:()=>castPolicy.key(castScheme.narrator)&&!castUnsupported.has(castPolicy.key(castScheme.narrator))?'':'音色方案还没有选旁白音色',
   voiceFor:(role,cast)=>castPolicy.voiceFor(role,cast.roles,castScheme,ref=>!castUnsupported.has(castPolicy.key(ref)),()=>'unknown'),
-  localModel:ref=>ref.kind==='local'?{id:ref.id}:undefined,customVoice:ref=>ref.kind==='http'?{id:ref.id}:undefined,
+  localModel:ref=>ref.kind==='local'?{id:ref.id}:undefined,
+  customVoice:ref=>ref.kind==='http'?{id:ref.id,concurrentRate:ref.id==='para'?'3/1000':(ref.id==='slow'?'3':'')}:undefined,
   markUnsupported:key=>castUnsupported.add(key),
   modelGroup:ref=>ref.kind==='local'?(ref.id.startsWith('solo')?'model-solo':'model-pack'):'',
   usesCustomAnalysis:()=>!!customAnalysis,analysis:()=>customAnalysis||{url:'',model:''},analysisKey:async()=>'custom-key'};
@@ -156,7 +157,11 @@ const localEngine={cancelAll(){},async synthesize(model,text,speed){
 class FakeHttpReader{stop(){} release(){} discardAudio(){}
   async synthesize(voice,text,speed){castSpoken.push(['http:'+voice.id,text,speed]);
     if(voice.id==='mp3')return {pcm:new ArrayBuffer(0),sampleRate:0,speed:speed,playerSpeed:true,filePath:'/cache/a.mp3'};
+    httpBusy.set(voice.id,(httpBusy.get(voice.id)||0)+1);if(httpBusy.get(voice.id)>1)httpOverlap=true;
+    httpPeak.set(voice.id,Math.max(httpPeak.get(voice.id)||0,httpBusy.get(voice.id)));
+    await new Promise(r=>setTimeout(r,1));httpBusy.set(voice.id,httpBusy.get(voice.id)-1);
     return {pcm:new Int16Array(1600).buffer,sampleRate:16000,speed:speed,playerSpeed:true,filePath:''};}}
+const httpBusy=new Map();const httpPeak=new Map();let httpOverlap=false;
 const stretch={stretch16BitMono:(pcm,rate,factor)=>pcm.slice(0,Math.floor(pcm.byteLength/factor/2)*2)};
 const decodeTask={decode:async(path,rate)=>{if(decodeFails)throw Error('bad file');return new Int16Array(rate).buffer;}};
 const settings={multi:false,voice:'白桦',namespace:'test',enabled:true};
@@ -192,7 +197,7 @@ class Client {
   }
 }
 const Session=vm.runInNewContext(stripTypeScriptTypes(readingSource+'\nMimoReadingSession'),{
-  fs:fakeFiles,MimoStore:fakeStore,MimoClient:Client,TtsPcmAudioPlayer:Player,MimoPolicy,MimoUnit,MimoRole,
+  fs:fakeFiles,MimoStore:fakeStore,MimoClient:Client,TtsPcmAudioPlayer:Player,MimoPolicy,MimoUnit,MimoRole,MimoAssignment:policy.MimoAssignment,MimoAnalysis:policy.MimoAnalysis,
   MimoVoicePolicy:voicePolicy.MimoVoicePolicy,MIMO_AGES:voicePolicy.MIMO_AGES,MIMO_GENDERS:voicePolicy.MIMO_GENDERS,MIMO_VOICES:['白桦','苏打','茉莉','冰糖'],
   CastVoiceRef:policy.CastVoiceRef,CastVoicePolicy:castPolicy,CastVoiceStore:castStore,HttpTtsReader:FakeHttpReader,
   LocalTtsEngine:localEngine,PcmTimeStretch:stretch,TtsAudioDecodeTask:decodeTask,MimoAnalysisTarget:class{url='';model='';},
@@ -373,6 +378,57 @@ await session.read(steady,castOptions);
 assert.equal(focus.join(''),steady);
 assert.equal(castSpoken.length,1,'a cast change during synthesis does not synthesise the segment twice');
 
+// 换个起点重读：读过的句子按句命中，不再请求模型。
+savedCast=null;files.clear();events.length=0;focus.length=0;proposals=[];assignRole=null;
+const sentences=Array.from({length:12},(_,i)=>'这是第'+i+'句足够长的叙述内容不会被合并。');
+await session.read(sentences.join(''),castOptions);
+const firstPass=events.filter(e=>e.startsWith('analyze:')).length;
+assert.ok(firstPass>=2);
+const skipped=sentences.slice(0,3).join('').length;
+await session.read(sentences.slice(3).join(''),{...castOptions,sourceOffset:skipped});
+assert.equal(events.filter(e=>e.startsWith('analyze:')).length,firstPass,'starting three sentences later still hits the stored analysis');
+
+// 自定义音色：同一个音色一次只发一个请求，并且提前合成不止两段。
+savedCast=null;files.clear();castSpoken.length=0;focus.length=0;httpOverlap=false;
+castScheme.narrator=castPolicy.ref('http','slow','慢接口旁白');
+let aheadAtFirstFocus=-1;
+await session.read(sentences.join(''),{...castOptions,onFocus:u=>{focus.push(u.text);if(aheadAtFirstFocus<0)aheadAtFirstFocus=castSpoken.length;}});
+assert.equal(focus.join(''),sentences.join(''));
+assert.equal(httpOverlap,false,'a plain concurrentRate number means one request at a time');
+assert.equal(castSpoken.length,12);
+// 并发率写成“3/1000”的音色可以同时发 3 个请求。
+savedCast=null;files.clear();castSpoken.length=0;focus.length=0;httpPeak.clear();
+castScheme.narrator=castPolicy.ref('http','para','可并行的旁白');
+await session.read(sentences.join(''),castOptions);
+assert.equal(focus.join(''),sentences.join(''));
+assert.equal(httpPeak.get('para'),3,'up to three requests in flight for a voice configured as 3/1000');
+assert.equal(castSpoken.length,12,'each segment is still synthesised once');
+castScheme.narrator=castPolicy.ref('local','narr','旁白声');
+
+// 自定义音色的长句拆成几小段合成，离线音色不拆；高亮仍是整句一次。
+savedCast=null;files.clear();castSpoken.length=0;focus.length=0;
+castScheme.narrator=castPolicy.ref('http','slow','慢接口旁白');
+const longLine='他沿着河岸一直往前走，走过了那座早就没有人看守的旧桥，又走过了一片被大水冲得七零八落的芦苇荡，天色暗下来的时候，才终于看见了远处村口那盏昏黄的灯。';
+const opener='他在门口站了很久才终于推门进去。';
+await session.read(opener+longLine,castOptions);
+assert.deepEqual(focus,[opener,longLine],'one focus for the whole line');
+const longParts=castSpoken.map(([,text])=>text).filter(text=>text!==opener);
+assert.ok(longParts.length>=2,'a long line for a custom voice is synthesised in pieces: '+longParts.length);
+assert.equal(longParts.join(''),longLine,'the pieces cover the line exactly, in order');
+assert.ok(longParts.every(part=>part.length<=56),'no piece is long');
+castScheme.narrator=castPolicy.ref('local','narr','旁白声');castSpoken.length=0;focus.length=0;savedCast=null;files.clear();
+await session.read(opener+longLine,castOptions);
+assert.ok(castSpoken.some(([,text])=>text===longLine),'an offline voice gets the line whole');
+
+// 起播：开头是长句时在靠前的逗号处切开，引号里的对白不切。
+const head=MimoPolicy.shortenHead(MimoPolicy.split('很多年以后，面对行刑队的时候，上校将会回想起父亲带他去见识冰块的那个遥远的下午，那时的村子只有二十户人家。第二句。'));
+assert.ok(head[0].text.length<=40&&head[0].text.endsWith('，'),'the opening unit is cut at a comma: '+head[0].text);
+assert.equal(head.map(u=>u.text).join(''),'很多年以后，面对行刑队的时候，上校将会回想起父亲带他去见识冰块的那个遥远的下午，那时的村子只有二十户人家。第二句。');
+head.forEach((u,i)=>assert.equal(u.id,i));
+assert.equal(head[1].start,head[0].end);
+const quoted=MimoPolicy.split('“很多年以后，面对行刑队的时候，上校将会回想起父亲带他去见识冰块的那个遥远的下午，那时的村子只有二十户人家。”');
+assert.equal(MimoPolicy.shortenHead(quoted).length,quoted.length,'quoted speech is not cut');
+
 // 自定义分析接口：密钥和地址来自多角色朗读自己的设置。
 savedCast=null;files.clear();analysisTargets.length=0;customAnalysis={url:'https://example.test/v1/chat/completions',model:'some-model'};
 proposals=[];assignRole=null;castScheme.narrator=castPolicy.ref('local','narr','旁白声');
@@ -380,4 +436,48 @@ await session.read('他推开门走了进去，屋里一个人也没有。',cast
 assert.deepEqual(analysisTargets[0],['custom-key','https://example.test/v1/chat/completions']);
 customAnalysis=null;
 assignRole=null;proposals=[];
-console.log('MiMo session checks passed: source focus, cached replay, failed segment retention, short-unit merging, synthesis and analysis prefetch, stale chapter cancellation.');
+
+// 跨章提前准备：本章最后一段送去合成时（onTailQueued）准备下一章；下一章开读时接过去，识别和合成都不重复。
+// 多角色朗读，紧接着开读（提前准备还在进行中）。
+savedCast=null;files.clear();castSpoken.length=0;events.length=0;focus.length=0;
+const aheadA='他推开门走了进去，屋里一个人也没有。';
+const aheadB='第二天一早他又回到了这里。门还是开着的，桌上多了一封信。';
+let tailCalls=0;
+await session.read(aheadA,{...castOptions,chapter:'a',onTailQueued:()=>{tailCalls++;session.prepare(aheadB,{...castOptions,chapter:'b'});}});
+assert.equal(tailCalls,1,'the tail is reported once per chapter');
+assert.ok(events.filter(e=>e==='analyze:0').length>=2,'the next chapter opening batch is analysed ahead');
+const aheadAnalyses=events.filter(e=>e.startsWith('analyze:')).length;
+focus.length=0;
+await session.read(aheadB,{...castOptions,chapter:'b'});
+assert.equal(focus.join(''),aheadB,'the adopted chapter is read in full');
+assert.equal(events.filter(e=>e.startsWith('analyze:')).length,aheadAnalyses,'the opening analysis is not requested again');
+const aheadPieces=castSpoken.filter(([,text])=>aheadB.includes(text)).map(([voice,text])=>voice+text);
+assert.equal(new Set(aheadPieces).size,aheadPieces.length,'no next-chapter piece is synthesised twice');
+// 准备做完再开读：开头几段直接用提前合成好的。
+savedCast=null;files.clear();castSpoken.length=0;events.length=0;
+await session.read(aheadA,{...castOptions,chapter:'a2',onTailQueued:()=>session.prepare(aheadB,{...castOptions,chapter:'b2'})});
+await new Promise(r=>setTimeout(r,30));
+assert.ok(castSpoken.some(([,text])=>aheadB.includes(text)),'the next chapter opening is synthesised ahead');
+focus.length=0;
+await session.read(aheadB,{...castOptions,chapter:'b2'});
+assert.equal(focus.join(''),aheadB);
+const readyPieces=castSpoken.filter(([,text])=>aheadB.includes(text)).map(([voice,text])=>voice+text);
+assert.equal(new Set(readyPieces).size,readyPieces.length,'prepared pieces are played rather than synthesised again');
+// MiMo 音色：提前合成进磁盘缓存，下一章开读时直接命中。
+files.clear();events.length=0;focus.length=0;
+const mimoA='这是上一章最后的一句话。';
+const mimoB='下一章的第一句话在这里。下一章的第二句话也在这里。下一章的第三句话在最后。';
+await session.read(mimoA,{...options,chapter:'ma',onTailQueued:()=>session.prepare(mimoB,{...options,chapter:'mb'})});
+await new Promise(r=>setTimeout(r,20));
+const mimoSynth=()=>events.filter(e=>e.startsWith('synth:')&&mimoB.includes(e.slice(6))).map(e=>e.slice(6));
+assert.ok(mimoSynth().length>=1,'the next chapter opening is synthesised ahead');
+await session.read(mimoB,{...options,chapter:'mb'});
+assert.equal(focus.join(''),mimoA+mimoB);
+assert.equal(new Set(mimoSynth()).size,mimoSynth().length,'prepared segments are played from the cache');
+// 对不上的准备作废，下一章照常读完。
+focus.length=0;
+await session.read(mimoA,{...options,chapter:'ma',onTailQueued:()=>session.prepare('别的文字。',{...options,chapter:'mb'})});
+focus.length=0;
+await session.read(mimoB,{...options,chapter:'mb'});
+assert.equal(focus.join(''),mimoB,'a mismatched preparation is discarded');
+console.log('MiMo session checks passed: source focus, cached replay, failed segment retention, short-unit merging, synthesis and analysis prefetch, stale chapter cancellation, next chapter preparation.');

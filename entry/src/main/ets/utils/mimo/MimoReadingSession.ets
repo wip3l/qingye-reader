@@ -1,5 +1,5 @@
 import fs from '@ohos.file.fs';
-import { MimoAnalysis, MimoRole, MimoUnit, MimoPolicy, MIMO_VOICES } from '../../core/mimo/MimoPolicy';
+import { MimoAnalysis, MimoAssignment, MimoRole, MimoUnit, MimoPolicy, MIMO_VOICES } from '../../core/mimo/MimoPolicy';
 import { MimoAnalysisTarget, MimoClient } from './MimoClient';
 import { TtsAudioDecodeTask } from '../../core/concurrency/TtsAudioDecodeTask';
 import { MimoBookCast, MimoStore } from './MimoStore';
@@ -26,6 +26,37 @@ export interface MimoReadingOptions {
   voiceSpeed?: number;
   /** 把原文片段整理成适合送去合成的文本（去注释编号、装饰符号等）；返回空串表示这段不用读。 */
   speakText?: (text: string) => string;
+  /** 本章最后一段已经送去合成（每次朗读最多一次）：调用方这时可以用 prepare 提前准备下一章。 */
+  onTailQueued?: () => void;
+}
+
+/**
+ * 为下一章提前做的准备：开头一批的人物识别（结果按句落盘）和开头几段的语音。MiMo 音色的语音写进磁盘缓存，
+ * 多角色朗读的离线/自定义音色留在内存里。下一章 read 的文本和章节对得上时整份接过去，对不上就作废。
+ */
+class MimoLookahead {
+  book: string = '';
+  chapter: string = '';
+  sourceOffset: number = 0;
+  text: string = '';
+  cast: boolean = false;
+  generation: number = 0;
+  /** 下一章已经开读并接过了这份准备：已经发出的请求照常完成，不再发新的（之后由 read 自己合成）。 */
+  adopted: boolean = false;
+  /** 开头一批的人物识别；接过去后第一批等它完成再读落盘的结果，不重复请求。 */
+  analysis: Promise<void> = Promise.resolve();
+  /** 多角色朗读：键同 castPending。 */
+  castAudio: Map<string, Promise<ArrayBuffer>> = new Map<string, Promise<ArrayBuffer>>();
+  /** MiMo 音色：缓存文件路径 → 还在写的合成。 */
+  diskTasks: Map<string, Promise<void>> = new Map<string, Promise<void>>();
+}
+
+/** 一个自定义音色的请求名额：limit 个同时在途，其余排队。 */
+class CastHttpSlots {
+  limit: number;
+  active: number = 0;
+  waiters: (() => void)[] = [];
+  constructor(limit: number) { this.limit = limit; }
 }
 
 /** 这个自定义音色返回的是压缩音频（MP3），没法和其他音色拼进同一路 PCM。 */
@@ -67,12 +98,33 @@ export class MimoReadingSession {
   private castActive: boolean = false;
   /** 离线引擎一次只加载一个模型，换模型会作废还在排队的请求，所以离线合成一条一条来。 */
   private localTail: Promise<void> = Promise.resolve();
+  /**
+   * 每个自定义音色同时在途的请求数，按音色的“并发率”配置来（见 CastVoicePolicy.httpConcurrency），和常规朗读一致。
+   * 超出的请求按提交顺序排队：最先要播的那段总是先发，提前合成的排在后面。
+   */
+  private httpSlots: Map<string, CastHttpSlots> = new Map<string, CastHttpSlots>();
+  /** 自定义音色提前合成到“后面大约还有这么多秒的内容已经在路上”为止。 */
+  private static readonly CAST_HTTP_AHEAD_SECONDS: number = 45;
   /** 每个音色说话部分的平均响度（进程内累计），用来把不同音色拉到差不多一样响。 */
   private static levels: Map<string, number> = new Map<string, number>();
   /** 离线音色最多提前合成这么多段：够把同一个模型的片段排到一起，又不会占太多内存。 */
   private static readonly CAST_LOCAL_AHEAD: number = 8;
 
-  stop(): void {
+  /** 下一章提前准备用的请求单独一个客户端：本章停止时（client.stop）不连带取消它。 */
+  private aheadClient: MimoClient = new MimoClient();
+  private ahead: MimoLookahead | null = null;
+  /** 提前准备用负数代次，和朗读代次分开；接过去以后它的请求仍然有效，直到下一次真正停止。 */
+  private aheadSerial: number = 0;
+  private adoptedGeneration: number = 0;
+  /** 提前合成多角色语音：离线音色最多几段，自定义音色凑够约这么多秒。MiMo 音色合成两段。 */
+  private static readonly AHEAD_CAST_LOCAL: number = 3;
+  private static readonly AHEAD_CAST_HTTP_SECONDS: number = 15;
+  private static readonly AHEAD_MIMO_SEGMENTS: number = 2;
+
+  stop(): void { this.halt(false); }
+
+  /** keepAhead：下一章正好接着读，留下提前准备的请求、离线队列和自定义音色名额，只停本章。 */
+  private halt(keepAhead: boolean): void {
     if (this.active) {
       AppStorage.setOrCreate('mimoReadingActive', false);
       AppStorage.setOrCreate('mimoReadingStatus', '');
@@ -82,12 +134,40 @@ export class MimoReadingSession {
     this.paused = false;
     this.client.stop();
     this.player.stop();
-    this.http?.stop();
-    if (this.castActive) { this.castActive = false; LocalTtsEngine.cancelAll(); }
+    if (!keepAhead) {
+      this.http?.stop();
+      if (this.castActive) { this.castActive = false; LocalTtsEngine.cancelAll(); }
+      this.httpSlots.forEach((slots: CastHttpSlots): void => {
+        slots.waiters.splice(0).forEach((wake: () => void): void => wake());
+      });
+      this.httpSlots.clear();
+      this.aheadClient.stop();
+      this.ahead = null;
+      this.adoptedGeneration = 0;
+    }
     this.castPending.clear();
     this.resumeWaiters.splice(0).forEach((resolve: () => void): void => resolve());
   }
+
+  /** 这个代次的请求还该不该继续：正在读的那次，或者下一章的提前准备（含已经接过去的那份）。 */
+  private live(generation: number): boolean {
+    return generation === this.generation ||
+      (generation < 0 && ((this.ahead !== null && generation === this.ahead.generation) ||
+        generation === this.adoptedGeneration));
+  }
+  private async readyFor(generation: number): Promise<void> {
+    if (generation >= 0) { await this.ready(generation); return; }
+    if (!this.live(generation)) throw new Error('MiMo 朗读已停止');
+  }
   release(): void { this.stop(); this.player.release(); this.http?.release(); this.http = null; }
+
+  /**
+   * 一段要分几次合成。离线音色合成很快，整段送；自定义音色要等整个请求返回才出声，不少接口又只比实时快一点，
+   * 长句拆成几小段，前一小段在放的时候后一小段接着合成，不会一整句卡住。
+   */
+  private castPieces(ref: CastVoiceRef, text: string): string[] {
+    return ref.kind === 'http' ? CastVoicePolicy.synthesisPieces(text) : [text];
+  }
 
   /** 合成一段并统一成 24 kHz 的 PCM；同一段只合成一次，提前合成和正式播放共用结果。 */
   private castAudio(ref: CastVoiceRef, text: string, speed: number, generation: number): Promise<ArrayBuffer> {
@@ -109,7 +189,7 @@ export class MimoReadingSession {
       const model = CastVoiceStore.localModel(ref);
       if (!model) throw new Error(`离线音色“${ref.name}”已不可用，请到音色方案里重新选择`);
       const run = this.localTail.then((): Promise<HttpTtsAudio> => {
-        if (generation !== this.generation) throw new Error('MiMo 朗读已停止');
+        if (!this.live(generation)) throw new Error('MiMo 朗读已停止');
         return LocalTtsEngine.synthesize(model, text, speed);
       });
       this.localTail = run.then((): void => {}, (): void => {});
@@ -118,7 +198,24 @@ export class MimoReadingSession {
       const voice = CastVoiceStore.customVoice(ref);
       if (!voice) throw new Error(`自定义音色“${ref.name}”已不可用，请到音色方案里重新选择`);
       if (!this.http) this.http = new HttpTtsReader();
-      audio = await this.http.synthesize(voice, text, speed);
+      const reader = this.http;
+      const slotKey = CastVoicePolicy.key(ref);
+      let slots = this.httpSlots.get(slotKey);
+      if (!slots) {
+        slots = new CastHttpSlots(CastVoicePolicy.httpConcurrency(voice.concurrentRate));
+        this.httpSlots.set(slotKey, slots);
+      }
+      const held = slots;
+      if (held.active >= held.limit) await new Promise<void>((resolve) => { held.waiters.push(resolve); });
+      if (!this.live(generation)) throw new Error('MiMo 朗读已停止');
+      held.active++;
+      try {
+        audio = await reader.synthesize(voice, text, speed);
+      } finally {
+        held.active--;
+        const next = held.waiters.shift();
+        if (next) next();
+      }
       if (audio.filePath) {
         // 接口返回的是 MP3 之类的压缩音频：解成 PCM 才能和别的音色接在同一路输出里。
         try {
@@ -129,14 +226,14 @@ export class MimoReadingSession {
           console.warn('[TTS] cast voice decode failed:', (error as Error).message);
           audio.pcm = new ArrayBuffer(0);
         } finally { this.http.discardAudio(audio); }
-        if (generation !== this.generation) throw new Error('MiMo 朗读已停止');
+        if (!this.live(generation)) throw new Error('MiMo 朗读已停止');
         if (audio.pcm.byteLength < 2) {
           CastVoiceStore.markUnsupported(CastVoicePolicy.key(ref));
           throw new CastUnsupportedVoiceError(`自定义音色“${ref.name}”返回的音频无法解码，暂时不能用于多角色朗读`);
         }
       }
     }
-    if (generation !== this.generation) throw new Error('MiMo 朗读已停止');
+    if (!this.live(generation)) throw new Error('MiMo 朗读已停止');
     let pcm = audio.pcm;
     // 接口不带倍速变量的自定义音色本来由播放器变速；这里几个音色共用一路输出，改成先在本地变速。
     if (audio.playerSpeed && Math.abs((audio.speed || 1) - 1) >= 0.001) {
@@ -166,7 +263,7 @@ export class MimoReadingSession {
   }
   private async ready(generation: number): Promise<void> {
     if (this.paused) await new Promise<void>((resolve) => { this.resumeWaiters.push(resolve); });
-    if (generation !== this.generation) throw new Error('MiMo 朗读已停止');
+    if (!this.live(generation)) throw new Error('MiMo 朗读已停止');
   }
   private directory(name: string): string {
     const path = (AppStorage.get<string>('appCacheDir') || '') + '/' + name;
@@ -211,31 +308,53 @@ export class MimoReadingSession {
     this.trimCache(directory, 64 * 1024 * 1024);
   }
   private async analyze(key: string, batch: MimoUnit[], book: string, bookName: string, context: string,
-    generation: number, target?: MimoAnalysisTarget): Promise<void> {
+    generation: number, target: MimoAnalysisTarget | undefined, chapter: string, sourceOffset: number): Promise<void> {
     const cast = MimoStore.cast(book);
     const directory = this.directory('mimo_analysis');
-    // 结果按“这本书的这份人物档案 + 这段原文”存：重读同一段不再请求模型，也不再消耗用量；
+    // 识别结果按句存（这本书的这份人物档案、这一章、这句话在章里的位置和原文）。从哪儿开始读，分批的边界就在哪儿，
+    // 按批存的话换个起点就全都对不上；按句存，读过的句子不管从哪儿开始都不再请求模型、不再消耗用量。
     // 清除人物档案后 epoch 变了，旧结果自然作废。
-    const cachePath = directory + '/' + MimoStore.hash('age-v3:' +
+    const storePath = directory + '/' + MimoStore.hash('units-v1:' +
       (target ? target.url + '|' + target.model : 'mimo-v2.6-flash:' + MimoStore.load().namespace) + '|' +
-      book + '|' + (cast.epoch || 0) + '|' + context + JSON.stringify(batch)) + '.json';
+      book + '|' + (cast.epoch || 0) + '|' + chapter) + '.json';
+    let stored: Record<string, MimoAssignment> = {};
+    try { stored = JSON.parse(fs.readTextSync(storePath)) as Record<string, MimoAssignment>; } catch (_) {}
+    const unitKeys = batch.map((unit: MimoUnit): string =>
+      MimoReadingSession.correctionKey(chapter, sourceOffset + unit.start, unit.text));
     let analysis: MimoAnalysis | null = null;
-    try {
-      analysis = JSON.parse(fs.readTextSync(cachePath)) as MimoAnalysis;
-      MimoPolicy.validate(analysis, batch);
-    } catch (_) { analysis = null; }
+    if (unitKeys.every((unitKey: string): boolean => !!stored[unitKey] && typeof stored[unitKey].roleId === 'string')) {
+      analysis = new MimoAnalysis();
+      for (let position = 0; position < batch.length; position++) {
+        const saved = stored[unitKeys[position]];
+        const assignment = new MimoAssignment();
+        assignment.unitId = batch[position].id; assignment.roleId = saved.roleId;
+        assignment.emotion = saved.emotion; assignment.confidence = saved.confidence;
+        analysis.assignments.push(assignment);
+      }
+      try { MimoPolicy.validate(analysis, batch); } catch (_) { analysis = null; }
+    }
     const analysisStartedAt = Date.now();
     const analysisCached = !!analysis;
     if (!analysis) {
-      try { analysis = await this.client.analyze(key, batch, cast.roles.slice(-100), context, undefined, target); }
+      const client = generation < 0 ? this.aheadClient : this.client;
+      try { analysis = await client.analyze(key, batch, cast.roles.slice(-100), context, undefined, target); }
       catch (error) { throw new Error('MIMO_ANALYSIS:' + (error as Error).message); }
-      await this.ready(generation);
-      MimoStore.write(cachePath, JSON.stringify(analysis));
+      await this.readyFor(generation);
+      // 请求期间别的批次可能已经写过这个文件：重新读一遍再并进去。
+      try { stored = JSON.parse(fs.readTextSync(storePath)) as Record<string, MimoAssignment>; } catch (_) {}
+      for (let position = 0; position < batch.length; position++) {
+        const item = analysis.assignments.find((assignment: MimoAssignment): boolean => assignment.unitId === batch[position].id);
+        if (!item) continue;
+        const saved = new MimoAssignment();
+        saved.roleId = item.roleId; saved.emotion = item.emotion; saved.confidence = item.confidence;
+        stored[unitKeys[position]] = saved;
+      }
+      MimoStore.write(storePath, JSON.stringify(stored));
       this.trimCache(directory, 16 * 1024 * 1024);
     }
     console.info(`[TTS] role analysis: units=${batch[0].id}-${batch[batch.length - 1].id},cached=${analysisCached},` +
       `ms=${Date.now() - analysisStartedAt},newRoles=${analysis.roles.length}`);
-    await this.ready(generation);
+    await this.readyFor(generation);
     // Reload after the network await so user voice changes are not overwritten.
     const latest = MimoStore.cast(book);
     const library = MimoStore.library();
@@ -343,8 +462,155 @@ export class MimoReadingSession {
     return segment;
   }
 
+  private aheadMatches(ahead: MimoLookahead, text: string, options: MimoReadingOptions): boolean {
+    return ahead.book === options.book && ahead.chapter === options.chapter &&
+      ahead.sourceOffset === options.sourceOffset && ahead.text === text && ahead.cast === (options.cast === true);
+  }
+
+  /**
+   * 连续朗读本章最后一段送去合成后（onTailQueued），提前准备下一章：多角色朗读先识别开头一批人物，再合成开头
+   * 几段。只在正在朗读时接受；下一章 read 的文本、章节和起点都对得上才接过去（见 read 开头），否则作废。
+   */
+  prepare(text: string, options: MimoReadingOptions): void {
+    if (!this.active || options.book === 'preview') return;
+    const old = this.ahead;
+    if (old !== null && this.aheadMatches(old, text, options)) return;
+    if (old !== null) this.aheadClient.stop();
+    const ahead = new MimoLookahead();
+    ahead.book = options.book;
+    ahead.chapter = options.chapter;
+    ahead.sourceOffset = options.sourceOffset;
+    ahead.text = text;
+    ahead.cast = options.cast === true;
+    ahead.generation = -(++this.aheadSerial);
+    let analysisDone: () => void = (): void => {};
+    ahead.analysis = new Promise<void>((resolve: () => void): void => { analysisDone = resolve; });
+    this.ahead = ahead;
+    const startedAt = Date.now();
+    this.runAhead(ahead, options, analysisDone).then((segments: number): void => {
+      console.info(`[TTS] mimo next chapter prepared ahead: cast=${ahead.cast},segments=${segments},` +
+        `ms=${Date.now() - startedAt}`);
+    }).catch((error: Error): void => {
+      analysisDone();
+      console.warn('[TTS] mimo prepare next chapter failed:', error.message);
+    });
+  }
+
+  private async runAhead(ahead: MimoLookahead, options: MimoReadingOptions, analysisDone: () => void): Promise<number> {
+    const generation = ahead.generation;
+    const castOn = ahead.cast;
+    let target: MimoAnalysisTarget | undefined = undefined;
+    if (castOn && CastVoiceStore.usesCustomAnalysis()) {
+      target = new MimoAnalysisTarget();
+      target.url = CastVoiceStore.analysis().url; target.model = CastVoiceStore.analysis().model;
+    }
+    const key = target ? await CastVoiceStore.analysisKey() : await MimoStore.key();
+    await this.readyFor(generation);
+    const units = castOn ? MimoPolicy.shortenHead(MimoPolicy.split(ahead.text)) : MimoPolicy.split(ahead.text);
+    if (!key || units.length === 0) { analysisDone(); return 0; }
+    const settings = MimoStore.load();
+    const multi = castOn || settings.multi;
+    let limit = units.length;
+    if (multi) {
+      if (castOn) {
+        const opening = MimoStore.cast(ahead.book);
+        if (!opening.epoch) MimoStore.saveCast(ahead.book, opening, options.bookName || '');
+      }
+      // 和 read 的第一批完全一样地切：识别结果按句落盘，下一章读到时直接取用，不再请求。
+      const end = MimoPolicy.batchEnd(0, units.length);
+      const context = ahead.text.slice(Math.max(0, units[0].start - 800), units[0].start);
+      try {
+        await this.analyze(key, units.slice(0, end), ahead.book, options.bookName || '', context, generation, target,
+          ahead.chapter, ahead.sourceOffset);
+      } finally {
+        analysisDone();
+      }
+      limit = end;
+    } else {
+      analysisDone();
+    }
+    await this.readyFor(generation);
+    const cast = MimoStore.cast(ahead.book);
+    if (castOn) {
+      if (CastVoiceStore.blocker(cast)) return 0;
+      // 和 read 一样先给新出场的配角分配音色并保存，下一章读到时取到的是同一个音色。
+      let assigned = false;
+      for (const role of cast.roles) {
+        if (CastVoiceStore.voiceFor(role, cast).changed) assigned = true;
+      }
+      if (assigned) MimoStore.saveCast(ahead.book, cast, options.bookName || '');
+    }
+    const audioDir = this.directory('mimo_audio');
+    const library = MimoStore.library();
+    const castSpeed = Math.max(0.5, Math.min(3, options.voiceSpeed || 1));
+    const speak = (value: string): string => options.speakText ? options.speakText(value) : value;
+    let index = 0;
+    let segments = 0;
+    let seconds = 0;
+    while (index < limit && this.live(generation) && !ahead.adopted) {
+      if (!/[\p{L}\p{N}]/u.test(units[index].text)) { index++; continue; }
+      const segment = this.segment(units, index, limit, options, cast, multi, library.defaultPreset, settings.namespace,
+        audioDir, castOn);
+      index = segment.last + 1;
+      if (castOn) {
+        const spoken = speak(segment.unit.text);
+        if (!/[\p{L}\p{N}]/u.test(spoken) || !CastVoicePolicy.key(segment.ref)) continue;
+        for (const piece of this.castPieces(segment.ref, spoken)) {
+          const audioKey = CastVoicePolicy.key(segment.ref) + '|' + castSpeed + '|' + piece;
+          if (ahead.castAudio.has(audioKey)) continue;
+          const task = this.castSynthesize(segment.ref, piece, castSpeed, generation);
+          task.catch((): void => { if (ahead.castAudio.get(audioKey) === task) ahead.castAudio.delete(audioKey); });
+          ahead.castAudio.set(audioKey, task);
+        }
+        segments++;
+        // 粗略按每个字 0.22 秒估时长；离线音色合成快，几段就够，自定义音色凑够十几秒。
+        seconds += spoken.length * 0.22;
+        if (segments >= MimoReadingSession.AHEAD_CAST_LOCAL || seconds >= MimoReadingSession.AHEAD_CAST_HTTP_SECONDS) break;
+        continue;
+      }
+      // MiMo 音色：一段一段合成进磁盘缓存，和本章的提前合成一样不并发。
+      if (!this.hasAudio(segment.cachePath) && !ahead.diskTasks.has(segment.cachePath)) {
+        const task = this.aheadMimoSegment(key, segment, audioDir, generation);
+        ahead.diskTasks.set(segment.cachePath, task);
+        await task;
+      }
+      segments++;
+      if (segments >= MimoReadingSession.AHEAD_MIMO_SEGMENTS) break;
+    }
+    return segments;
+  }
+
+  private async aheadMimoSegment(key: string, segment: MimoSegment, audioDir: string, generation: number): Promise<void> {
+    const revision = MimoStore.voiceRevision;
+    try {
+      const pcm = await this.aheadClient.synthesize(key, segment.unit.text, segment.voice, segment.style,
+        async (_pcm: ArrayBuffer): Promise<void> => {});
+      if (this.live(generation) && revision === MimoStore.voiceRevision) this.writeAudio(segment.cachePath, pcm, audioDir);
+    } catch (_) {
+      // 轮到这一段时照常边合成边播。
+    }
+  }
+
   async read(text: string, options: MimoReadingOptions): Promise<void> {
-    this.stop();
+    const lookahead = this.ahead;
+    let adoptedAnalysis: Promise<void> | null = null;
+    const adoptedDisk: Map<string, Promise<void>> = new Map<string, Promise<void>>();
+    if (lookahead !== null && this.aheadMatches(lookahead, text, options)) {
+      // 下一章正好是提前准备过的那章：只停上一章，接过还在进行的识别和合成。
+      this.halt(true);
+      this.ahead = null;
+      lookahead.adopted = true;
+      this.adoptedGeneration = lookahead.generation;
+      lookahead.castAudio.forEach((task: Promise<ArrayBuffer>, audioKey: string): void => {
+        this.castPending.set(audioKey, task);
+      });
+      lookahead.diskTasks.forEach((task: Promise<void>, path: string): void => { adoptedDisk.set(path, task); });
+      adoptedAnalysis = lookahead.analysis;
+      console.info(`[TTS] mimo adopting next chapter prepared ahead: cast=${lookahead.cast},` +
+        `audio=${lookahead.castAudio.size + lookahead.diskTasks.size}`);
+    } else {
+      this.stop();
+    }
     const generation = this.generation;
     this.active = true;
     const cancel = (): void => this.stop();
@@ -372,7 +638,8 @@ export class MimoReadingSession {
       }
       const castSpeed = Math.max(0.5, Math.min(3, options.voiceSpeed || 1));
       const speak = (value: string): string => options.speakText ? options.speakText(value) : value;
-      const units = MimoPolicy.split(text);
+      // 多角色朗读的音色都要整段合成完才出声：把开头那句切短一些，起播不用等一整句长句。
+      const units = castOn ? MimoPolicy.shortenHead(MimoPolicy.split(text)) : MimoPolicy.split(text);
       let firstAudio = true;
       const pendingPlayback: Promise<void>[] = [];
       const audioDir = this.directory('mimo_audio');
@@ -390,7 +657,11 @@ export class MimoReadingSession {
         if (!task) {
           const batch = units.slice(start, MimoPolicy.batchEnd(start, units.length));
           const context = text.slice(Math.max(0, units[start].start - 800), units[start].start);
-          const created = this.analyze(key, batch, options.book, options.bookName || '', context, generation, target)
+          // 第一批如果提前准备时已经在识别，等它落盘再读结果，不重复请求。
+          const opening: Promise<void> = start === 0 && adoptedAnalysis !== null ?
+            adoptedAnalysis.catch((): void => {}) : Promise.resolve();
+          const created = opening.then((): Promise<void> => this.analyze(key, batch, options.book,
+            options.bookName || '', context, generation, target, options.chapter, options.sourceOffset))
             .then((): void => {
               analyzed.add(start);
               // 多角色朗读：一批识别完接着识别下一批，直到本章结束。后面的片段早早知道是谁说的，
@@ -415,7 +686,9 @@ export class MimoReadingSession {
       // Upcoming segments are synthesised into the audio cache one at a time while the current
       // one plays, which hides the request latency that caused gaps between sentences.
       const prefetches: Map<string, Promise<void>> = new Map();
+      adoptedDisk.forEach((task: Promise<void>, path: string): void => { prefetches.set(path, task); });
       let prefetchTail: Promise<void> = Promise.resolve();
+      let tailQueued = false;
       const prefetch = (segment: MimoSegment): void => {
         if (prefetches.has(segment.cachePath) || this.hasAudio(segment.cachePath)) return;
         const revision = MimoStore.voiceRevision;
@@ -480,8 +753,9 @@ export class MimoReadingSession {
         if (castOn && !/[\p{L}\p{N}]/u.test(spoken)) { index = segment.last + 1; continue; }
         let ahead = segment.last + 1;
         if (castOn) {
-          // 提前合成：自定义音色只提前两段（走网络，不多占接口）；离线音色最多提前 CAST_LOCAL_AHEAD 段，
-          // 并按模型排在一起——离线引擎一次只加载一个模型，旁白和人物用了不同模型时不必每句都重新加载。
+          // 提前合成。离线音色最多提前 CAST_LOCAL_AHEAD 段，并按模型排在一起——离线引擎一次只加载一个模型，
+          // 旁白和人物用了不同模型时不必每句都重新加载。自定义音色至少提前两段，再往后提前到“后面约
+          // CAST_HTTP_AHEAD_SECONDS 秒的内容已经在路上”为止：有的接口合成只比实时快一点，只提前两段会追不上。
           const queueRefs: CastVoiceRef[] = [segment.ref];
           const queueTexts: string[] = [spoken];
           for (let count = 0; count < MimoReadingSession.CAST_LOCAL_AHEAD && ahead < limit; count++) {
@@ -495,12 +769,17 @@ export class MimoReadingSession {
           // 失败的这次不留在缓存里，轮到它时会再合成一次并把错误报出来。
           const submit = (position: number): void => {
             if (!/[\p{L}\p{N}]/u.test(queueTexts[position]) || !CastVoicePolicy.key(queueRefs[position])) return;
-            this.castAudio(queueRefs[position], queueTexts[position], castSpeed, generation).catch((): void => {});
+            for (const piece of this.castPieces(queueRefs[position], queueTexts[position])) {
+              this.castAudio(queueRefs[position], piece, castSpeed, generation).catch((): void => {});
+            }
           };
           const groups = queueRefs.map((ref: CastVoiceRef): string => CastVoiceStore.modelGroup(ref));
           for (const position of CastVoicePolicy.synthesisOrder(groups)) submit(position);
-          for (let position = 0; position < Math.min(3, queueRefs.length); position++) {
-            if (!groups[position]) submit(position);
+          let aheadSeconds = 0;
+          for (let position = 0; position < queueRefs.length; position++) {
+            if (!groups[position] && (position < 3 || aheadSeconds < MimoReadingSession.CAST_HTTP_AHEAD_SECONDS)) submit(position);
+            // 粗略按每个字 0.22 秒估这一段的时长。
+            if (position > 0) aheadSeconds += queueTexts[position].length * 0.22;
           }
         } else {
           for (let count = 0; count < 2 && ahead < limit; count++) {
@@ -510,6 +789,11 @@ export class MimoReadingSession {
             prefetch(upcoming);
             ahead = upcoming.last + 1;
           }
+        }
+        // 本章剩下的段都已送去合成：通知调用方准备下一章。
+        if (!tailQueued && !preview && ahead >= units.length) {
+          tailQueued = true;
+          if (options.onTailQueued) options.onTailQueued();
         }
 
         let focused = false;
@@ -529,7 +813,7 @@ export class MimoReadingSession {
           options.onFocus(segment.unit, segment.first);
         };
         const receive = async (buffer: ArrayBuffer): Promise<void> => {
-          if (generation !== this.generation) throw new Error('MiMo 朗读已停止');
+          if (!this.live(generation)) throw new Error('MiMo 朗读已停止');
           if (!focused && revision !== MimoStore.voiceRevision) throw new Error('MiMo 声音配置已更新');
           if (playbackError) throw playbackError;
           const merged = new Uint8Array(carry.length + buffer.byteLength);
@@ -548,20 +832,26 @@ export class MimoReadingSession {
         };
         AppStorage.setOrCreate('mimoReadingStatus', firstAudio ? '正在生成语音…' : '');
         if (castOn) {
-          let pcm: ArrayBuffer;
-          try { pcm = await this.castAudio(segment.ref, spoken, castSpeed, generation); } catch (error) {
+          const pieces = this.castPieces(segment.ref, spoken);
+          let restart = false;
+          for (let part = 0; part < pieces.length; part++) {
+            let pcm: ArrayBuffer;
+            try { pcm = await this.castAudio(segment.ref, pieces[part], castSpeed, generation); } catch (error) {
+              await this.ready(generation);
+              // 这个音色已被记为不可用：重新走一遍分配，改由方案里别的音色（或旁白）来读这一段。
+              // 只在这一段还没出声时这样做；已经放了前半句就照实报错，不换个声音把后半句接上。
+              if (part === 0 && error instanceof CastUnsupportedVoiceError) { restart = true; break; }
+              throw error as Error;
+            }
             await this.ready(generation);
-            // 这个音色已被记为不可用：重新走一遍分配，改由方案里别的音色（或旁白）来读这一段。
-            if (error instanceof CastUnsupportedVoiceError) continue;
-            throw error as Error;
+            // 合成期间人物档案变过（后台又认出了新人物、换了音色、纠正了说话人）：这段按新的档案重新走一遍。
+            // 合成好的音频还留在 castPending 里，音色没变的话下一轮直接拿来用，不会再合成一次。
+            if (part === 0 && revision !== MimoStore.voiceRevision) { restart = true; break; }
+            this.castPending.delete(CastVoicePolicy.key(segment.ref) + '|' + castSpeed + '|' + pieces[part]);
+            await receive(pcm);
+            if (playbackError) throw playbackError as Error;
           }
-          await this.ready(generation);
-          // 合成期间人物档案变过（后台又认出了新人物、换了音色、纠正了说话人）：这段按新的档案重新走一遍。
-          // 合成好的音频还留在 castPending 里，音色没变的话下一轮直接拿来用，不会再合成一次。
-          if (revision !== MimoStore.voiceRevision) continue;
-          this.castPending.delete(CastVoicePolicy.key(segment.ref) + '|' + castSpeed + '|' + spoken);
-          await receive(pcm);
-          if (playbackError) throw playbackError as Error;
+          if (restart) continue;
           pendingPlayback.push(playback);
           index = segment.last + 1;
           continue;

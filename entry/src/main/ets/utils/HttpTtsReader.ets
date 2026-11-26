@@ -221,6 +221,11 @@ export class HttpTtsReader {
     await this.pcmPlayer.drain();
   }
 
+  /** 章与章之间下一章的语音还没写来时往输出里垫静音（见 TtsPcmAudioPlayer.startGapFill）。 */
+  startGapFill(): void {
+    this.pcmPlayer.startGapFill();
+  }
+
   async pause(): Promise<void> {
     await this.pcmPlayer.pause();
     await this.avPlayer.pause();

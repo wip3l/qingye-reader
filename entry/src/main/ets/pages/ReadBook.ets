@@ -15861,6 +15861,11 @@ struct ReadBookPage {
         mimoBookName: this.book?.name || '',
         mimoChapter: String(this.currentChapterIndex),
         mimoSourceOffset: this.ttsTextStartOffset,
+        onTailQueued: (): void => {
+          this.prepareTtsNextChapter(token).catch((e: Error) => {
+            console.warn('[TTS] prepare next chapter failed:', e?.message || e);
+          });
+        },
         onFinished: () => {
           this.continueTtsReading(token).catch((e: Error) => {
             console.warn('连续朗读续播失败:', e);
@@ -16642,6 +16647,61 @@ struct ReadBookPage {
     }
   }
 
+  /**
+   * 连续朗读本章最后一段已送去合成：取下一章正文，按开读时同样的流程（正文净化、章节名、新版排版的朗读文本、
+   * 跳过开头的动作标记）算出下一章章首的朗读文本，交给引擎提前合成开头几段（见 SystemTtsReader.prepareNext）。
+   * 算得和真正开读时不一样也只是用不上，不会读错。
+   */
+  async prepareTtsNextChapter(token: number): Promise<void> {
+    const stale = (): boolean => token !== this.ttsReadToken || !this.ttsAutoContinue || this.ttsChapterSwitching;
+    if (stale() || this.isReaderComicModeActive() || !this.isCurrentReaderEngineBook()) return;
+    // 读者翻去了别的章：章末不会直接进下一章（见 continueTtsReading），不提前。
+    const chapterIndex = this.currentChapterIndex;
+    if (this.ttsFocusChapterIndex >= 0 && this.ttsFocusChapterIndex !== chapterIndex) return;
+    const nextIndex = chapterIndex + 1;
+    if (nextIndex >= this.chapters.length) return;
+    // 定时关闭在一分钟内到点，多半读不到下一章。
+    if (this.ttsSleepTimerEndAt > 0 && this.ttsSleepTimerEndAt - Date.now() < 60000) return;
+    const body = await this.readerEngine().peekContent(nextIndex);
+    if (!body || stale() || this.currentChapterIndex !== chapterIndex) return;
+    const processed = await this.prepareReaderContentRules(body, nextIndex);
+    if (!processed || stale() || this.currentChapterIndex !== chapterIndex) return;
+    const source = this.buildPagedSourceText(nextIndex, processed);
+    const start = this.ttsSpeechStartOffset(source, 0);
+    let text = '';
+    if (this.shouldUseReaderLayoutV2(source)) {
+      // 开读时朗读文本取自新版排版文档；预加载通常已经排好，没排就在这里排（换章时本来也要排）。
+      let document = this.readerV2Document(nextIndex, source);
+      if (!document) {
+        this.getOrCreateReaderPagination(nextIndex, source);
+        document = this.readerV2Document(nextIndex, source);
+      }
+      if (!document) return;
+      text = ReaderV2SpeechText.build(document, start).text;
+    } else {
+      text = this.ttsPlainSpeechText(source, start);
+    }
+    if (!text.trim() || stale() || this.currentChapterIndex !== chapterIndex) return;
+    const cloudVoice = this.findCurrentCloudTtsVoice();
+    const castVoices = CastVoiceStore.enabled();
+    this.ttsEngine().prepareNext(text, {
+      mimo: castVoices || MimoStore.load().enabled,
+      castVoices: castVoices,
+      mimoBook: this.book?.bookUrl || '',
+      mimoBookName: this.book?.name || '',
+      mimoChapter: String(nextIndex),
+      mimoSourceOffset: start,
+      cloudVoiceId: cloudVoice?.id || '',
+      cloudVoiceName: cloudVoice?.name || '',
+      cloudVoiceTier: cloudVoice?.tier || 'STANDARD',
+      person: this.ttsPerson,
+      online: this.ttsOnline,
+      style: this.ttsStyle,
+      language: this.ttsLanguage,
+      speed: this.ttsSpeed
+    });
+  }
+
   finishTtsReading(preserveControls: boolean = false): void {
     // A failed voice must leave the player usable so another voice can be selected and retried.
     // Keep only an existing owned session; never replace a newer reader's controls.
@@ -17077,8 +17137,7 @@ struct ReadBookPage {
     const pageStart = this.getCurrentPageStartOffset();
     let start = startOffset >= pageStart || (allowBeforePage && startOffset >= 0) ?
       Math.min(Math.round(startOffset), source.length) : pageStart;
-    const containingMarker = ReaderActionMarker.findRawRangeContaining(source, start);
-    if (containingMarker.length >= 2) start = containingMarker[1];
+    start = this.ttsSpeechStartOffset(source, start);
     this.ttsTextStartOffset = start;
     if (this.shouldUseReaderLayoutV2(source)) {
       const document = this.readerV2Document(this.currentChapterIndex, source);
@@ -17088,6 +17147,17 @@ struct ReadBookPage {
       }
     }
     this.readerV2ActiveSpeechText = null;
+    return this.ttsPlainSpeechText(source, start);
+  }
+
+  /** 朗读起点落在动作标记（图片、章评入口等）里时挪到标记之后。 */
+  ttsSpeechStartOffset(source: string, start: number): number {
+    const containingMarker = ReaderActionMarker.findRawRangeContaining(source, start);
+    return containingMarker.length >= 2 ? containingMarker[1] : start;
+  }
+
+  /** 没有新版排版文档时的朗读文本：去掉图片与动作标记。 */
+  ttsPlainSpeechText(source: string, start: number): string {
     return ReaderActionMarker.strip(LocalBookService.stripEpubImageMarkers(source.substring(start), true), true);
   }
 
