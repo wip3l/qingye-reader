@@ -8,15 +8,46 @@ export class ReaderPageTurnAnimation {
   static readonly THREE_D: number = 7;
   /** 两页贴着一起平移，接缝处有阴影、被压住的一页逐渐变淡。 */
   static readonly PUSH: number = 8;
+  /**
+   * 揭页：往后翻时当前页带着边缘滑走、目标页原地不动被逐渐露出；往前翻时上一页从前面盖回来。
+   * 移动那页的边缘在下面那页上落一道柔和阴影（贴边一小段较深、往外快速变淡），见 revealShadowColors。
+   */
+  static readonly REVEAL: number = 9;
+
+  /** 揭页阴影的宽度（vp）：贴着纸边约 4vp 较深，往外拖出柔尾。 */
+  static readonly REVEAL_SHADOW_SIZE: number = 36;
+
+  /**
+   * 揭页阴影的渐变，起点贴着移动那页的边缘：0~4vp 较深、到 14vp 已很淡、26vp 后几乎看不见。
+   * 深色主题整体加深约 2.3 倍，否则在深底上看不出来。
+   */
+  static revealShadowColors(dark: boolean): Array<[string, number]> {
+    return dark ?
+      [['#75000000', 0], ['#41000000', 0.111], ['#1D000000', 0.389], ['#09000000', 0.722], ['#00000000', 1]] :
+      [['#33000000', 0], ['#1C000000', 0.111], ['#0D000000', 0.389], ['#04000000', 0.722], ['#00000000', 1]];
+  }
+
+  /** 移动那页自己的纸边：一根极细的暗线，看得出是一张纸的边缘。 */
+  static revealEdgeColor(dark: boolean): string {
+    return dark ? '#29000000' : '#12000000';
+  }
+
+  /**
+   * 揭页阴影的不透明度：edge 是移动那页的边缘在翻页方向上的位置（0~extent）。贴着屏幕边（刚起步或快翻完）时
+   * 随离边的距离渐隐，免得边上突然冒出或留下一道黑线。
+   */
+  static revealShadowOpacity(edge: number, extent: number): number {
+    return Math.max(0, Math.min(1, Math.min(edge, extent - edge) / this.REVEAL_SHADOW_SIZE));
+  }
 
   static types(horizontal: boolean = true): number[] {
-    const result = [this.NONE, this.SLIDE, this.PUSH, this.FADE, this.STACK];
+    const result = [this.NONE, this.SLIDE, this.PUSH, this.REVEAL, this.FADE, this.STACK];
     if (horizontal) result.push(this.SIMULATION, this.THREE_D);
     return result;
   }
 
   static labels(horizontal: boolean = true): string[] {
-    const result = ['无动画', '平移', '推页', '淡入', '叠页'];
+    const result = ['无动画', '平移', '推页', '揭页', '淡入', '叠页'];
     if (horizontal) result.push('仿真', '3D仿真');
     return result;
   }

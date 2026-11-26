@@ -330,6 +330,8 @@ const READER_EYE_TURN_SETTINGS_PILL_HEIGHT = 26;
 // 推页接缝阴影的宽度（vp），以及被压住那页在完全盖住时浅纱的不透明度。
 const PUSH_PAGE_TURN_SHADOW_SIZE = 18;
 const PUSH_PAGE_TURN_SHADE_MAX_OPACITY = 0.45;
+// 揭页时移动那页的纸边细线宽度（vp），约等于一个物理像素。
+const REVEAL_PAGE_TURN_EDGE_LINE = 0.4;
 // 正文选中菜单里的自定义“替换”项 ID，用于与系统菜单项（复制/翻译等）区分。
 const READER_REPLACE_MENU_ITEM_ID: string = 'reader_replace_rule';
 // 正文选中菜单里的“划线”“笔记”两项。
@@ -15674,6 +15676,7 @@ struct ReadBookPage {
     if (value === ReaderSettingsStore.PAGE_TURN_ANIMATION_NONE ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_SLIDE ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_PUSH ||
+      value === ReaderSettingsStore.PAGE_TURN_ANIMATION_REVEAL ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_FADE ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_STACK ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_SIMULATION ||
@@ -18343,6 +18346,12 @@ ${leading}` : leading;
           if (this.stackPageTurnClipsCurrentText()) {
             this.readerStackPageTurnEdgeShadow()
           }
+        } else if (this.isRevealPageTurnAnimation()) {
+          // 层级由 zIndex 按翻页方向决定（往前翻时目标页在上），两页的挂载顺序与推页相同，换方向时不重建。
+          this.readerIncomingPageSurface(this.pageTurnIncomingRenderVersion,
+            this.getVisiblePageTurnIncomingText(), 'incoming_primary')
+          this.readerCurrentPageSurface(currentRenderVersion, currentText, ttsRenderVersion)
+          this.readerRevealPageTurnShadow()
         } else {
           this.readerIncomingPageSurface(this.pageTurnIncomingRenderVersion,
             this.getVisiblePageTurnIncomingText(), 'incoming_primary')
@@ -18375,6 +18384,12 @@ ${leading}` : leading;
           if (this.stackPageTurnClipsCurrentText()) {
             this.readerStackPageTurnEdgeShadow()
           }
+        } else if (this.isRevealPageTurnAnimation()) {
+          // 层级由 zIndex 按翻页方向决定（往前翻时目标页在上），两页的挂载顺序与推页相同，换方向时不重建。
+          this.readerIncomingPageSurface(this.pageTurnIncomingRenderVersion,
+            this.getVisiblePageTurnIncomingText(), 'incoming_alternate')
+          this.readerCurrentPageSurfaceAlternate(currentRenderVersion, currentText, ttsRenderVersion)
+          this.readerRevealPageTurnShadow()
         } else {
           this.readerIncomingPageSurface(this.pageTurnIncomingRenderVersion,
             this.getVisiblePageTurnIncomingText(), 'incoming_alternate')
@@ -18440,6 +18455,86 @@ ${leading}` : leading;
       })
       .opacity(this.stackPageTurnEdgeShadowOpacity())
       .hitTestBehavior(HitTestMode.None)
+  }
+
+  /**
+   * 揭页：移动那页（往后翻是当前页、往前翻是目标页）的右（下）边缘在下面那页上落一道柔和阴影，
+   * 边缘内侧再画一根极细的纸边。两者都叠在两页之上，阴影只落在边缘外侧，不盖住移动那页。
+   */
+  @Builder
+  readerRevealPageTurnShadow() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column()
+        .width(this.isVerticalPageTurnAnimation() ? '100%' : ReaderPageTurnAnimation.REVEAL_SHADOW_SIZE)
+        .height(this.isVerticalPageTurnAnimation() ? ReaderPageTurnAnimation.REVEAL_SHADOW_SIZE : '100%')
+        .position(this.isVerticalPageTurnAnimation() ?
+          { x: 0, y: this.revealPageTurnEdge() } : { x: this.revealPageTurnEdge(), y: 0 })
+        .linearGradient({
+          direction: this.isVerticalPageTurnAnimation() ? GradientDirection.Bottom : GradientDirection.Right,
+          colors: ReaderPageTurnAnimation.revealShadowColors(this.isReaderThemeDark())
+        })
+      Column()
+        .width(this.isVerticalPageTurnAnimation() ? '100%' : REVEAL_PAGE_TURN_EDGE_LINE)
+        .height(this.isVerticalPageTurnAnimation() ? REVEAL_PAGE_TURN_EDGE_LINE : '100%')
+        .position(this.isVerticalPageTurnAnimation() ?
+          { x: 0, y: this.revealPageTurnEdge() - REVEAL_PAGE_TURN_EDGE_LINE } :
+          { x: this.revealPageTurnEdge() - REVEAL_PAGE_TURN_EDGE_LINE, y: 0 })
+        .backgroundColor(ReaderPageTurnAnimation.revealEdgeColor(this.isReaderThemeDark()))
+    }
+    .width('100%')
+    .height('100%')
+    .zIndex(3)
+    .opacity(ReaderPageTurnAnimation.revealShadowOpacity(this.revealPageTurnEdge(), this.revealPageTurnExtent()))
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  revealPageTurnExtent(): number {
+    return this.isVerticalPageTurnAnimation() ? this.getPageTurnHeight() : this.getPageTurnWidth();
+  }
+
+  /** 揭页时移动那页的右（下）边缘：往后翻时当前页在走，往前翻时目标页在走。 */
+  revealPageTurnEdge(): number {
+    const vertical = this.isVerticalPageTurnAnimation();
+    const extent = this.revealPageTurnExtent();
+    const moving = this.pageSlideDirection > 0 ?
+      (vertical ? this.getCurrentPageTurnY() : this.getCurrentPageTurnX()) :
+      (vertical ? this.getIncomingSlideY() : this.getIncomingSlideX());
+    return Math.max(0, Math.min(extent, moving + extent));
+  }
+
+  /** 揭页往前翻时目标页盖在当前页上面。 */
+  revealPageTurnIncomingOnTop(): boolean {
+    return this.isRevealPageTurnAnimation() && this.pageSlideDirection < 0 && this.shouldRenderSlidingPageTurn();
+  }
+
+  /**
+   * 背景动图时纸是透明的，揭页下面那页（往后翻是目标页、往前翻是当前页）的正文要裁掉还被盖住的部分，
+   * 只留移动那页边缘之后露出来的一段。
+   */
+  revealPageTurnClipsUnderText(): boolean {
+    return this.isRevealPageTurnAnimation() && this.readerBackgroundMayBeAnimated() &&
+      this.shouldRenderSlidingPageTurn();
+  }
+
+  revealPageTurnUnderClip(): RectShape {
+    const width = this.getPageTurnWidth();
+    const height = this.getPageTurnHeight();
+    const edge = this.revealPageTurnEdge();
+    const size = Math.max(0, this.revealPageTurnExtent() - edge);
+    return this.isVerticalPageTurnAnimation() ?
+      new RectShape({ width: width, height: size }).offset({ x: 0, y: edge }) :
+      new RectShape({ width: size, height: height }).offset({ x: edge, y: 0 });
+  }
+
+  // 不需要裁时给一个远大于屏幕的矩形，等于不裁，不影响其他翻页方式里超出页面的绘制。
+  unclippedPageTurnRect(): RectShape {
+    return new RectShape({ width: 100000, height: 100000 }).offset({ x: -50000, y: -50000 });
+  }
+
+  /** 目标页正文的裁剪：只有揭页往后翻、背景动图时目标页在下面，需要裁。 */
+  incomingPageTurnClip(): RectShape {
+    return this.revealPageTurnClipsUnderText() && this.pageSlideDirection > 0 ?
+      this.revealPageTurnUnderClip() : this.unclippedPageTurnRect();
   }
 
   /** 目标页前缘：从后面盖进来时是它的左（上）边，从前面盖进来时是它的右（下）边。 */
@@ -18774,12 +18869,14 @@ ${leading}` : leading;
       .width('100%')
       .height('100%')
       .padding({ top: this.getReaderPageContentTopPadding() })
+      .clipShape(this.incomingPageTurnClip())
     }
     .width('100%')
     .height('100%')
     .id(`reader_incoming_${this.pageTurnIncomingChapterIndex}_${this.pageTurnIncomingPageIndex}_${renderVersion}`)
     .backgroundColor(this.readerContentLayerColor())
     .renderGroup(true)
+    .zIndex(this.revealPageTurnIncomingOnTop() ? 2 : 0)
     .translate({ x: this.getIncomingSlideX(), y: this.getIncomingSlideY() })
     .opacity(this.getVisiblePageTurnIncomingOpacity())
     .clip(true)
@@ -26197,13 +26294,17 @@ ${leading}` : leading;
     return this.effectivePageTurnAnimationType() === ReaderSettingsStore.PAGE_TURN_ANIMATION_PUSH;
   }
 
-  // 叠页与推页移动的是整张纸，纸张背景要跟着页面走，不能留在根背景上不动。
+  isRevealPageTurnAnimation(): boolean {
+    return this.effectivePageTurnAnimationType() === ReaderSettingsStore.PAGE_TURN_ANIMATION_REVEAL;
+  }
+
+  // 叠页、推页与揭页移动的是整张纸，纸张背景要跟着页面走，不能留在根背景上不动。
   pageTurnSheetsOwnPaper(): boolean {
-    return this.isStackPageTurnAnimation() || this.isPushPageTurnAnimation();
+    return this.isStackPageTurnAnimation() || this.isPushPageTurnAnimation() || this.isRevealPageTurnAnimation();
   }
 
   /**
-   * 叠页、推页的页面是否各自画一份背景图。背景是动图时不画：每张页面各挂一个动图 Image，翻页开始和结束时页面
+   * 叠页、推页、揭页的页面是否各自画一份背景图。背景是动图时不画：每张页面各挂一个动图 Image，翻页开始和结束时页面
    * 重建会让动图从头重新加载，各份的帧也对不上，翻页时就会闪。这时背景只留根上那一份不动，页面透明只移动正文；
    * 坐标系仍按“页面自己带背景”走（全屏页面、内部让状态栏），分页不受影响。
    */
@@ -26227,13 +26328,18 @@ ${leading}` : leading;
     return this.readerAnimatedBackgroundProbeResult;
   }
 
-  /** 叠页时当前页仍露在外面的那一段（以当前页自身坐标）；目标页从哪边盖进来，就裁掉哪边。 */
+  /**
+   * 叠页时当前页仍露在外面的那一段（以当前页自身坐标）；目标页从哪边盖进来，就裁掉哪边。
+   * 揭页往前翻时当前页在下面，同样只留目标页边缘之后露出来的一段。
+   */
   stackPageTurnUncoveredClip(): RectShape {
     const width = this.getPageTurnWidth();
     const height = this.getPageTurnHeight();
+    if (this.revealPageTurnClipsUnderText() && this.pageSlideDirection < 0) {
+      return this.revealPageTurnUnderClip();
+    }
     if (!this.stackPageTurnClipsCurrentText()) {
-      // 不需要裁时给一个远大于屏幕的矩形，等于不裁，不影响其他翻页方式里超出页面的绘制。
-      return new RectShape({ width: 100000, height: 100000 }).offset({ x: -50000, y: -50000 });
+      return this.unclippedPageTurnRect();
     }
     const vertical = this.isVerticalPageTurnAnimation();
     const extent = vertical ? height : width;
@@ -27385,6 +27491,10 @@ ${leading}` : leading;
       type === ReaderSettingsStore.PAGE_TURN_ANIMATION_3D) {
       return 0;
     }
+    // 揭页往前翻时目标页盖过来，当前页不动。
+    if (type === ReaderSettingsStore.PAGE_TURN_ANIMATION_REVEAL && this.pageSlideDirection < 0) {
+      return 0;
+    }
     return this.pageTransitionX + this.pageSlideOffsetX;
   }
 
@@ -27400,6 +27510,9 @@ ${leading}` : leading;
       return 0;
     }
     if (type === ReaderSettingsStore.PAGE_TURN_ANIMATION_STACK) {
+      return 0;
+    }
+    if (type === ReaderSettingsStore.PAGE_TURN_ANIMATION_REVEAL && this.pageSlideDirection < 0) {
       return 0;
     }
     return this.pageSlideOffsetY;
@@ -27435,6 +27548,10 @@ ${leading}` : leading;
     if (type === ReaderSettingsStore.PAGE_TURN_ANIMATION_STACK) {
       return direction > 0 ? width + offsetX : offsetX - width;
     }
+    // 揭页往后翻时目标页原地不动，等当前页滑开后露出来。
+    if (type === ReaderSettingsStore.PAGE_TURN_ANIMATION_REVEAL && direction > 0) {
+      return 0;
+    }
     return direction > 0 ? width + offsetX : offsetX - width;
   }
 
@@ -27454,6 +27571,9 @@ ${leading}` : leading;
     }
     if (type === ReaderSettingsStore.PAGE_TURN_ANIMATION_STACK) {
       return direction > 0 ? height + offsetY : offsetY - height;
+    }
+    if (type === ReaderSettingsStore.PAGE_TURN_ANIMATION_REVEAL && direction > 0) {
+      return 0;
     }
     return direction > 0 ? height + offsetY : offsetY - height;
   }

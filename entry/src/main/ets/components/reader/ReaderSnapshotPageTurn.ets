@@ -10,6 +10,8 @@ import { ReaderEmulationFlipPainter, ReaderEmulationFlipRegion } from '../Reader
 // 推页接缝阴影的宽度（vp），以及被压住那页在完全盖住时浅纱的不透明度；与正文阅读页、漫画翻页一致。
 const PUSH_SHADOW_SIZE = 18;
 const PUSH_SHADE_MAX_OPACITY = 0.45;
+// 揭页时移动那页的纸边细线宽度（vp），约等于一个物理像素；与正文阅读页一致。
+const REVEAL_EDGE_LINE = 0.4;
 // 与普通阅读页相同的手势参数（ReadBook 的 readerTapSlop / readerPageTurn*）：移动 12vp 才算拖动，横向位移大于
 // 竖向的 0.8 倍算翻页；慢拖到页宽 10%、快甩（≥800vp/s）到 3% 即提交，两者都至少 18vp。
 const TOUCH_SLOP = 12;
@@ -894,9 +896,16 @@ export struct ReaderSnapshotPageTurn {
     return this.turnDirection > 0 ? this.leafWidth() : 0;
   }
 
-  /** 平移、推页时起点跟着手指走；叠页、淡入时起点不动。目标页从翻页方向那一侧移进来，淡入原地。 */
+  /**
+   * 平移、推页时起点跟着手指走；叠页、淡入时起点不动。目标页从翻页方向那一侧移进来，淡入原地。
+   * 揭页往后翻时起点滑走、目标页原地不动；往前翻时目标页从左边盖回来、起点不动。
+   */
   private sheetX(back: boolean): number {
     if (!this.backReady || this.usesCurl()) return 0;
+    if (this.animationType === ReaderPageTurnAnimation.REVEAL) {
+      if (back) return this.turnDirection > 0 ? 0 : this.turnOffset - this.viewW();
+      return this.turnDirection > 0 ? this.turnOffset : 0;
+    }
     if (back) {
       return this.animationType === ReaderPageTurnAnimation.FADE ? 0 :
         this.turnOffset + this.turnDirection * this.viewW();
@@ -909,11 +918,39 @@ export struct ReaderSnapshotPageTurn {
     return back && this.animationType === ReaderPageTurnAnimation.FADE ? this.progress() : 1;
   }
 
-  /** 推页、平移时屏幕右侧那页压在上面；叠页、淡入时目标页在上面。 */
+  /** 推页、平移时屏幕右侧那页压在上面；揭页时移动那页（屏幕左侧那页）在上面；叠页、淡入时目标页在上面。 */
   private sheetZ(back: boolean): number {
     const backOnTop = this.animationType === ReaderPageTurnAnimation.PUSH ||
-      this.animationType === ReaderPageTurnAnimation.SLIDE ? this.turnDirection > 0 : true;
+      this.animationType === ReaderPageTurnAnimation.SLIDE ? this.turnDirection > 0 :
+      this.animationType === ReaderPageTurnAnimation.REVEAL ? this.turnDirection < 0 : true;
     return back === backOnTop ? 1 : 0;
+  }
+
+  /** 揭页时在上面、跟着手指走的那张。 */
+  private revealMoving(back: boolean): boolean {
+    return back === (this.turnDirection < 0);
+  }
+
+  /** 揭页：移动那页的右边缘向右投一道柔和阴影，落在下面那页上；边缘内侧画一根极细的纸边。 */
+  @Builder
+  revealShadow(back: boolean) {
+    Column()
+      .width(ReaderPageTurnAnimation.REVEAL_SHADOW_SIZE)
+      .height('100%')
+      .position({ x: this.viewW(), y: 0 })
+      .linearGradient({
+        direction: GradientDirection.Right,
+        colors: ReaderPageTurnAnimation.revealShadowColors(this.darkMode)
+      })
+      .opacity(ReaderPageTurnAnimation.revealShadowOpacity(this.sheetX(back) + this.viewW(), this.viewW()))
+      .hitTestBehavior(HitTestMode.None)
+    Column()
+      .width(REVEAL_EDGE_LINE)
+      .height('100%')
+      .position({ x: this.viewW() - REVEAL_EDGE_LINE, y: 0 })
+      .backgroundColor(ReaderPageTurnAnimation.revealEdgeColor(this.darkMode))
+      .opacity(ReaderPageTurnAnimation.revealShadowOpacity(this.sheetX(back) + this.viewW(), this.viewW()))
+      .hitTestBehavior(HitTestMode.None)
   }
 
   /** 推页：左侧那页随被盖住的比例蒙一层纱，右侧那页在左边缘向外投阴影。 */
@@ -976,6 +1013,9 @@ export struct ReaderSnapshotPageTurn {
       }
       if (this.animationType === ReaderPageTurnAnimation.PUSH && this.backReady) {
         this.pushShade(back)
+      }
+      if (this.animationType === ReaderPageTurnAnimation.REVEAL && this.backReady && this.revealMoving(back)) {
+        this.revealShadow(back)
       }
     }
     .width(this.viewW())

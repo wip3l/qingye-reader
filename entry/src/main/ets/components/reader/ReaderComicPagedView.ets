@@ -22,6 +22,8 @@ import {
 // 推页接缝阴影的宽度（vp），以及被压住那页在完全盖住时浅纱的不透明度；与正文阅读页一致。
 const PUSH_SHADOW_SIZE = 18;
 const PUSH_SHADE_MAX_OPACITY = 0.45;
+// 揭页时移动那格的纸边细线宽度（vp），约等于一个物理像素；与正文阅读页一致。
+const REVEAL_EDGE_LINE = 0.4;
 
 /** 阅读页向翻页视图发出的指令（点击翻页、音量键）；视图挂载时填入实现。 */
 export class ReaderComicPagedController {
@@ -298,6 +300,11 @@ export struct ReaderComicPagedView {
       if (direction > 0 && k === 0) return 0;
       if (direction < 0 && k === -1) return 0;
     }
+    if (this.animationType === ReaderPageTurnAnimation.REVEAL) {
+      // 往后翻时当前跨页滑走、下一跨页原地不动；往前翻时上一跨页盖回来、当前跨页不动。
+      if (direction > 0 && k === 1) return 0;
+      if (direction < 0 && k === 0) return 0;
+    }
     return (this.rightToLeft ? -k : k) * this.viewW() + this.dragOffset;
   }
 
@@ -325,11 +332,26 @@ export struct ReaderComicPagedView {
   private slotZIndex(spread: number): number {
     const k = spread - this.spreadIndex;
     if (this.animationType === ReaderPageTurnAnimation.FADE) return k === 0 ? 0 : 1;
+    // 揭页时跟着手指走的那格在上面，它的阴影落在下面那格上。
+    if (this.animationType === ReaderPageTurnAnimation.REVEAL) {
+      return k === this.revealMovingSlot() ? 2 : (k === 0 ? 1 : 0);
+    }
     // 推页时屏幕右侧那格压在上面，它的阴影才能落到左侧那格上；右→左模式下右侧是序号小的一格。
     if (this.animationType === ReaderPageTurnAnimation.PUSH && this.rightToLeft) {
       return k < 0 ? 2 : (k === 0 ? 1 : 0);
     }
     return k > 0 ? 2 : (k === 0 ? 1 : 0);
+  }
+
+  /** 揭页时跟着手指走的那格（相对当前跨页的序号）：往后翻是当前跨页，往前翻是上一跨页。 */
+  private revealMovingSlot(): number {
+    const direction = this.dragDirection(this.dragOffset) || this.curlDirection;
+    return direction < 0 ? -1 : 0;
+  }
+
+  /** 揭页阴影所在的边：左→右模式落在移动那格右侧，右→左模式落在左侧（下面那格所在的一侧）。 */
+  private revealShadowEdge(spread: number): number {
+    return this.rightToLeft ? this.slotX(spread) : this.slotX(spread) + this.viewW();
   }
 
   private usesCurl(): boolean {
@@ -908,6 +930,30 @@ export struct ReaderComicPagedView {
     }
   }
 
+  /** 揭页：跟着手指走的那格在边缘外侧投一道柔和阴影，落在下面那格上；边缘内侧画一根极细的纸边。 */
+  @Builder
+  revealShadow(spread: number) {
+    if (spread - this.spreadIndex === this.revealMovingSlot() && this.slotX(spread) !== 0) {
+      Column()
+        .width(ReaderPageTurnAnimation.REVEAL_SHADOW_SIZE)
+        .height('100%')
+        .position({ x: this.rightToLeft ? -ReaderPageTurnAnimation.REVEAL_SHADOW_SIZE : this.viewW(), y: 0 })
+        .linearGradient({
+          direction: this.rightToLeft ? GradientDirection.Left : GradientDirection.Right,
+          colors: ReaderPageTurnAnimation.revealShadowColors(this.darkMode)
+        })
+        .opacity(ReaderPageTurnAnimation.revealShadowOpacity(this.revealShadowEdge(spread), this.viewW()))
+        .hitTestBehavior(HitTestMode.None)
+      Column()
+        .width(REVEAL_EDGE_LINE)
+        .height('100%')
+        .position({ x: this.rightToLeft ? 0 : this.viewW() - REVEAL_EDGE_LINE, y: 0 })
+        .backgroundColor(ReaderPageTurnAnimation.revealEdgeColor(this.darkMode))
+        .opacity(ReaderPageTurnAnimation.revealShadowOpacity(this.revealShadowEdge(spread), this.viewW()))
+        .hitTestBehavior(HitTestMode.None)
+    }
+  }
+
   @Builder
   slot(chapterIndex: number, spread: number) {
     Stack() {
@@ -936,6 +982,9 @@ export struct ReaderComicPagedView {
       }
       if (this.animationType === ReaderPageTurnAnimation.PUSH) {
         this.pushShade(this.relativeSpread(chapterIndex, spread))
+      }
+      if (this.animationType === ReaderPageTurnAnimation.REVEAL) {
+        this.revealShadow(this.relativeSpread(chapterIndex, spread))
       }
     }
     .width(this.viewW())

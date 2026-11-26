@@ -114,6 +114,7 @@ export class ReaderSettingsStore {
   static readonly PAGE_TURN_ANIMATION_SIMULATION: number = 6;
   static readonly PAGE_TURN_ANIMATION_3D: number = 7;
   static readonly PAGE_TURN_ANIMATION_PUSH: number = 8;
+  static readonly PAGE_TURN_ANIMATION_REVEAL: number = 9;
   static readonly SCREEN_TIMEOUT_FOLLOW_SYSTEM: number = 0;
   static readonly SCREEN_TIMEOUT_ALWAYS_ON: number = -1;
   static readonly SCREEN_TIMEOUT_MAX_MINUTES: number = 60;
@@ -1963,6 +1964,7 @@ export class ReaderSettingsStore {
     if (value === ReaderSettingsStore.PAGE_TURN_ANIMATION_NONE ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_SLIDE ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_PUSH ||
+      value === ReaderSettingsStore.PAGE_TURN_ANIMATION_REVEAL ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_FADE ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_STACK ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_SIMULATION ||
