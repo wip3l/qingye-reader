@@ -3,6 +3,7 @@ import { appDb, ReaderImageResource } from '../../model/data/AppDatabase';
 import { ReaderCacheCoordinator } from './ReaderCacheCoordinator';
 import { ReaderImageReferences } from './ReaderImageReferences';
 import { ReaderImageMarker } from './ReaderImageMarker';
+import { ReaderImageDimensions } from './ReaderImageDimensions';
 
 /** Original images have durable, content-identity filenames. Derived AI files remain disposable. */
 export class ReaderImageCache {
@@ -126,18 +127,23 @@ export class ReaderImageCache {
     try {
       await ReaderCacheCoordinator.run(async (): Promise<void> => {
         const temp = `${path}.part`;
-        const file = fs.openSync(temp, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+        // 写入、落盘同步都用异步接口：读漫画时图片边下边存，同步写（尤其是 fsync）会让正在滑动的画面一顿一顿。
+        const file = await fs.open(temp, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
         try {
           let offset = 0;
           while (offset < bytes.length) {
-            const written = fs.writeSync(file.fd, bytes.buffer.slice(bytes.byteOffset + offset, bytes.byteOffset + bytes.byteLength));
+            // 整块缓冲区直接交出去，不复制；只有字节是大缓冲区里的一段、或上一次没写完时才截取。
+            const whole = offset === 0 && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength;
+            const written = await fs.write(file.fd, whole ? bytes.buffer :
+              bytes.buffer.slice(bytes.byteOffset + offset, bytes.byteOffset + bytes.byteLength));
             if (written <= 0) throw new Error('图片缓存写入失败，设备空间可能不足');
             offset += written;
           }
-          fs.fsyncSync(file.fd);
-        } finally { fs.closeSync(file); }
-        if (fs.statSync(temp).size !== bytes.length) throw new Error('图片缓存写入不完整');
-        fs.renameSync(temp, path);
+          await fs.fdatasync(file.fd);
+        } finally { await fs.close(file); }
+        if ((await fs.stat(temp)).size !== bytes.length) throw new Error('图片缓存写入不完整');
+        await fs.rename(temp, path);
+        ReaderImageDimensions.remember(path, ReaderImageDimensions.read(bytes));
         const row = new ReaderImageResource();
         row.path = path; row.raw = raw; row.sourceUrl = sourceUrl; row.imageIndex = imageIndex;
         row.bytes = bytes.length; row.usedAt = Date.now();

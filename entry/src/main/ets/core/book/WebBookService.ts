@@ -6,6 +6,7 @@ import { SourceEngineHost, Book, BookChapter, BookSource, ContentRule, HttpClien
 import { util } from '@kit.ArkTS';
 import { BookSourceDataUrlSupport } from './BookSourceDataUrlSupport';
 import { ReaderImageMarker } from './ReaderImageMarker';
+import { ReaderImageDimensions } from './ReaderImageDimensions';
 import { MixedVideoChapter } from './MixedVideoChapter';
 import { ComicImagePipeline, ComicImageTiming } from './ComicImagePipeline';
 import { ReaderImageRequest, ReaderImageScheduler } from './ReaderImageScheduler';
@@ -2168,7 +2169,7 @@ export class WebBookService {
     return content.replace(pattern, (_all: string, encoded: string, width?: string, height?: string): string => {
       try {
         const raw = decodeURIComponent(encoded);
-        return ReaderImageMarker.create(resolved[raw] || raw, Number(width || 0), Number(height || 0));
+        return ReaderImageDimensions.marker(resolved[raw] || raw, Number(width || 0), Number(height || 0));
       } catch (_) {
         return _all;
       }

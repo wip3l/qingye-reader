@@ -50,7 +50,7 @@ function harness({ cachedUrls, network }) {
     SearchCoordinator: class { async search() { return []; } getLastFailureReason() { return 'offline'; } },
     BookSourceInteractionPostProcessor: { interactionCacheIdentity: () => '' }
   });
-  for (const file of ['ReaderCacheCoordinator', 'ReaderImageMarker', 'ReaderImageReferences', 'ReaderImageCache',
+  for (const file of ['ReaderCacheCoordinator', 'ReaderImageMarker', 'ReaderImageDimensions', 'ReaderImageReferences', 'ReaderImageCache',
     'ReaderImageScheduler', 'ReaderImageResults', 'WebBookService', 'ReadBookEngine']) {
     vm.runInContext(stripTypeScriptTypes(readEtsModule(`core/book/${file}.ts`)
       .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, ''), { mode: 'strip' }), context);

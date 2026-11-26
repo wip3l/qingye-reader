@@ -6,7 +6,8 @@ import { readEtsModule } from './lib/ets-module-staging.mjs';
 // 渐进加载的图片结果登记：同图去重、被取消后可重来、订阅通知、可见计数、整章补完后换成最终来源。
 const context = vm.createContext({ Promise, Error, Map, encodeURIComponent, decodeURIComponent, setInterval, clearInterval,
   HttpClient: { CANCELLED_ERROR: '书源请求已取消' } });
-for (const file of ['core/book/ReaderImageMarker.ts', 'core/book/ReaderImageScheduler.ts', 'core/book/ReaderImageResults.ts']) {
+for (const file of ['core/book/ReaderCacheCoordinator.ts', 'core/book/ReaderImageMarker.ts', 'core/book/ReaderImageDimensions.ts',
+  'core/book/ReaderImageScheduler.ts', 'core/book/ReaderImageResults.ts']) {
   vm.runInContext(stripTypeScriptTypes(readEtsModule(file)
     .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, ''), { mode: 'strip' }), context);
 }

@@ -8,6 +8,7 @@ import { LocalBookService } from '../../core/book/LocalBookService';
 import { ReaderComicColorSession, ComicColorCandidate } from '@legado/aiengine';
 import { ReaderImageMarker } from '../../core/book/ReaderImageMarker';
 import { ReaderImageResults } from '../../core/book/ReaderImageResults';
+import { ReaderImageDimensions } from '../../core/book/ReaderImageDimensions';
 import { ReaderContinuousDataSource, ReaderScrollItem } from '../../core/reader/ReaderDataSources';
 import { ReaderComicSuperResolution } from '@legado/aiengine';
 import { ComicChineseConverter } from '@legado/aiengine';
@@ -28,6 +29,9 @@ export class ReaderComicImageSizes {
   private static readonly probing: Set<string> = new Set<string>();
 
   static ratio(source: string): number {
+    // 落盘时从文件头读到的尺寸是准的，优先用；其次才是图片组件加载后回报的。
+    const exact = ReaderImageDimensions.size(source);
+    if (exact) return exact[1] / exact[0];
     return ReaderComicImageSizes.ratios.get(source) || 0;
   }
 
@@ -185,6 +189,16 @@ export struct ReaderComicImageItem {
   @Prop @Watch('onTrimChanged') trimMode: string = 'off';
   /** 双页并排时另一页的图片标记：两页取相同的上下裁剪，缩放才一致。 */
   @Prop @Watch('onTrimChanged') trimPartner: string = '';
+  /**
+   * 按显示大小解码，不按原图分辨率：高分辨率原图整张解码一张就是几十 MB，滑动中首次上屏会掉帧。
+   * 条漫打开；翻页模式和小说插图一次只有一两张图，保持原样。
+   */
+  @Prop resizeDecode: boolean = false;
+  /** 画面放大着：在按显示大小解码的图上再叠一层原图分辨率的，放大后看细节不糊。 */
+  @Prop @Watch('onSharpChanged') sharp: boolean = false;
+  @State private sharpShown: boolean = false;
+  /** 原图像素宽度，未知为 0；用来判断按显示大小解码是否真的缩小了。 */
+  private pixelWidth: number = 0;
   retryRegistry: ReaderComicRetryRegistry | null = null;
   processing: ReaderComicProcessing | null = null;
   private processingOwner: number = ReaderComicProcessing.owner();
@@ -319,6 +333,16 @@ export struct ReaderComicImageItem {
     this.enhancedUri = '';
     this.enhancedShown = false;
     this.enhancedBadge = false;
+  }
+
+  onSharpChanged(): void {
+    if (!this.sharp) this.sharpShown = false;
+  }
+
+  /** 放大时需要另叠一层原图：图确实被缩小解码了（原图比显示的宽），或者不知道原图多大。 */
+  private needsSharpLayer(): boolean {
+    if (!this.resizeDecode || !this.sharp || !this.source || this.ratio <= 0) return false;
+    return this.pixelWidth <= 0 || this.pixelWidth > vp2px(this.fullWidth()) * 1.05;
   }
 
   onTextConvertChanged(): void {
@@ -601,6 +625,9 @@ export struct ReaderComicImageItem {
     this.loaded = false;
     this.broken = false;
     this.denied = false;
+    this.sharpShown = false;
+    const exact = ReaderImageDimensions.size(source);
+    this.pixelWidth = width > 0 && height > 0 ? width : (exact ? exact[0] : 0);
     this.resetEnhancement();
     this.resetTextLayer();
     this.unregisterRetry();
@@ -726,12 +753,17 @@ export struct ReaderComicImageItem {
               .translate({ x: this.layerShiftX(), y: this.layerShiftY() })
               // 原图比例尚未返回时保持 Contain；比例已知后容器严格等比，Fill 只消除边缘 letterbox。
               .objectFit(this.layerFit(this.boxed() || this.ratio <= 0))
+              // 比例已知、图层就是最终大小之后才按显示大小解码；占位阶段按原图解码，免得按占位的小尺寸解出来发糊。
+              .autoResize(this.resizeDecode && this.ratio > 0)
               .draggable(false)
               .onComplete((event) => {
                 if (!event) return;
                 if (event.width > 0 && event.height > 0) {
                   const ratio = ReaderComicImageSizes.remember(this.source, event.width, event.height);
-                  if (ratio > 0 && Math.abs(ratio - this.ratio) >= 0.0001) this.ratio = ratio;
+                  // 已有比例时只在明显不符才改：缩小解码回报的尺寸取整后会差一点点，照着改会让列表项高度抖一下。
+                  if (ratio > 0 && (this.ratio <= 0 || Math.abs(ratio - this.ratio) > this.ratio * 0.005)) {
+                    this.ratio = ratio;
+                  }
                   this.loaded = true;
                   this.maybeEnhance();
                   this.maybeConvertText();
@@ -740,6 +772,21 @@ export struct ReaderComicImageItem {
               .onError((error: ImageError) => this.markBroken(error))
               .id(this.retryKey ? ReaderComicImageItem.snapshotId(this.retryKey) : '')
           }, (token: number) => `${token}`)
+
+          if (this.needsSharpLayer() && this.loaded && !this.broken) {
+            Image(ReaderComicImageSizes.uri(this.source))
+              .width(this.layerWidth())
+              .height(this.layerHeight())
+              .translate({ x: this.layerShiftX(), y: this.layerShiftY() })
+              .objectFit(this.layerFit(this.boxed()))
+              .autoResize(false)
+              .draggable(false)
+              .opacity(this.sharpShown ? 1 : 0)
+              .hitTestBehavior(HitTestMode.None)
+              .onComplete((event) => {
+                if (event && event.width > 0 && event.height > 0) this.sharpShown = true;
+              })
+          }
 
           if (this.enhancedUri && this.loaded && !this.broken) {
             Image(this.enhancedUri)
@@ -1507,6 +1554,8 @@ export struct ReaderComicView {
                 superResolution: this.superResolution,
                 textConvert: this.textConvert,
                 trimMode: this.trimMode,
+                resizeDecode: true,
+                sharp: this.zoomScale > 1.001,
                 retryRegistry: this.retryRegistry,
                 processing: this.processing,
                 onDenied: (): void => this.onImageDenied(item.chapterIndex)

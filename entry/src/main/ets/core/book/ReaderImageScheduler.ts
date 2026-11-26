@@ -67,6 +67,10 @@ export class ReaderImageScheduler {
       ReaderImageScheduler.pump();
     });
     try {
+      // 名额通常是在上一张图收尾的那个回调里腾出来的，一次还可能腾出好几个。发起一次下载在主线程上要几毫秒
+      // （系统网络接口、取 Cookie、查本地文件），都挤在同一个回调里就会超过一帧；各自放到单独一轮再起步，画面帧可以插在中间。
+      await new Promise<void>((resolve: () => void): void => { setTimeout(resolve, 0); });
+      if (cancelled()) throw new Error(HttpClient.CANCELLED_ERROR);
       return await task();
     } finally {
       ReaderImageScheduler.active--;

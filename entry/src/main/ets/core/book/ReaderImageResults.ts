@@ -1,5 +1,6 @@
 import { ReaderCacheCoordinator } from './ReaderCacheCoordinator';
 import { ReaderImageMarker } from './ReaderImageMarker';
+import { ReaderImageDimensions } from './ReaderImageDimensions';
 import { ReaderImageScheduler } from './ReaderImageScheduler';
 
 class ReaderImageResultEntry {
@@ -131,7 +132,7 @@ export class ReaderImageResults {
     return text.replace(pattern, (marker: string): string => {
       const info = ReaderImageMarker.parse(marker);
       const raw = ReaderImageMarker.pendingRaw(info.source);
-      return raw ? ReaderImageMarker.create(ReaderImageResults.current(raw), info.width, info.height) : marker;
+      return raw ? ReaderImageDimensions.marker(ReaderImageResults.current(raw), info.width, info.height) : marker;
     });
   }
 

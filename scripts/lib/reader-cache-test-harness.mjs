@@ -43,6 +43,8 @@ export function harness() {
       f.data = next; f.size = next.length; f.mtime = stamp(); return input.length;
     },
     fsyncSync() {}, closeSync() {},
+    async open(p) { return io.openSync(p); }, async write(fd, bytes) { return io.writeSync(fd, bytes); },
+    async fdatasync() {}, async close() {}, async rename(a, b) { io.renameSync(a, b); },
     unlinkSync(p) { if (!files.delete(p)) throw Error('ENOENT'); },
     renameSync(a, b) { if (!files.has(a)) throw Error('ENOENT'); files.set(b, files.get(a)); files.delete(a); },
     async copyFile(a, b) { if (failCopy) throw Error('ENOSPC'); const f = files.get(a); if (!f) throw Error('ENOENT'); files.set(b, { ...f, mtime: stamp(), data: f.data.slice() }); }
@@ -84,7 +86,7 @@ export function harness() {
   });
   const load = relative => vm.runInContext(stripTypeScriptTypes(readEtsModule(relative)
     .replace(/^import[\s\S]*?;\r?\n/gm, '').replace(/^export /gm, '')), context, { filename: relative });
-  for (const name of ['ReaderCacheCoordinator', 'ReaderImageMarker', 'ReaderImageReferences', 'ReaderCacheBudgetPolicy', 'CachedChapterRealign',
+  for (const name of ['ReaderCacheCoordinator', 'ReaderImageMarker', 'ReaderImageDimensions', 'ReaderImageReferences', 'ReaderCacheBudgetPolicy', 'CachedChapterRealign',
     'ChapterWordCounts']) load(`core/book/${name}.ts`);
   load('model/data/AppDatabase.ts');
   for (const name of ['BookTypeSupport', 'ReaderImageCache', 'ReaderCacheBudget', 'ReaderImageScheduler', 'ReaderImageResults', 'WebBookService', 'ReadBookEngine', 'ReaderImageRecovery']) load(`core/book/${name}.ts`);

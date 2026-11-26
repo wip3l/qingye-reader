@@ -23,7 +23,8 @@ function harness() {
   const releases = [];
   const context = vm.createContext({
     console: { log() {}, info() {}, warn() {}, error() {} },
-    setTimeout: callback => { timers.push(callback); return timers.length; },
+    // Delayed preload timers wait for flushTimers(); the scheduler's zero-delay yield before each image runs by itself.
+    setTimeout: (callback, delay) => { if (!delay) { setTimeout(callback, 0); return 0; } timers.push(callback); return timers.length; },
     setInterval, clearInterval,
     HttpClient: class { static CANCELLED_ERROR = 'cancelled'; },
     ComicImageTiming: class {},
@@ -45,7 +46,7 @@ function harness() {
     ReaderCacheBudget: { noteTextWrite() {} },
     ReaderActionMarker: { hasLegacy() { return false; } }
   });
-  for (const file of ['ReaderCacheCoordinator', 'ReaderImageMarker', 'ReaderImageReferences', 'ReaderImageCache', 'ReaderImageScheduler', 'ReaderImageResults', 'WebBookService', 'ReadBookEngine']) {
+  for (const file of ['ReaderCacheCoordinator', 'ReaderImageMarker', 'ReaderImageDimensions', 'ReaderImageReferences', 'ReaderImageCache', 'ReaderImageScheduler', 'ReaderImageResults', 'WebBookService', 'ReadBookEngine']) {
     vm.runInContext(stripTypeScriptTypes(readEtsModule(`core/book/${file}.ts`)
       .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, ''), { mode: 'strip' }), context);
   }
