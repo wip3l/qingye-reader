@@ -24,6 +24,8 @@ const AUDIO_VOICE_ROW_HEIGHT: number = 44;
 const SUBTITLE_TABS_HEIGHT: number = 30;
 /** 选“字幕”时字幕区至少留这么高（约 5 行），封面按剩下的空间缩小。 */
 const SUBTITLE_AREA_MIN_HEIGHT: number = 140;
+/** 选“字幕”时封面按比例缩小，仍居中，把高度让给字幕（约 294 → 168vp）。 */
+const SUBTITLE_COVER_SCALE: number = 0.57;
 /** 切换“简介 | 字幕”时封面缩放的时长。 */
 const SUBTITLE_SWITCH_MS: number = 300;
 /** 听书进度滑条的高度：够手指拖动，不带系统默认的上下留白。 */
@@ -1516,15 +1518,16 @@ export struct ReaderTtsPlayerPanel {
 
   /**
    * 听书大封面的高度：优先用 coverHeight()，封面区放不下时扣掉章节名、状态行、音色下拉和间距后缩小。
-   * 选了“字幕”时再给字幕区留出 SUBTITLE_AREA_MIN_HEIGHT，封面跟着变小。
+   * 选了“字幕”时封面先按 SUBTITLE_COVER_SCALE 缩小，再给字幕区留出 SUBTITLE_AREA_MIN_HEIGHT，放不下时继续缩。
    * 封面区是 layoutWeight 分到的高度，不随封面大小变化，所以不会来回触发布局。
    */
   audioCoverHeight(): number {
-    const preferred = this.coverHeight();
+    const hasTabs = this.subtitleAvailable();
+    const preferred = hasTabs && this.subtitleTab ?
+      Math.max(AUDIO_COVER_MIN_HEIGHT, Math.round(this.coverHeight() * SUBTITLE_COVER_SCALE)) : this.coverHeight();
     if (this.audioHeroHeight <= 0) return preferred;
     const hasStatus = !!this.statusText();
     const hasVoice = this.showAudioVoiceRow();
-    const hasTabs = this.subtitleAvailable();
     const hasTitle = !this.chapterInHeader();
     // 子项间距：封面、[章节名]、[简介/字幕切换]、简介、[状态行]、[音色]；再加封面和章节名各自的上边距。
     const gaps = AppSpacing.MD * (1 + (hasTitle ? 1 : 0) + (hasTabs ? 1 : 0) + (hasStatus ? 1 : 0) +
