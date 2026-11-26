@@ -10,7 +10,9 @@ import { CoverFailures } from './CoverFailures';
 export class CoverFailureStore {
   static readonly REVISION_KEY: string = 'coverFailureRevision';
   private static readonly STORE_NAME: string = 'cover_failures';
-  private static readonly KEY_ENTRIES: string = 'entries';
+  // 旧键 entries 里混着超时、断连记下的地址（当时不分失败原因），换键整份丢掉，真取不到的下次显示时再记。
+  private static readonly KEY_ENTRIES: string = 'entries_v2';
+  private static readonly LEGACY_KEY_ENTRIES: string = 'entries';
   private static saveTimer: number = -1;
   private static notifyTimer: number = -1;
 
@@ -18,6 +20,10 @@ export class CoverFailureStore {
   static async load(context: Context): Promise<void> {
     try {
       const store = await preferences.getPreferences(context, CoverFailureStore.STORE_NAME);
+      if (await store.has(CoverFailureStore.LEGACY_KEY_ENTRIES)) {
+        await store.delete(CoverFailureStore.LEGACY_KEY_ENTRIES);
+        await store.flush();
+      }
       const raw = await store.get(CoverFailureStore.KEY_ENTRIES, '');
       if (typeof raw !== 'string' || !raw) return;
       CoverFailures.load(raw);

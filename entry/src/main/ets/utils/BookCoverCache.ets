@@ -9,6 +9,12 @@ import { CoverFailures } from './CoverFailures';
 import { CoverFailureStore } from './CoverFailureStore';
 import { copyFile } from '../platform/Files';
 
+/** 一次封面下载的结果。path 为空时 definite 表示服务器明确没有这张图（值得记为取不到），否则只是这会儿没取到。 */
+interface CoverDownload {
+  path: string;
+  definite: boolean;
+}
+
 export class BookCoverCache {
   private static resolvedCoverUris: Map<string, string> = new Map();
   private static inFlightResolutions: Map<string, Promise<string>> = new Map();
@@ -124,13 +130,14 @@ export class BookCoverCache {
       }
       // 下载前先看有没有网：没网时的失败不算这个地址取不到。
       const online = CoverFailureStore.online();
-      const path = await BookCoverCache.downloadCover(context, raw);
-      if (!path) {
-        if (online) CoverFailureStore.markFailed(context, raw);
+      const download = await BookCoverCache.downloadCover(context, raw);
+      if (!download.path) {
+        // 超时、断连、5xx 只说明这会儿取不到，记下来会让封面两天都换成兜底。
+        if (online && download.definite) CoverFailureStore.markFailed(context, raw);
         return SourceCoverUrl.isEncoded(raw) ? '' : raw;
       }
       CoverFailureStore.markLoaded(context, raw);
-      const resolved = fileUri.getUriFromPath(path);
+      const resolved = fileUri.getUriFromPath(download.path);
       BookCoverCache.resolvedCoverUris.set(raw, resolved);
       return resolved;
     }
@@ -172,7 +179,7 @@ export class BookCoverCache {
       if (await BookCoverCache.existsAsync(cachedPath)) {
         return cachedPath;
       }
-      return await BookCoverCache.downloadCover(context, raw);
+      return (await BookCoverCache.downloadCover(context, raw)).path;
     }
     const localPath = BookCoverCache.localPathFromUri(raw);
     if (localPath && await BookCoverCache.existsAsync(localPath)) {
@@ -222,24 +229,36 @@ export class BookCoverCache {
     return resolved;
   }
 
-  private static async downloadCover(context: Context, url: string): Promise<string> {
+  private static downloaded(path: string, definite: boolean): CoverDownload {
+    const result: CoverDownload = { path: path, definite: definite };
+    return result;
+  }
+
+  /** 服务器明确说没有这张图：4xx（请求超时 408、限流 429 除外）。5xx 多半是一时的。 */
+  private static isDefiniteMiss(code: number): boolean {
+    return code >= 400 && code < 500 && code !== 408 && code !== 429;
+  }
+
+  private static async downloadCover(context: Context, url: string): Promise<CoverDownload> {
     const dir = `${context.cacheDir}/book_covers`;
     await BookCoverCache.ensureDirAsync(dir);
     const path = BookCoverCache.cachedCoverPath(context, url);
     if (await BookCoverCache.existsAsync(path)) {
-      return path;
+      return BookCoverCache.downloaded(path, false);
     }
     await BookCoverCache.acquireNetworkSlot();
     try {
       // Another request may have completed while this one waited for a slot.
-      if (await BookCoverCache.existsAsync(path)) return path;
+      if (await BookCoverCache.existsAsync(path)) return BookCoverCache.downloaded(path, false);
       if (SourceCoverUrl.isEncoded(url)) {
         const data = await BookCoverCache.loadSourceCoverBytes(url);
-        if (!data) return '';
+        if (!data) return BookCoverCache.downloaded('', true);
         await BookCoverCache.writeFile(path, data);
-        return path;
+        return BookCoverCache.downloaded(path, false);
       }
       const candidates = CoverUrlNormalizer.downloadCandidates(url);
+      // 每个候选地址都被服务器明确拒绝才算确定取不到；有一个是超时或断连就不下结论。
+      let definite = candidates.length > 0;
       for (const requestUrl of candidates) {
         const request = http.createHttp();
         try {
@@ -247,6 +266,9 @@ export class BookCoverCache {
             method: http.RequestMethod.GET,
             connectTimeout: 10000,
             readTimeout: 10000,
+            // 不走 HTTP/2：并发的封面会挤在同一条连接上，这条连接一卡住（真机上见过番茄封面 CDN 一卡几分钟），
+            // 之后每张都复用它、全部超时。HTTP/1.1 每个请求各占一条连接，超时的那条随请求一起丢掉。
+            usingProtocol: http.HttpProtocol.HTTP1_1,
             expectDataType: http.HttpDataType.ARRAY_BUFFER,
             header: {
               'User-Agent': 'Mozilla/5.0 (Linux; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -257,18 +279,20 @@ export class BookCoverCache {
             }
           });
           if (response.responseCode < 200 || response.responseCode >= 300 || !(response.result instanceof ArrayBuffer)) {
+            if (!BookCoverCache.isDefiniteMiss(response.responseCode)) definite = false;
             continue;
           }
           if (response.result.byteLength === 0) continue;
           await BookCoverCache.writeFile(path, new Uint8Array(response.result));
-          return path;
+          return BookCoverCache.downloaded(path, false);
         } catch (e) {
+          definite = false;
           console.warn('下载书籍封面失败:', e);
         } finally {
           request.destroy();
         }
       }
-      return '';
+      return BookCoverCache.downloaded('', definite);
     } finally {
       BookCoverCache.releaseNetworkSlot();
     }

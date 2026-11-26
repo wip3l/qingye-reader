@@ -115,11 +115,12 @@ test('transient network and decoder failures retry in place, with a hard two-ret
   assert.equal(f.requests.length, 3);
 });
 
-function cacheHarness() {
+function cacheHarness(extra = {}) {
   const files = new Map(), handles = new Map();
   const state = { pauseWrite: null, shortWrite: false, failWrite: false, nextFd: 0 };
-  const sandbox = vm.createContext({ console, Uint8Array, ArrayBuffer,
+  const sandbox = vm.createContext({ console, Uint8Array, ArrayBuffer, ...extra,
     fs: {
+      mkdir: async () => {},
       OpenMode: { CREATE: 1, WRITE_ONLY: 2, TRUNC: 4 },
       open: async path => { files.set(path, Buffer.alloc(0)); const fd = ++state.nextFd; handles.set(fd, path); return { fd }; },
       write: async (fd, bytes) => {
@@ -192,4 +193,51 @@ test('shared resolutions are released after success or failure so retries start 
   requests[2].resolve('file:///cache/a');
   assert.equal(await final, 'file:///cache/a');
   assert.equal(f.cache.inFlightResolutions.size, 0);
+});
+
+function downloadHarness(respond) {
+  const marked = [], loaded = [], options = [];
+  const http = {
+    RequestMethod: { GET: 'GET' }, HttpDataType: { ARRAY_BUFFER: 2 }, HttpProtocol: { HTTP1_1: 0, HTTP2: 1 },
+    createHttp: () => ({
+      request: async (url, option) => { options.push(option); return respond(url); },
+      destroy: () => {}
+    })
+  };
+  const f = cacheHarness({ http, ArrayBuffer,
+    console: { warn: () => {}, log: () => {} },
+    CoverUrlNormalizer: { downloadCandidates: url => [url] },
+    SourceCoverUrl: { isEncoded: () => false },
+    CoverFailureStore: { online: () => true, markFailed: (_c, url) => marked.push(url), markLoaded: (_c, url) => loaded.push(url) }
+  });
+  return { ...f, marked, loaded, options };
+}
+
+test('cover downloads use HTTP/1.1 so one stalled connection cannot hang every later cover', async () => {
+  const f = downloadHarness(() => ({ responseCode: 200, result: new Uint8Array([1, 2, 3]).buffer }));
+  const resolved = await f.cache.resolveCover({ cacheDir: '/cache' }, 'https://cdn/a.jpg');
+  assert.match(resolved, /^file:\/\/\/cache\/book_covers\//);
+  assert.equal(f.options[0].usingProtocol, 0);
+  assert.deepEqual(f.marked, []);
+});
+
+test('timeouts and server errors are not recorded as covers that cannot be fetched', async () => {
+  for (const respond of [
+    () => { throw Object.assign(new Error('Timeout was reached'), { code: 2300028 }); },
+    () => ({ responseCode: 503, result: new ArrayBuffer(0) }),
+    () => ({ responseCode: 429, result: new ArrayBuffer(0) }),
+    () => ({ responseCode: 408, result: new ArrayBuffer(0) })
+  ]) {
+    const f = downloadHarness(respond);
+    assert.equal(await f.cache.resolveCover({ cacheDir: '/cache' }, 'https://cdn/a.jpg'), 'https://cdn/a.jpg');
+    assert.deepEqual(f.marked, []);
+  }
+});
+
+test('a definite 4xx answer still records the cover as unavailable', async () => {
+  for (const code of [404, 403, 410]) {
+    const f = downloadHarness(() => ({ responseCode: code, result: new ArrayBuffer(0) }));
+    await f.cache.resolveCover({ cacheDir: '/cache' }, 'https://cdn/gone.jpg');
+    assert.deepEqual(f.marked, ['https://cdn/gone.jpg'], String(code));
+  }
 });
