@@ -28,6 +28,11 @@ export interface MimoReadingOptions {
   speakText?: (text: string) => string;
   /** 本章最后一段已经送去合成（每次朗读最多一次）：调用方这时可以用 prepare 提前准备下一章。 */
   onTailQueued?: () => void;
+  /**
+   * 连续朗读（读完接着读下一章）：本章最后一段写进输出就结束，不等它放完；下一章的语音接着写在后面，
+   * 输出流留着不关。见 SystemTtsReader.finishWhenQueued。
+   */
+  keepOutputOnFinish?: boolean;
 }
 
 /**
@@ -121,10 +126,37 @@ export class MimoReadingSession {
   private static readonly AHEAD_CAST_HTTP_SECONDS: number = 15;
   private static readonly AHEAD_MIMO_SEGMENTS: number = 2;
 
+  /**
+   * 上一次 read 按连续朗读结束：本章结尾还在输出里放（见 keepOutputOnFinish），下一章的语音直接接在后面，
+   * 换章时不关输出流。
+   */
+  private queuedTail: boolean = false;
+
   stop(): void { this.halt(false); }
 
-  /** keepAhead：下一章正好接着读，留下提前准备的请求、离线队列和自定义音色名额，只停本章。 */
-  private halt(keepAhead: boolean): void {
+  /** 本章结尾还在输出里放、下一章还没开始。 */
+  hasQueuedTail(): boolean {
+    return this.queuedTail && !this.active;
+  }
+
+  /** 不再接着读时（书读完、下一章打不开）先把排着的结尾放完。 */
+  async drainQueuedTail(): Promise<void> {
+    if (!this.hasQueuedTail()) return;
+    await this.player.drain();
+  }
+
+  /** 换章交接等太久（下一章一直没开始）：关掉留着的输出流。 */
+  releaseIdleOutput(): void {
+    if (this.active) return;
+    this.queuedTail = false;
+    this.player.stop();
+  }
+
+  /**
+   * keepAhead：下一章正好接着读，留下提前准备的请求、离线队列和自定义音色名额，只停本章。
+   * keepOutput：上一章结尾还在输出里放，下一章接着写在后面，不关输出流。
+   */
+  private halt(keepAhead: boolean, keepOutput: boolean = false): void {
     if (this.active) {
       AppStorage.setOrCreate('mimoReadingActive', false);
       AppStorage.setOrCreate('mimoReadingStatus', '');
@@ -132,8 +164,9 @@ export class MimoReadingSession {
     this.generation++;
     this.active = false;
     this.paused = false;
+    this.queuedTail = false;
     this.client.stop();
-    this.player.stop();
+    if (!keepOutput) this.player.stop();
     if (!keepAhead) {
       this.http?.stop();
       if (this.castActive) { this.castActive = false; LocalTtsEngine.cancelAll(); }
@@ -662,9 +695,13 @@ export class MimoReadingSession {
     const lookahead = this.ahead;
     let adoptedAnalysis: Promise<void> | null = null;
     const adoptedDisk: Map<string, Promise<void>> = new Map<string, Promise<void>>();
+    // 上一章是写完即交接的：结尾还在放，这一章接在后面写，不拆输出流（拆了要等第一段合成好才重建，
+    // 熄屏时这段没有声音流，系统会判应用无声并冻结）。
+    const continuing = this.hasQueuedTail();
+    if (continuing) console.info('[TTS] mimo continuing after queued chapter tail, keeping output');
     if (lookahead !== null && this.aheadMatches(lookahead, text, options)) {
       // 下一章正好是提前准备过的那章：只停上一章，接过还在进行的识别和合成。
-      this.halt(true);
+      this.halt(true, continuing);
       this.ahead = null;
       lookahead.adopted = true;
       this.adoptedGeneration = lookahead.generation;
@@ -676,7 +713,7 @@ export class MimoReadingSession {
       console.info(`[TTS] mimo adopting next chapter prepared ahead: cast=${lookahead.cast},` +
         `audio=${lookahead.castAudio.size + lookahead.diskTasks.size}`);
     } else {
-      this.stop();
+      this.halt(false, continuing);
     }
     const generation = this.generation;
     this.active = true;
@@ -947,7 +984,15 @@ export class MimoReadingSession {
         index = segment.last + 1;
       }
       await Promise.all(pendingPlayback);
-      await this.player.drain();
+      if (options.keepOutputOnFinish === true && !preview && generation === this.generation) {
+        // 本章语音已全部写进输出：不等放完就结束，下一章接着写。熄屏后输出走 offload 通道，一次收下十来秒，
+        // 等放完这段时间应用写不出数据，系统按无声判定并冻结进程。下一章的语音到之前垫静音，流里一直有数据。
+        this.queuedTail = true;
+        this.player.startGapFill();
+        console.info(`[TTS] mimo chapter audio fully queued, handing off before playback drains: ${this.player.debugState()}`);
+      } else {
+        await this.player.drain();
+      }
       await this.ready(generation);
     } catch (error) {
       if (generation === this.generation) { this.client.stop(); this.player.stop(); }

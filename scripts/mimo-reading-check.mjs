@@ -623,4 +623,25 @@ await session.read(mimoA,{...options,chapter:'ma',onTailQueued:()=>session.prepa
 focus.length=0;
 await session.read(mimoB,{...options,chapter:'mb'});
 assert.equal(focus.join(''),mimoB,'a mismatched preparation is discarded');
-console.log('MiMo session checks passed: source focus, cached replay, failed segment retention, short-unit merging, synthesis and analysis prefetch, stale chapter cancellation, next chapter preparation.');
+// 连续朗读写完即交接：本章不等放完、垫静音，下一章接着写不拆输出；不连续朗读照旧放完。
+{
+  const counts={stop:0,drain:0,fill:0};const proto=Player.prototype;
+  const saved={stop:proto.stop,drain:proto.drain};
+  proto.stop=function(){counts.stop++;};proto.drain=function(){counts.drain++;return Promise.resolve();};
+  proto.startGapFill=function(){counts.fill++;};proto.debugState=function(){return 'fake';};
+  const handoff=new Session();const keep={...options,chapter:'h1',keepOutputOnFinish:true};
+  await handoff.read('这是交接测试第一章的内容。',keep);
+  assert.equal(counts.drain,0,'a continuous chapter ends once its audio is queued, without draining');
+  assert.equal(counts.fill,1,'silence is filled until the next chapter writes');
+  assert.ok(handoff.hasQueuedTail(),'the queued tail is reported');
+  const stopsBefore=counts.stop;
+  await handoff.read('这是交接测试第二章的内容。',{...keep,chapter:'h2'});
+  assert.equal(counts.stop,stopsBefore,'the next chapter keeps the output that still plays the tail');
+  await handoff.drainQueuedTail();assert.equal(counts.drain,1,'the tail can still be drained at the book end');
+  handoff.releaseIdleOutput();assert.ok(!handoff.hasQueuedTail(),'releasing the idle output clears the tail');
+  await handoff.read('这是交接测试第三章的内容。',{...options,chapter:'h3'});
+  assert.equal(counts.drain,2,'a non-continuous read still drains before finishing');
+  assert.ok(!handoff.hasQueuedTail());
+  proto.stop=saved.stop;proto.drain=saved.drain;delete proto.startGapFill;delete proto.debugState;
+}
+console.log('MiMo session checks passed: source focus, cached replay, failed segment retention, short-unit merging, synthesis and analysis prefetch, stale chapter cancellation, next chapter preparation, continuous chapter handoff.');

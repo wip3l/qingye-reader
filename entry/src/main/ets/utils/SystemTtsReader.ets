@@ -264,8 +264,8 @@ export class SystemTtsReader {
    * 下一章的语音直接排在这段尾巴后面；不再接着读时要先 drainQueuedTail 再停，免得切掉结尾。
    */
   private queuedTailPending: boolean = false;
-  /** 排着的结尾在 httpReader 的输出里（云端、自定义、离线音色），不在 pcmPlayer 里（系统音色）。 */
-  private queuedTailOnHttp: boolean = false;
+  /** 排着的结尾在哪路输出里：pcmPlayer（系统音色）、httpReader（云端、自定义、离线音色）、mimoReader（MiMo 与多角色朗读）。 */
+  private queuedTailOutput: 'pcm' | 'http' | 'mimo' = 'pcm';
   /** 为下一章提前合成的开头几段（prepareNext 写入），下一章 start 时整份接过去。 */
   private aheadAudio: TtsAheadAudio = new TtsAheadAudio();
   /** 这一章开读时接过来的提前合成结果；按键取用，剩下没用上的在本章结束时放掉。 */
@@ -499,6 +499,8 @@ export class SystemTtsReader {
     const generation = ++this.readGeneration;
     // 上一章排着的结尾后面紧接着就是这次的语音，不再需要单独放完。
     this.queuedTailPending = false;
+    // 上一章走 MiMo/多角色、这一章不走：它留着的输出没人接着写，关掉。
+    if (!options?.mimo) this.mimoReader.releaseIdleOutput();
     this.discardAhead(this.adoptedAhead);
     this.adoptedAhead = this.aheadAudio;
     this.aheadAudio = new TtsAheadAudio();
@@ -566,6 +568,7 @@ export class SystemTtsReader {
         sourceOffset: options.mimoSourceOffset || 0, speed: options.speed || 1,
         cast: options.castVoices === true, voiceSpeed: this.getTtsSpeed(),
         speakText: (value: string): string => this.normalizeChunkForSpeech(value),
+        keepOutputOnFinish: this.keepsPcmOutputOnFinish(),
         onTailQueued: (): void => {
           const callback = this.onTailQueued;
           if (callback && generation === this.readGeneration && this.active) callback();
@@ -583,7 +586,13 @@ export class SystemTtsReader {
           if (this.onAudioStart) this.onAudioStart();
         }
       }).then((): void => {
-        if (generation === this.readGeneration && this.active) this.finish(true);
+        if (generation !== this.readGeneration || !this.active) return;
+        if (this.mimoReader.hasQueuedTail()) {
+          // 写完即交接（见 MimoReadingSession 的 keepOutputOnFinish）：结尾还在 mimoReader 的输出里放。
+          this.queuedTailPending = true;
+          this.queuedTailOutput = 'mimo';
+        }
+        this.finish(true);
       }).catch((error: Error): void => {
         if (generation !== this.readGeneration || !this.active) return;
         this.active = false;
@@ -1065,7 +1074,7 @@ export class SystemTtsReader {
     console.info(`[TTS] chapter audio fully queued, handing off before playback drains: http=${httpOutput},` +
       `${this.audioDebugState()}`);
     this.queuedTailPending = true;
-    this.queuedTailOnHttp = httpOutput;
+    this.queuedTailOutput = httpOutput ? 'http' : 'pcm';
     // 普通蓝牙等非 offload 通道只预收零点几秒：下一章合成出来之前垫静音，不让流断数据转入待机。
     if (httpOutput) this.httpReader.startGapFill(); else this.pcmPlayer.startGapFill();
     this.finish(true);
@@ -1084,7 +1093,8 @@ export class SystemTtsReader {
     let timer = -1;
     try {
       await Promise.race([
-        this.queuedTailOnHttp ? this.httpReader.drain() : this.pcmPlayer.drain(),
+        this.queuedTailOutput === 'mimo' ? this.mimoReader.drainQueuedTail() :
+          (this.queuedTailOutput === 'http' ? this.httpReader.drain() : this.pcmPlayer.drain()),
         new Promise<void>((resolve: () => void): void => {
           timer = setTimeout(resolve, 20000);
         })
@@ -1111,6 +1121,7 @@ export class SystemTtsReader {
         this.discardAhead(this.aheadAudio);
         this.pcmPlayer.stop();
         this.httpReader.stop();
+        this.mimoReader.releaseIdleOutput();
       });
     }, 15000);
   }
