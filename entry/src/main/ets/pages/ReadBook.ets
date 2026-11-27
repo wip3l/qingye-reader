@@ -1457,6 +1457,8 @@ struct ReadBookPage {
   private readerBottomInfoBarPendingHeight: number = 0;
   private readerExtendLayoutReadingOffset: number = -1;
   private readerTypographyRestoreOffset: number = -1;
+  // 发布的分页是 V2 还没量出第一页时的占位（一页、终点是整章末尾）：页码与终点都不能当作已排到的位置。
+  private readerPagedBoundaryPlaceholder: boolean = false;
   // Theme changes can publish appDarkMode and themeRevision in the same frame. Keep a single
   // re-pagination transaction for that pair so the visible page does not jump twice.
   private readerThemeRefreshTimerId: number = -1;
@@ -1716,8 +1718,16 @@ struct ReadBookPage {
     if (this.pagedContentText && this.shouldUseReaderLayoutV2(this.pagedContentText) &&
       !this.readerV2PageSet(this.currentChapterIndex, this.pagedContentText)) {
       this.readerInitialPageReady = false;
-      this.pendingRestorePageIndex = Math.max(this.pendingRestorePageIndex, this.currentPageIndex);
+      // 还有待恢复的字符位置（如后台停止朗读时记下的句子）时按它恢复；再按当前页恢复会先落到章首附近那页。
+      if (this.readerTypographyRestoreOffset < 0) {
+        this.pendingRestorePageIndex = Math.max(this.pendingRestorePageIndex, this.currentPageIndex);
+      }
       this.paginateContent(this.content);
+    }
+    // 后台挂起的恢复（看门狗在后台等过了时限就不再管）回到前台重新兜底，免得一直停在恢复中。
+    if (!this.readerInitialPageReady &&
+      (this.pendingRestorePageIndex >= 0 || this.readerTypographyRestoreOffset >= 0)) {
+      this.armReaderRestoreWatchdog();
     }
     if (returningFromBackground) {
       // The chapter-scoped V2 ForEach host can be retained from the page on which the chapter was first mounted.
@@ -2541,6 +2551,7 @@ struct ReadBookPage {
     this.contentPages = [];
     this.contentPageStarts = [];
     this.contentPageEnds = [];
+    this.readerPagedBoundaryPlaceholder = false;
     this.pagedContentText = '';
     this.readerParagraphMetricsCache.clear();
     this.readerTextParagraphsCache.clear();
@@ -2759,6 +2770,7 @@ struct ReadBookPage {
         this.contentPages = [];
         this.contentPageStarts = [];
         this.contentPageEnds = [];
+        this.readerPagedBoundaryPlaceholder = false;
         this.pagedContentText = '';
         this.content = processedBody;
         this.detectReaderComicMode(processedBody);
@@ -10434,6 +10446,15 @@ struct ReadBookPage {
     return ReaderPageOffsets.endOf(this.contentPageStarts, this.contentPageEnds, pageIndex, this.content.length);
   }
 
+  /**
+   * 本章已排出页面的字符终点。V2 还没量出第一页时发布的占位页终点是整章末尾，任何偏移都会被算进第 0 页，
+   * 这时按 0 处理：后台换章后的占位不能让朗读停止、续播、保存把句子位置落成章首。
+   */
+  laidOutSourceEnd(): number {
+    if (this.readerPagedBoundaryPlaceholder || this.contentPageEnds.length === 0) return 0;
+    return this.contentPageEnds[this.contentPageEnds.length - 1];
+  }
+
   findPageIndexByOffset(offset: number): number {
     if (this.contentPageStarts.length === 0) {
       return Math.max(0, Math.min(this.currentPageIndex, Math.max(0, this.contentPages.length - 1)));
@@ -13333,7 +13354,9 @@ struct ReadBookPage {
       Math.max(0, Math.min(this.pendingRestorePageIndex, maxPage))
     );
     this.pendingRestorePageIndex = -1;
-    this.readerProgressRestoreConfirmed = true;
+    // 字符位置还在等分页时以它为准（随后由 restoreReaderTypographyOffsetIfAvailable 落地并确认）；
+    // 这里先确认的话，期间的保存和视口重排都会拿这一页顶掉那个位置。
+    this.readerProgressRestoreConfirmed = this.readerTypographyRestoreOffset < 0;
   }
 
   canSaveReadingProgress(): boolean {
@@ -13421,7 +13444,7 @@ struct ReadBookPage {
     if (backgroundTtsOffset >= 0) {
       characterOffset = backgroundTtsOffset;
       // 后台只排出了前几页时，句子可能落在已排页面之后，页码保持原值，重新打开按字符位置恢复。
-      const lastKnownEnd = this.contentPageEnds.length > 0 ? this.contentPageEnds[this.contentPageEnds.length - 1] : 0;
+      const lastKnownEnd = this.laidOutSourceEnd();
       if (backgroundTtsOffset < lastKnownEnd) {
         const ttsPageIndex = this.findPageIndexByOffset(backgroundTtsOffset);
         if (ttsPageIndex >= 0 && ttsPageIndex < this.contentPages.length) pageIndex = ttsPageIndex;
@@ -16800,8 +16823,7 @@ struct ReadBookPage {
    * 这里按朗读句子的字符位置定页：已排到就直接翻过去，没排到就交给按偏移恢复，在落页之前的保存都用这个偏移。
    */
   settleReaderOnSpokenPosition(): void {
-    if (!this.book || this.contentPages.length === 0 || this.usesReaderContinuousV2() ||
-      this.isReaderComicModeActive()) return;
+    if (!this.book || this.contentPages.length === 0 || this.isReaderComicModeActive()) return;
     // 不跟随翻页时用户正在别处看：停止朗读不把页面带回朗读处。
     if (this.ttsViewDetached) return;
     if (!this.isTtsSpeaking && !this.isTtsPaused && this.ttsReader?.isSpeaking() !== true) return;
@@ -16810,8 +16832,10 @@ struct ReadBookPage {
       this.backgroundTtsReadOffset(this.currentChapterIndex);
     if (spoken < 0 || sourceLength <= 0) return;
     const offset = Math.max(0, Math.min(Math.round(spoken), sourceLength));
-    const lastKnownEnd = this.contentPageEnds.length > 0 ? this.contentPageEnds[this.contentPageEnds.length - 1] : 0;
-    if (offset < lastKnownEnd || this.isCurrentReaderPaginationComplete()) {
+    const lastKnownEnd = this.laidOutSourceEnd();
+    if (this.usesReaderContinuousV2()) {
+      this.settleContinuousReaderOnSpokenOffset(offset, lastKnownEnd);
+    } else if (offset < lastKnownEnd || this.isCurrentReaderPaginationComplete()) {
       const target = this.normalizeReaderSpreadPageIndex(this.findPageIndexByOffset(offset));
       if (target >= 0 && target < this.contentPages.length && target !== this.currentPageIndex) {
         this.finishPageTurnAnimation();
@@ -16822,13 +16846,19 @@ struct ReadBookPage {
     } else {
       this.readerTypographyRestoreOffset = offset;
       this.readerProgressRestoreConfirmed = false;
+      // 按冷打开恢复处理：回到前台先挡住输入、显示恢复中，排到句子那页再落地。否则页面仍算“已就绪”，
+      // 露出的是章首几页，排版补齐前的视口变化/重排会拿那页的起点顶掉这个偏移，随后保存成章首。
+      this.readerInitialPageReady = false;
       this.readerProgressAnchorChapterIndex = this.currentChapterIndex;
       this.readerProgressAnchorPageIndex = this.currentPageIndex;
       this.readerProgressAnchorOffset = offset;
       this.readerProgressAnchorPageCount = this.currentChapterProgressPageCount();
       this.readerProgressAnchorPageText = this.getShelfLastReadPageText(this.currentPageIndex);
       this.readerProgressAnchorPageImage = this.getShelfLastReadPageImage(this.currentPageIndex);
-      if (this.readerPageVisible) this.resumeCurrentReaderPaginationCompletion();
+      if (this.readerPageVisible) {
+        this.resumeCurrentReaderPaginationCompletion();
+        this.armReaderRestoreWatchdog();
+      }
     }
     console.info(`[TTS] stop settled on spoken offset=${offset},page=${this.currentPageIndex},` +
       `laidOutEnd=${lastKnownEnd},restorePending=${this.readerTypographyRestoreOffset >= 0}`);
@@ -16840,6 +16870,38 @@ struct ReadBookPage {
     this.saveReadingProgress(!this.readerPageVisible).catch((error: Error) => {
       console.warn('停止朗读时保存句子位置失败:', error);
     });
+  }
+
+  /**
+   * 滚动阅读停止朗读时落到正在读的句子。熄屏/后台时列表不会跟着朗读滚动，换章后还停在新一章开头；
+   * 朗读一停，后续保存（以及回到前台时看到的位置）就成了章首。这里把句子位置记成滚动恢复锚点：
+   * 已分好块就直接定锚（页面可见时立刻滚过去，不可见时 onPageShow 再滚），没分到就交给按偏移恢复。
+   * 锚点或偏移待恢复期间，saveReadingProgress 走下面的进度锚点，不会存成章首。
+   */
+  settleContinuousReaderOnSpokenOffset(offset: number, lastKnownEnd: number): void {
+    if (offset < lastKnownEnd || this.isCurrentReaderPaginationComplete()) {
+      const pageIndex = this.findPageIndexByOffset(offset);
+      if (pageIndex < 0 || pageIndex >= this.contentPages.length) return;
+      const anchor = new ReaderScrollAnchor();
+      anchor.chapterIndex = this.currentChapterIndex;
+      anchor.chapterUrl = this.chapters[this.currentChapterIndex]?.url || '';
+      anchor.offset = offset;
+      anchor.pageIndex = pageIndex;
+      anchor.sourceIdentity = this.readerContinuousSourceIdentity();
+      this.readerContinuousRestoreAnchor = anchor;
+      this.readerContinuousAnchor = anchor;
+      this.currentPageIndex = pageIndex;
+      if (this.readerPageVisible) this.scheduleReaderComicScrollRestore();
+    } else {
+      this.readerTypographyRestoreOffset = offset;
+      if (this.readerPageVisible) this.resumeCurrentReaderPaginationCompletion();
+    }
+    this.readerProgressAnchorChapterIndex = this.currentChapterIndex;
+    this.readerProgressAnchorPageIndex = this.currentPageIndex;
+    this.readerProgressAnchorOffset = offset;
+    this.readerProgressAnchorPageCount = this.currentChapterProgressPageCount();
+    this.readerProgressAnchorPageText = this.getShelfLastReadPageText(this.currentPageIndex);
+    this.readerProgressAnchorPageImage = this.getShelfLastReadPageImage(this.currentPageIndex);
   }
 
   stopTtsReading(userCancelled: boolean = true): void {
@@ -18224,7 +18286,7 @@ ${leading}` : leading;
     // 后台只排出了前几页时，句子落在已排页面之后会被算成最后一个已排页（常常是章首），再用它保存就把
     // 后台按句子存下的进度覆盖掉了。这时不动页也不保存，分页补到那里后由 syncActiveTtsFocusAfterPagination 跟上。
     const focusOffset = this.readerV2TtsSourceOffset(this.ttsLastFocusChunk.start);
-    const lastKnownEnd = this.contentPageEnds.length > 0 ? this.contentPageEnds[this.contentPageEnds.length - 1] : 0;
+    const lastKnownEnd = this.laidOutSourceEnd();
     if (focusOffset >= lastKnownEnd && !this.isCurrentReaderPaginationComplete()) {
       console.info(`[TTS] resume focus waits for pagination: offset=${focusOffset},laidOutEnd=${lastKnownEnd}`);
       return;
@@ -18360,8 +18422,7 @@ ${leading}` : leading;
       this.ttsFocusContentLoadSerial !== this.contentLoadSerial ||
       this.ttsFocusSourceIdentity !== this.currentTtsSourceIdentity()) return;
     const absoluteStart = this.readerV2TtsSourceOffset(chunk.start);
-    const lastKnownEnd = this.contentPageEnds.length > 0 ?
-      this.contentPageEnds[this.contentPageEnds.length - 1] : 0;
+    const lastKnownEnd = this.laidOutSourceEnd();
     if (absoluteStart >= lastKnownEnd && lastKnownEnd < this.pagedContentText.length) return;
     const pageIndex = this.findPageIndexByOffset(absoluteStart);
     if (pageIndex < 0 || pageIndex >= this.contentPages.length) return;
@@ -25879,6 +25940,7 @@ ${leading}` : leading;
     this.contentPages = [...result.pages];
     this.contentPageStarts = [...result.starts];
     this.contentPageEnds = [...result.ends];
+    this.readerPagedBoundaryPlaceholder = false;
     this.restorePendingPageIndex(result.complete === true);
     const measuredCurrentText = this.contentPages[this.currentPageIndex];
     // A no-animation chapter handoff can commit its loading leaf before this private result is published.
@@ -26220,6 +26282,7 @@ ${leading}` : leading;
       this.contentPages = [emptyPage];
       this.contentPageStarts = [0];
       this.contentPageEnds = [emptyPage.length];
+      this.readerPagedBoundaryPlaceholder = false;
       this.refreshReaderContinuousPageMetrics();
       this.setCurrentPageText(emptyPage);
       this.restorePendingPageIndex(true);
@@ -26235,6 +26298,7 @@ ${leading}` : leading;
       this.refreshReaderContinuousPageMetrics();
       this.contentPageStarts = [];
       this.contentPageEnds = [];
+      this.readerPagedBoundaryPlaceholder = false;
       this.setCurrentPageText(content);
       return;
     }
@@ -26279,6 +26343,7 @@ ${leading}` : leading;
     this.contentPages = [...pages];
     this.contentPageStarts = result.starts.length > 0 ? [...result.starts] : [0];
     this.contentPageEnds = result.ends.length > 0 ? [...result.ends] : [this.pagedContentText.length];
+    this.readerPagedBoundaryPlaceholder = !hasAuthoritativePageBoundary;
     // The synthetic fallback above is only a hidden render placeholder while V2 has not produced its first
     // measured boundary. Treating its full-source end as a real one-page pagination maps every persisted
     // character offset to page zero and permanently discards a saved deep/last-page position.
