@@ -40,8 +40,12 @@ const logic = src.slice(start, src.indexOf('  @Builder', start))
 vm.runInContext(compile(controller) + '\n' + stripTypeScriptTypes(logic) +
   '\nglobalThis.View = ReaderComicPagedView;', sandbox);
 const A = sandbox.Animation;
-assert.deepEqual(Array.from(A.types()), [0, 1, 8, 3, 4, 6, 7]);
-assert.deepEqual(Array.from(A.labels()), ['无动画', '平移', '推页', '淡入', '叠页', '仿真', '3D仿真']);
+// 「仿真」暂时隐藏（SIMULATION_AVAILABLE），隐藏期间选项里只有「3D仿真」，已选的「仿真」按「3D仿真」处理。
+const curlTypes = A.SIMULATION_AVAILABLE ? [6, 7] : [7];
+const curlLabels = A.SIMULATION_AVAILABLE ? ['仿真', '3D仿真'] : ['3D仿真'];
+assert.deepEqual(Array.from(A.types()), [0, 1, 8, 9, 3, 4, ...curlTypes]);
+assert.deepEqual(Array.from(A.labels()), ['无动画', '平移', '推页', '揭页', '淡入', '叠页', ...curlLabels]);
+assert.equal(A.normalize(6), A.SIMULATION_AVAILABLE ? 6 : 7);
 assert.equal(sandbox.Settings.parse('{}').pageTurnAnimation, A.SLIDE);
 for (const type of A.types()) {
   const settings = new sandbox.Settings();

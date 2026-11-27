@@ -40,15 +40,33 @@ export class ReaderPageTurnAnimation {
     return Math.max(0, Math.min(1, Math.min(edge, extent - edge) / this.REVEAL_SHADOW_SIZE));
   }
 
+  /**
+   * 「仿真」暂不在选项里提供（GPU 卷页按住拖动时还会闪，调好再放出来，改回 true 即可）。
+   * 隐藏期间已选「仿真」的设置一律按「3D仿真」显示和翻页，存储值不动。
+   */
+  static readonly SIMULATION_AVAILABLE: boolean = false;
+
+  /** 把暂不提供的翻页动画换成最接近的可选项。 */
+  static resolveAvailable(type: number): number {
+    const value = Math.round(type);
+    return !this.SIMULATION_AVAILABLE && value === this.SIMULATION ? this.THREE_D : value;
+  }
+
   static types(horizontal: boolean = true): number[] {
     const result = [this.NONE, this.SLIDE, this.PUSH, this.REVEAL, this.FADE, this.STACK];
-    if (horizontal) result.push(this.SIMULATION, this.THREE_D);
+    if (horizontal) {
+      if (this.SIMULATION_AVAILABLE) result.push(this.SIMULATION);
+      result.push(this.THREE_D);
+    }
     return result;
   }
 
   static labels(horizontal: boolean = true): string[] {
     const result = ['无动画', '平移', '推页', '揭页', '淡入', '叠页'];
-    if (horizontal) result.push('仿真', '3D仿真');
+    if (horizontal) {
+      if (this.SIMULATION_AVAILABLE) result.push('仿真');
+      result.push('3D仿真');
+    }
     return result;
   }
 
@@ -70,7 +88,7 @@ export class ReaderPageTurnAnimation {
   }
 
   static normalize(value: number): number {
-    const rounded = Math.round(value);
+    const rounded = this.resolveAvailable(value);
     return this.types().includes(rounded) ? rounded : this.SLIDE;
   }
 

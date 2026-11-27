@@ -14,13 +14,13 @@ let clock = 0;
 const Reader = vm.runInNewContext(stripTypeScriptTypes(`class Reader {
   ${['readerFlapPaperColor', 'prepareReaderPageCurlPalette', 'readerPageCurlNeedsBackSnapshot', 'isDarkHexColor', 'drawReaderPageCurl',
     'captureReaderPageCurlSnapshots', 'resetReaderPageCurl', 'isCrossChapterPreviewWithinGrace',
-    'ensureReaderPageCurlReady', 'requestReaderPageCurlCapture'].map(method).join('\n')}
+    'ensureReaderPageCurlReady', 'requestReaderPageCurlCapture', 'readerGlCurlActive'].map(method).join('\n')}
 }; Reader`), { console, px2vp: n => n, setTimeout: fn => jobs.push(fn), sleepMs: async () => { clock += 16; },
   Date: { now: () => clock }, READER_CROSS_CHAPTER_PREVIEW_GRACE_MS: 160,
   ReaderRenderFrame: { wait: async () => {} }, READER_CURL_REGION_UNSET: -1,
   ReaderEmulationFlipRegion: { BOTTOM: 2 } });
 
-function fixture(threeD, theme) {
+function fixture(threeD, theme, gl = false) {
   const p = new Reader(), paints = [], bitmaps = [];
   let reads = 0, progress = 0, duringCapture = () => {};
   Object.assign(p, {
@@ -34,6 +34,9 @@ function fixture(threeD, theme) {
     getBackgroundColor: () => { throw Error('theme lookup in animation frame'); },
     isReaderThemeDark: () => { throw Error('theme lookup in animation frame'); },
     is3DPageTurnAnimation: () => threeD, isLandscapeDoublePageActive: () => false,
+    readerGlCurlReady: gl, isSimulationPageTurnAnimation: () => !threeD,
+    readerGlCurl: { draw: (...args) => { paints.push(['gl', ...args]); return true; }, endTurn() {} },
+    readerGlCurlGeometry: { fold: () => ({ active: true, p0x: 1, p0y: 2, nx: 1, ny: 0, radius: 9 }), clearCorner() {} },
     readerSettledTextureKey: () => 'front', readerPageTextureCache: { acquire: () => null },
     rasterSettledPageTexture: () => null, rasterIncomingPageTexture: () => null,
     currentReaderSnapshotComponentId: () => 'front', readerPageCurlSnapshotScale: () => 0.75,
@@ -80,6 +83,28 @@ for (const threeD of [false, true]) {
   const night = h.paints.at(-1);
   assert.equal(night[threeD ? 13 : 8], true);
   if (threeD) assert.equal(night[12], '#101826');
+}
+// GPU 仿真（单页）：纸背用当前页镜像，不截背页；每帧只把截图时定下的纸色交给 GPU，不碰 Canvas 画笔。
+{
+  const theme = { backgroundColor: '#F7F1E3', contentTone: 'light' };
+  const h = fixture(false, theme, true);
+  await h.p.captureReaderPageCurlSnapshots(1, 'turn');
+  assert.equal(h.bitmaps.length, 1, 'GPU single-page turns never request the off-screen back');
+  for (let frame = 0; frame < 120; frame++) { h.progress(frame / 120); h.p.drawReaderPageCurl(); }
+  assert.equal(h.reads(), 1, 'GPU frames perform no extra theme resolution');
+  assert(h.paints.every(args => args[0] === 'gl'), 'the Canvas painters stay idle while the GPU surface draws');
+  assert.equal(h.paints.at(-1)[6], '#F7F1E3');
+  assert.equal(h.paints.at(-1)[7], false);
+  // GPU 中途失效：这一页没有背页，Canvas 画不了，只清掉画布上次的画面。
+  let cleared = 0;
+  h.p.readerGlCurl = { draw: () => false };
+  h.p.readerPageCurlContext = { clearRect: () => { cleared++; } };
+  const before = h.paints.length; h.p.drawReaderPageCurl();
+  assert.equal(cleared, 1); assert.equal(h.paints.length, before);
+  const wide = fixture(false, theme, true);
+  wide.p.isLandscapeDoublePageActive = () => true;
+  assert.equal(wide.p.readerGlCurlActive(), false, 'double pages keep the Canvas simulation');
+  assert.equal(wide.p.readerPageCurlNeedsBackSnapshot(), true);
 }
 const double = fixture(true, { backgroundColor: '#FFFFFF', contentTone: 'light' });
 double.p.isLandscapeDoublePageActive = () => true;

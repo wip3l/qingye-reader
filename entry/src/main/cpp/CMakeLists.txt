@@ -12,3 +12,15 @@ target_link_libraries(subtitle_audio PUBLIC
     libnative_media_acodec.so
     libnative_media_avdemuxer.so
     libnative_media_avsource.so)
+
+# 仿真翻页：EGL + OpenGL ES 3 在 XComponent 上画卷页。
+add_library(page_curl SHARED page_curl.cpp)
+target_compile_features(page_curl PRIVATE cxx_std_17)
+target_compile_options(page_curl PRIVATE -O2 -Wall -Wextra)
+target_link_libraries(page_curl PUBLIC
+    libace_napi.z.so
+    libEGL.so
+    libGLESv3.so
+    libhilog_ndk.z.so
+    libnative_window.so
+    libpixelmap.so)

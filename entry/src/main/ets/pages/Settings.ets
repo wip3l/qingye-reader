@@ -14,6 +14,7 @@ import { syncSystemBars } from '../utils/SystemBars';
 import { ReaderNavIndicatorStore } from '../utils/ReaderNavIndicatorStore';
 import { AudioBookSettingsStore } from '../utils/AudioBookSettingsStore';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
+import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation';
 import { ReaderThemeHelper, ReaderThemeItem } from '../utils/ReaderThemeHelper';
 import { ReaderBackgroundDisplay, ReaderBackgroundDisplayStore } from '../utils/ReaderBackgroundDisplay';
 import { ReaderBackgroundDisplayControl } from '../components/reader/ReaderBackgroundDisplayControl';
@@ -1733,7 +1734,7 @@ struct SettingsPage {
       { value: '叠页' }
     ];
     if (this.readerPageTurnMode === 2) {
-      options.push({ value: '仿真' });
+      if (ReaderPageTurnAnimation.SIMULATION_AVAILABLE) options.push({ value: '仿真' });
       options.push({ value: '3D仿真' });
     }
     return options;
@@ -1749,7 +1750,7 @@ struct SettingsPage {
       ReaderSettingsStore.PAGE_TURN_ANIMATION_STACK
     ];
     if (this.readerPageTurnMode === 2) {
-      types.push(ReaderSettingsStore.PAGE_TURN_ANIMATION_SIMULATION);
+      if (ReaderPageTurnAnimation.SIMULATION_AVAILABLE) types.push(ReaderSettingsStore.PAGE_TURN_ANIMATION_SIMULATION);
       types.push(ReaderSettingsStore.PAGE_TURN_ANIMATION_3D);
     }
     return types;
@@ -2294,7 +2295,7 @@ struct SettingsPage {
   }
 
   normalizePageTurnAnimationType(type: number): number {
-    const value = Math.round(type);
+    const value = ReaderPageTurnAnimation.resolveAvailable(type);
     if (this.readerPageTurnMode === 0 && (value === ReaderSettingsStore.PAGE_TURN_ANIMATION_SIMULATION ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_3D)) {
       return ReaderSettingsStore.PAGE_TURN_ANIMATION_STACK;

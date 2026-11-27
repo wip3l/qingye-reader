@@ -100,6 +100,8 @@ import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
 import { ReaderThemeBackground } from '../components/ReaderThemeBackground';
 import { ReaderPageCurlPainter } from '../components/ReaderPageCurlPainter';
 import { ReaderEmulationFlipPainter, ReaderEmulationFlipRegion } from '../components/ReaderEmulationFlipPainter';
+import { ReaderGlCurlGeometry } from '../core/reader/ReaderGlCurlGeometry';
+import { ReaderGlCurlSurfaceController, ReaderGlPageCurl } from '../core/reader/ReaderGlPageCurl';
 import { ReaderTtsPlayerPanel } from '../components/ReaderTtsPlayerPanel';
 import { TtsCatalogSheet, CatalogTitleDataSource } from '../components/TtsCatalogSheet';
 import { BookSourceStageRuntimeHost } from '../components/BookSourceStageRuntimeHost';
@@ -1019,6 +1021,13 @@ struct ReadBookPage {
   private readerPageCurlPainter: ReaderPageCurlPainter = new ReaderPageCurlPainter();
   private readonly readerThemeRenderCache: ReaderThemeRenderCache = new ReaderThemeRenderCache();
   private readerEmulationFlipPainter: ReaderEmulationFlipPainter = new ReaderEmulationFlipPainter();
+  // 单页「仿真」的 GPU 画法：圆柱卷曲、折线跟手倾斜。表面就绪前、双页或 GPU 出错时仍用 Canvas 的 readerPageCurlPainter。
+  private readerGlCurl: ReaderGlPageCurl = new ReaderGlPageCurl();
+  private readerGlCurlGeometry: ReaderGlCurlGeometry = new ReaderGlCurlGeometry();
+  private readerGlCurlController: ReaderGlCurlSurfaceController = new ReaderGlCurlSurfaceController(this.readerGlCurl);
+  private readonly readerGlCurlModuleLoaded: boolean = ReaderGlPageCurl.moduleLoaded();
+  @State readerGlCurlReady: boolean = false;
+  @State readerGlCurlFailed: boolean = false;
   // 拖动翻页时记录手指落点所在的区域；READER_CURL_REGION_UNSET 表示本次翻页不是由拖动发起的。
   private readerCurlStartRegion: number = READER_CURL_REGION_UNSET;
   private readerPageCurlContext: CanvasRenderingContext2D =
@@ -1575,6 +1584,11 @@ struct ReadBookPage {
     ReaderReadingRuler.load(getContext(this));
     this.readerEntryAlive = true;
     ReaderEmojiImages.bind(getContext(this).cacheDir, (): void => this.scheduleReaderEmojiRepaint());
+    this.readerGlCurl.uiContext = this.getUIContext();
+    this.readerGlCurl.onReadyChange = (ready: boolean): void => {
+      this.readerGlCurlReady = ready;
+      this.readerGlCurlFailed = this.readerGlCurl.failed;
+    };
     // Fixed-layout documents must not acquire text/TTS sessions or warm chapter content.
     const formatParams = router.getParams() as Record<string, string>;
     // The shelf routes PDFs itself and marks text books checked. Skipping the lookup keeps the entry setup
@@ -4479,6 +4493,11 @@ struct ReadBookPage {
             // surfaces above remain transient; the inexpensive Canvas is merely hidden while it is idle.
             if (this.isPageTurnAnimationEnabled() && this.usesReaderPageCurlCanvas()) {
               this.readerSimulationCurlCanvas()
+            }
+            // 单页「仿真」的 GPU 卷页画面，同样随翻页模式常驻，空闲时透明。
+            if (this.isPageTurnAnimationEnabled() && this.isSimulationPageTurnAnimation() &&
+              this.readerGlCurlModuleLoaded && !this.readerGlCurlFailed) {
+              this.readerSimulationGlCurlSurface()
             }
             Column() {
               Blank()
@@ -14200,7 +14219,7 @@ struct ReadBookPage {
       return;
     }
     this.readerPanActive = false;
-    this.readerEmulationFlipPainter.releaseCorner();
+    this.releaseReaderCurlCorner();
     this.deferReaderPaginationForInteraction();
     if (this.readerPanIntent === READER_PAN_INTENT_BLINDS) {
       this.readerTouchMoved = true;
@@ -14243,7 +14262,7 @@ struct ReadBookPage {
       return;
     }
     this.readerPanActive = false;
-    this.readerEmulationFlipPainter.releaseCorner();
+    this.releaseReaderCurlCorner();
     this.deferReaderPaginationForInteraction();
     if (this.readerPanIntent === READER_PAN_INTENT_BLINDS) {
       this.suppressReaderTapClick = true;
@@ -16175,7 +16194,7 @@ struct ReadBookPage {
   }
 
   normalizePageTurnAnimationType(type: number): number {
-    const value = Math.round(type);
+    const value = ReaderPageTurnAnimation.resolveAvailable(type);
     if (this.readerPageTurnMode === 0 && (value === ReaderSettingsStore.PAGE_TURN_ANIMATION_SIMULATION ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_3D)) {
       return ReaderSettingsStore.PAGE_TURN_ANIMATION_STACK;
@@ -19301,12 +19320,22 @@ ${leading}` : leading;
     Canvas(this.readerPageCurlContext)
       .width('100%')
       .height('100%')
-      .opacity(this.readerPageCurlSnapshotReady ? 1 : 0)
+      .opacity(this.readerPageCurlSnapshotReady && !this.readerGlCurlActive() ? 1 : 0)
       .hitTestBehavior(HitTestMode.None)
       .onReady(() => {
         this.readerPageCurlCanvasReady = true;
         this.drawReaderPageCurl();
       })
+  }
+
+  @Builder
+  readerSimulationGlCurlSurface() {
+    XComponent({ type: XComponentType.TEXTURE, controller: this.readerGlCurlController })
+      .width('100%')
+      .height('100%')
+      .backgroundColor(Color.Transparent)
+      .opacity(this.readerPageCurlSnapshotReady && this.readerGlCurlActive() ? 1 : 0)
+      .hitTestBehavior(HitTestMode.None)
   }
 
   @Builder
@@ -27648,10 +27677,25 @@ ${leading}` : leading;
   // 手指的组件内坐标可以直接当作画布坐标。上一页还在自动翻完时不接管，免得半途的折页跳到新手指处。
   updateReaderCurlFinger(event: GestureEvent): void {
     const finger = firstGestureFinger(event);
-    if (!this.is3DPageTurnAnimation() || this.isPageTurning || !finger) {
+    if (this.isPageTurning || !finger) {
       return;
     }
-    this.readerEmulationFlipPainter.dragCorner(finger.localX, finger.localY);
+    if (this.is3DPageTurnAnimation()) {
+      this.readerEmulationFlipPainter.dragCorner(finger.localX, finger.localY);
+    } else if (this.readerGlCurlActive()) {
+      this.readerGlCurlGeometry.dragCorner(finger.localX, finger.localY);
+    }
+  }
+
+  // 单页「仿真」且 GPU 表面已就绪：卷页交给 ReaderGlPageCurl，折线跟手倾斜，纹理用原尺寸、不截背页。
+  readerGlCurlActive(): boolean {
+    return this.readerGlCurlReady && this.isSimulationPageTurnAnimation() && !this.isLandscapeDoublePageActive();
+  }
+
+  // 跟手卷页（3D 仿真、GPU 仿真）共用的松手与收尾。
+  releaseReaderCurlCorner(): void {
+    this.readerEmulationFlipPainter.releaseCorner();
+    this.readerGlCurlGeometry.releaseCorner();
   }
 
   captureReaderCurlStartRegion(event: GestureEvent): void {
@@ -27660,7 +27704,7 @@ ${leading}` : leading;
     }
     this.readerCurlStartRegion = ReaderEmulationFlipRegion.MIDDLE;
     const finger = firstGestureFinger(event);
-    if (!this.is3DPageTurnAnimation() || !finger) {
+    if ((!this.is3DPageTurnAnimation() && !this.readerGlCurlActive()) || !finger) {
       return;
     }
     const localY = finger.localY;
@@ -27681,14 +27725,15 @@ ${leading}` : leading;
   }
 
   readerPageCurlSnapshotScale(): number {
-    // 仿真整页 2080x3120 逐个网格三角形采样会在平板上卡住 ArkUI 线程数秒，仍按截图比例；3D 仿真自绘纹理用原尺寸。
-    return ReaderPageTurnAnimation.curlTextureScale(this.is3DPageTurnAnimation() ? ReaderPageTurnAnimation.THREE_D :
-      ReaderPageTurnAnimation.SIMULATION);
+    // Canvas 仿真整页 2080x3120 逐个网格三角形采样会在平板上卡住 ArkUI 线程数秒，仍按截图比例；
+    // 3D 仿真与 GPU 仿真每帧只采样一次纹理，自绘纹理用原尺寸。
+    return ReaderPageTurnAnimation.curlTextureScale(this.is3DPageTurnAnimation() || this.readerGlCurlActive() ?
+      ReaderPageTurnAnimation.THREE_D : ReaderPageTurnAnimation.SIMULATION);
   }
 
-  // 3D 仿真单页不绘制背页位图，省掉这次截图可以让卷曲更快起步。
+  // 3D 仿真与 GPU 仿真单页的纸背用当前页镜像，不绘制背页位图，省掉这次截图可以让卷曲更快起步。
   readerPageCurlNeedsBackSnapshot(): boolean {
-    return !this.is3DPageTurnAnimation() || this.isLandscapeDoublePageActive();
+    return !(this.is3DPageTurnAnimation() || this.readerGlCurlActive()) || this.isLandscapeDoublePageActive();
   }
 
   getReaderPageCurlCanvasHeight(): number {
@@ -28254,6 +28299,22 @@ ${leading}` : leading;
       !this.readerPageCurlFront || this.pageSlideDirection === 0) {
       return;
     }
+    if (this.readerGlCurlActive()) {
+      const region = this.readerCurlStartRegion === READER_CURL_REGION_UNSET ?
+        ReaderEmulationFlipRegion.BOTTOM : this.readerCurlStartRegion;
+      const width = this.getPageTurnWidth();
+      const height = this.getReaderPageCurlCanvasHeight();
+      const fold = this.readerGlCurlGeometry.fold(width, height, this.getPageTurnProgress(),
+        this.pageSlideDirection, region);
+      if (this.readerGlCurl.draw(this.readerPageCurlFront, width, height, this.getUIContext().vp2px(1), fold,
+        this.readerPageCurlPaperColor, this.readerPageCurlDark)) {
+        return;
+      }
+      // GPU 画面刚刚失效（onReadyChange 已把 readerGlCurlReady 置回 false）：这一页没截背页，Canvas 画不了卷页，
+      // 先清掉画布上次留下的画面；下一次翻页按 Canvas 仿真重新截图。
+      this.readerPageCurlContext.clearRect(0, 0, width, height);
+      return;
+    }
     if (this.is3DPageTurnAnimation()) {
       // 3D 仿真单页时只卷曲当前页，目标页由底层声明式页面呈现；只有双页才需要背页位图。
       // 点击翻页没有手指落点，统一从下角卷起。
@@ -28524,6 +28585,15 @@ ${leading}` : leading;
       await this.animateReaderPageCurlOffset(targetOffset, flatDuration, true, 'cubic-bezier(0.3, 0.4, 0.7, 1)');
       return;
     }
+    if (this.readerGlCurlActive()) {
+      // GPU 圆柱卷页：页角要从纸边走到窗口外约两个页宽，整页约 460ms；松手后按页角剩下的路程算时长。
+      const releasedFraction = this.readerGlCurlGeometry.remainingFraction(this.getPageTurnWidth());
+      const fraction = releasedFraction >= 0 ? releasedFraction : remaining / Math.max(1, distance);
+      const curlDuration = Math.max(Math.round(180 * durationRatio),
+        Math.round(460 * durationRatio * Math.pow(Math.max(0, fraction), 0.6)));
+      await this.animateReaderPageCurlOffset(targetOffset, curlDuration, true, 'cubic-bezier(0.3, 0.4, 0.7, 1)');
+      return;
+    }
     // A long symmetric EaseInOut made the last part of the sheet appear to stop before the
     // incoming page was committed. Finish with a shorter, momentum-preserving edge motion.
     const fullDuration = Math.round(340 * durationRatio);
@@ -28534,6 +28604,8 @@ ${leading}` : leading;
 
   resetReaderPageCurl(): void {
     this.readerEmulationFlipPainter.clearCorner();
+    this.readerGlCurlGeometry.clearCorner();
+    this.readerGlCurl.endTurn();
     this.readerPageCurlMotionLocked = false;
     this.readerPageCurlCaptureSerial++;
     this.readerPageCurlCapturePending = false;
@@ -28652,8 +28724,8 @@ ${leading}` : leading;
         if (settled || hurried || !replaced || serial !== this.readerPageCurlAnimationSerial) return;
         hurried = true;
         const from = this.getPageSlideAxisOffset();
-        const fullDuration = this.is3DPageTurnAnimation() ? READER_PAGE_3D_HURRY_DURATION :
-          READER_PAGE_CURL_HURRY_DURATION;
+        const fullDuration = this.is3DPageTurnAnimation() || this.readerGlCurlActive() ?
+          READER_PAGE_3D_HURRY_DURATION : READER_PAGE_CURL_HURRY_DURATION;
         const ratio = Math.min(1, Math.abs(targetOffset - from) / Math.max(1, this.getPageTurnDistance()));
         const hurriedDuration = Math.max(40, Math.round(fullDuration * ratio));
         // Only ever speed the sheet up; a motion that is almost done keeps its own ending.

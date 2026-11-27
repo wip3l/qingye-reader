@@ -1,0 +1,6 @@
+{
+  "name": "libpage_curl.so",
+  "types": "./index.d.ts",
+  "version": "1.0.0",
+  "description": "仿真翻页的 GPU 渲染"
+}

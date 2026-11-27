@@ -10,6 +10,7 @@ import { ReaderThemeHelper } from './ReaderThemeHelper';
 import { CloudSyncChangeTracker } from '../account/CloudSyncChangeTracker';
 import { HexColor } from './HexColor';
 import { ReaderInfoBarConfig } from '../core/reader/ReaderInfoBarModel';
+import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation';
 
 export class ReaderSettings {
   fontSize: number = 20;
@@ -1960,7 +1961,7 @@ export class ReaderSettingsStore {
   }
 
   private static normalizePageTurnAnimationType(type: number): number {
-    const value = Math.round(type);
+    const value = ReaderPageTurnAnimation.resolveAvailable(type);
     if (value === ReaderSettingsStore.PAGE_TURN_ANIMATION_NONE ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_SLIDE ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_PUSH ||

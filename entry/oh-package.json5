@@ -13,6 +13,7 @@
     "@legado/aiengine": "file:../harmony-book-ai-engine/aiengine",
     "@legado/pluginengine": "file:../pluginengine",
     "sherpa_onnx": "1.13.3",
-    "libsubtitle_audio.so": "file:./src/main/cpp/types/libsubtitle_audio"
+    "libsubtitle_audio.so": "file:./src/main/cpp/types/libsubtitle_audio",
+    "libpage_curl.so": "file:./src/main/cpp/types/libpage_curl"
   }
 }
