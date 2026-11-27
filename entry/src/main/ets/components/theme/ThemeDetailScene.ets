@@ -981,7 +981,7 @@ export struct ThemeDetailScene {
     .justifyContent(FlexAlign.Center)
   }
 
-  /** 倍速格：和播放面板一样用自绘的双推子图标（倍速与音量增益在同一面板）。 */
+  /** 倍速格：和播放面板一样用自绘的刻度仪表图标（倍速与音量增益在同一面板）。 */
   @Builder
   listenSoundAdjust(label: string) {
     Column({ space: AppSpacing.XS }) {
