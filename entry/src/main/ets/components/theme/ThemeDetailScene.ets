@@ -808,7 +808,7 @@ export struct ThemeDetailScene {
         this.listenMainControls()
         Row() {
           this.listenSecondary($r('sys.symbol.timer'), '定时')
-          this.listenSecondary($r('sys.symbol.hourglass'), '1.0x')
+          this.listenSoundAdjust('1.0x')
           this.listenSecondary($r('sys.symbol.list_bullet'), '目录')
           this.listenSecondary($r('sys.symbol.stop_circle'), '停止')
         }
@@ -970,6 +970,25 @@ export struct ThemeDetailScene {
       SymbolGlyph(icon)
         .fontSize(22)
         .fontColor([this.variant().colors.primaryTextColor])
+      Text(label)
+        .fontFamily(this.font())
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.variant().colors.subTextColor)
+        .maxLines(1)
+    }
+    .layoutWeight(1)
+    .height(56)
+    .justifyContent(FlexAlign.Center)
+  }
+
+  /** 倍速格：和播放面板一样用自绘的双推子图标（倍速与音量增益在同一面板）。 */
+  @Builder
+  listenSoundAdjust(label: string) {
+    Column({ space: AppSpacing.XS }) {
+      Image($r('app.media.ic_tts_sound_adjust'))
+        .width(22)
+        .height(22)
+        .fillColor(this.variant().colors.primaryTextColor)
       Text(label)
         .fontFamily(this.font())
         .fontSize(AppFontSize.CAPTION)

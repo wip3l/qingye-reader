@@ -770,13 +770,23 @@ export struct ReaderTtsPlayerPanel {
     .padding({ top: AppSpacing.XS })
   }
 
-  /** 文字和高亮在 Builder 内按类型现读状态变量，剩余定时、倍速等变化后立即刷新。 */
+  /**
+   * 文字和高亮在 Builder 内按类型现读状态变量，剩余定时、倍速等变化后立即刷新。
+   * 倍速格的面板里同时有倍速和音量增益，图标用自绘的“双推子”表示两样声音调节，不用系统符号。
+   */
   @Builder
   secondaryItem(kind: string) {
     Column({ space: AppSpacing.XS }) {
-      SymbolGlyph(this.secondaryIcon(kind))
-        .fontSize(22)
-        .fontColor([this.secondaryColor(kind, true)])
+      if (kind === SECONDARY_SPEED) {
+        Image($r('app.media.ic_tts_sound_adjust'))
+          .width(22)
+          .height(22)
+          .fillColor(this.secondaryColor(kind, true))
+      } else {
+        SymbolGlyph(this.secondaryIcon(kind))
+          .fontSize(22)
+          .fontColor([this.secondaryColor(kind, true)])
+      }
       Text(this.secondaryLabel(kind))
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.secondaryColor(kind, false))
@@ -1640,7 +1650,6 @@ export struct ReaderTtsPlayerPanel {
 
   secondaryIcon(kind: string): Resource {
     if (kind === SECONDARY_TIMER) return $r('sys.symbol.timer');
-    if (kind === SECONDARY_SPEED) return $r('sys.symbol.hourglass');
     if (kind === SECONDARY_CATALOG) return $r('sys.symbol.list_bullet');
     if (kind === SECONDARY_SKIP) return $r('sys.symbol.arrow_right_to_line');
     if (kind === SECONDARY_WATCH) return $r('sys.symbol.video');
