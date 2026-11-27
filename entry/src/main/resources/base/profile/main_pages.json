@@ -69,6 +69,7 @@
     "pages/Footprint",
     "pages/SyncDevices",
     "pages/SyncIssues",
+    "pages/SyncSettingsHistory",
     "pages/FontSettings",
     "pages/ReaderFontSettings",
     "pages/WebDav",

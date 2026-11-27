@@ -290,3 +290,92 @@ test('creating an entity adds exactly one lightweight change marker', () => {
     initialSyncActive: true
   });
 });
+
+test('settings replaced by local-first sync or restore keep the previous version', async t => {
+  const { readdir } = await import('node:fs/promises');
+  const { applyOperation, listSyncHistory, restoreSyncHistoryIn, HISTORY_KEEP_PER_ENTITY } = await import('./sync.js');
+  const db = new PGlite(); t.after(() => db.close());
+  const migrations = new URL('../migrations/', import.meta.url);
+  for (const file of (await readdir(migrations)).filter(file => file.endsWith('.sql')).sort()) {
+    await db.exec((await readFile(new URL(file, migrations), 'utf8')).replace(/^VACUUM[^;]*;/gm, ''));
+  }
+  const userId = randomUUID(), oldDevice = randomUUID(), newDevice = randomUUID();
+  await db.query('INSERT INTO app_users(id,huawei_open_id) VALUES($1,$2)', [userId, userId]);
+  for (const [id, name] of [[oldDevice, '旧手机'], [newDevice, '新平板']] as const) {
+    await db.transaction(client => registerDevice(client as unknown as PoolClient, userId, id, name,
+      'HarmonyOS', '4.6.047', 'phone', 0));
+  }
+  const quota = { entityCount: 0, entityBytes: 0, changeCount: 0, changeBytes: 0, dailyWrites: 0 };
+  const write = (device: string, entityType: string, payload: object, baseRevision: number,
+    policy = 'cloud') => db.transaction(client => applyOperation(client as unknown as PoolClient, userId, device, {
+    opId: randomUUID(), entityType, entityId: 'global', operation: 'upsert', baseRevision,
+    payload, payloadBytes: JSON.stringify(payload).length
+  }, policy, quota));
+  const historyRows = async () => (await db.query<{ entity_type: string; reason: string; payload: { v: number } }>(
+    'SELECT entity_type, reason, payload FROM sync_entity_history WHERE user_id=$1 ORDER BY id', [userId])).rows;
+
+  await write(oldDevice, 'reader_settings', { v: 1 }, 0);
+  await write(oldDevice, 'reader_settings', { v: 2 }, 1);
+  await write(oldDevice, 'bookshelf_display', { v: 7 }, 0);
+  assert.equal((await historyRows()).length, 0, 'ordinary edits keep no history');
+
+  // 新装机首次同步选了“本地为主”，带着默认值和 0 号基础版本强制覆盖。
+  assert.equal((await write(newDevice, 'reader_settings', { v: 0 }, 0, 'local')).accepted, true);
+  assert.equal((await write(newDevice, 'bookshelf_display', { v: 7 }, 0, 'local')).accepted, true);
+  let rows = await historyRows();
+  assert.deepEqual(rows.map(row => [row.entity_type, row.reason, row.payload.v]),
+    [['reader_settings', 'local_first', 2]], 'identical payloads are not recorded');
+
+  const listed = await listSyncHistory(userId, db as unknown as { query: PoolClient['query'] });
+  assert.equal(listed.groups.length, 1);
+  assert.equal(listed.groups[0]!.deviceName, '新平板');
+  assert.equal(listed.groups[0]!.reason, 'local_first');
+  assert.deepEqual(listed.groups[0]!.items.map(item => item.entityType), ['reader_settings']);
+
+  const restored = await db.transaction(client => restoreSyncHistoryIn(client as unknown as PoolClient, userId,
+    oldDevice, [listed.groups[0]!.items[0]!.historyId]));
+  assert.equal(restored.restored, 1);
+  const current = (await db.query<{ revision: string; payload: { v: number } }>(
+    `SELECT revision, payload FROM sync_entities WHERE user_id=$1 AND entity_type='reader_settings'`, [userId])).rows[0]!;
+  assert.equal(current.payload.v, 2);
+  assert.equal(Number(current.revision), 4);
+  rows = await historyRows();
+  assert.deepEqual(rows.map(row => [row.reason, row.payload.v]), [['local_first', 2], ['restore', 0]],
+    'restoring also keeps the version it replaced');
+
+  // 每项只留最近几份。
+  for (let index = 0; index < HISTORY_KEEP_PER_ENTITY + 3; index++) {
+    await write(newDevice, 'reader_settings', { v: 100 + index }, 0, 'local');
+  }
+  const kept = (await db.query<{ count: string }>(
+    `SELECT count(*) FROM sync_entity_history WHERE user_id=$1 AND entity_type='reader_settings'`, [userId])).rows[0]!;
+  assert.equal(Number(kept.count), HISTORY_KEEP_PER_ENTITY);
+});
+
+test('settings history for one account stays under the byte cap', async t => {
+  const { readdir } = await import('node:fs/promises');
+  const { applyOperation, HISTORY_MAX_BYTES_PER_USER } = await import('./sync.js');
+  const db = new PGlite(); t.after(() => db.close());
+  const migrations = new URL('../migrations/', import.meta.url);
+  for (const file of (await readdir(migrations)).filter(file => file.endsWith('.sql')).sort()) {
+    await db.exec((await readFile(new URL(file, migrations), 'utf8')).replace(/^VACUUM[^;]*;/gm, ''));
+  }
+  const userId = randomUUID(), deviceId = randomUUID();
+  await db.query('INSERT INTO app_users(id,huawei_open_id) VALUES($1,$2)', [userId, userId]);
+  await db.transaction(client => registerDevice(client as unknown as PoolClient, userId, deviceId, '平板',
+    'HarmonyOS', '4.6.047', 'tablet', 0));
+  const quota = { entityCount: 0, entityBytes: 0, changeCount: 0, changeBytes: 0, dailyWrites: 0 };
+  for (let index = 0; index < 7; index++) {
+    const payload = { schemes: `${index}`.repeat(700 * 1024) };
+    await db.transaction(client => applyOperation(client as unknown as PoolClient, userId, deviceId, {
+      opId: randomUUID(), entityType: 'custom_theme_schemes', entityId: 'global', operation: 'upsert',
+      baseRevision: 0, payload, payloadBytes: JSON.stringify(payload).length
+    }, 'local', quota));
+  }
+  const usage = (await db.query<{ rows: string; bytes: string; newest: string }>(
+    `SELECT count(*) AS rows, COALESCE(sum(octet_length(payload::text)), 0) AS bytes,
+       max(revision) AS newest FROM sync_entity_history WHERE user_id=$1`, [userId])).rows[0]!;
+  assert.ok(Number(usage.bytes) <= HISTORY_MAX_BYTES_PER_USER);
+  assert.equal(Number(usage.rows), 4);
+  assert.equal(Number(usage.newest), 6, 'the newest replaced version is kept');
+});

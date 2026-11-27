@@ -9,6 +9,8 @@ import { AppSpacing } from '../theme/AppSpacing';
 class ThemedDialogContent {
   title: ResourceStr = '';
   message: ResourceStr = '';
+  /** 正文下方的提醒（警示色小卡片），用于提醒某个选项的后果。 */
+  note: string = '';
   /** 标题较长时（多为一句说明）按正文样式显示。 */
   titleAsHint: boolean = false;
   labels: ResourceStr[] = [];
@@ -60,6 +62,24 @@ function themedConfirmContent(content: ThemedDialogContent) {
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.None)
       .align(Alignment.TopStart)
+    }
+    if (content.note) {
+      Row({ space: AppSpacing.MD }) {
+        SymbolGlyph($r('sys.symbol.exclamationmark_circle'))
+          .fontSize(15)
+          .fontColor([ThemeRuntime.warningColor(content.darkMode)])
+          .margin({ top: 2 })
+        Text(content.note)
+          .fontSize(AppFontSize.CAPTION + 0.5)
+          .lineHeight(19)
+          .fontColor(ThemeRuntime.warningColor(content.darkMode))
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+      .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.MD, bottom: AppSpacing.MD })
+      .borderRadius(ThemeRuntime.mediumRadius())
+      .backgroundColor(content.darkMode ? 'rgba(232,151,37,0.14)' : 'rgba(232,151,37,0.10)')
     }
     if (content.labels.length > 0) {
       if (content.stacked) {
@@ -227,12 +247,13 @@ export class ThemedDialog {
   private static hostApi: ThemedDialogHostApi | undefined = undefined;
 
   static showDialog(uiContext: UIContext, options: promptAction.ShowDialogOptions,
-    darkMode?: boolean): Promise<promptAction.ShowDialogSuccessResponse> {
+    darkMode?: boolean, note: string = ''): Promise<promptAction.ShowDialogSuccessResponse> {
     const dark = ThemedDialog.darkOf(darkMode);
     const content = new ThemedDialogContent();
     content.darkMode = dark;
     content.title = options.title || '';
     content.message = options.message || '';
+    content.note = note;
     const buttons: promptAction.Button[] = options.buttons ? options.buttons : [];
     for (let i = 0; i < buttons.length; i++) {
       content.labels.push(buttons[i].text);

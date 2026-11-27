@@ -425,6 +425,13 @@ export default class EntryAbility extends UIAbility {
     });
     // The theme affects the first frame.
     this.themeBootstrapPromise = appThemePromise.then(() => {});
+    // 新装机记下各项设置的初始内容，首次同步据此不让默认设置覆盖云端。阅读设置按主题存，要等主题恢复。
+    this.themeBootstrapPromise.then(() => {
+      setTimeout(() => {
+        CloudSyncCoordinator.capturePreferenceBaseline(this.context).catch((error: Error) =>
+          console.warn('记录新装机设置初始值失败', error.message));
+      }, 3000);
+    });
     Promise.all([this.themeBootstrapPromise, this.accountBootstrapPromise]).then(() => {
       this.membershipThemeTimer = setInterval(() => {
         MembershipThemeGuard.refresh(this.context).catch((error: Error) => console.warn('主题权益检查失败', error.message));

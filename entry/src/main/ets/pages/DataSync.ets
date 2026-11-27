@@ -206,6 +206,9 @@ struct DataSyncPage {
         }
         router.pushUrl({ url: 'pages/SyncIssues' });
       })
+      this.actionItem('设置历史', '同步替换前的设置，30 天内可以恢复', true, () => {
+        router.pushUrl({ url: 'pages/SyncSettingsHistory' });
+      })
       this.actionItem('重新从云端同步', '保留本机待上传修改，重新获取云端数据', false, () => {
         this.confirmReloadFromCloud();
       })
@@ -402,15 +405,16 @@ struct DataSyncPage {
       if (!(await CloudSyncCoordinator.needsInitialConflictChoice(getContext(this)))) {
         return 'cloud';
       }
+      // 最后一个按钮是主按钮。误选“本地为主”会让本机设置覆盖其他设备，所以把“云端为主”放在主按钮。
       const result = await ThemedDialog.showDialog(this.getUIContext(), {
         title: '选择首次同步方式',
-        message: '检测到云端已有同步数据。如果本机与云端的同一项数据发生冲突，请选择以哪一端为准。未冲突的数据仍会正常合并。',
+        message: '云端已有同步数据。两边的同一项数据发生冲突时，以哪一端为准？不冲突的数据照常合并，本机还没改过的设置直接用云端的。',
         buttons: [
-          { text: '云端为主', color: this.subTextColor() },
-          { text: '本地为主', color: this.accentColor() }
+          { text: '本地为主', color: this.subTextColor() },
+          { text: '云端为主', color: this.accentColor() }
         ]
-      });
-      return result.index === 1 ? 'local' : 'cloud';
+      }, undefined, '选“本地为主”会用本机改过的设置替换其他设备上的设置。替换前的设置可在“设置历史”里找回。');
+      return result.index === 0 ? 'local' : 'cloud';
     } catch (e) {
       console.warn('检查首次同步状态失败:', e);
       throw new Error('暂时无法检查云端数据，请稍后重试');

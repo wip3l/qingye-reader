@@ -1,5 +1,6 @@
 import { PoolClient } from 'pg';
 import { Buffer } from 'node:buffer';
+import { randomUUID } from 'node:crypto';
 import { config } from './config.js';
 import { inTransaction, pool } from './db.js';
 import { cloudQuotaBytes, membershipSnapshot } from './membershipService.js';
@@ -75,6 +76,9 @@ interface EntityRow {
   deleted: boolean;
 }
 
+/** 写入 sync_entity_history 的原因；见 037_sync_entity_history.sql。 */
+type HistoryReason = 'local_first' | 'restore';
+
 interface ReceiptRow {
   operation_id: string;
   accepted: boolean;
@@ -130,6 +134,25 @@ export const MAX_SUPER_BOOK_SOURCE_PAYLOAD_BYTES = 960 * 1024;
 // Keep each exchange useful for initial downloads. The response byte budget
 // still caps large book-source payloads below this count when necessary.
 const PULL_LIMIT = 100;
+// 设置类数据每类只有一条（替换规则每条一项）。它们被“本地为主”或恢复操作强制替换时保留旧版本，
+// 新装机误选“本地为主”把默认设置推上来后，用户还能从“设置历史”找回。
+export const HISTORY_ENTITY_TYPES = new Set([
+  'reader_settings',
+  'replace_rule',
+  'theme_settings',
+  'appearance_mode',
+  'bookshelf_display',
+  'search_preferences',
+  'custom_theme_schemes'
+]);
+export const HISTORY_KEEP_PER_ENTITY = 10;
+export const HISTORY_KEEP_DAYS = 90;
+export const HISTORY_MAX_BYTES_PER_USER = 3 * 1024 * 1024;
+const HISTORY_LIST_ROWS = 300;
+const HISTORY_LIST_GROUPS = 30;
+const HISTORY_RESTORE_MAX = 64;
+// 首次同步分好几页提交，同一台设备两分钟内的替换算作同一次。
+const HISTORY_GROUP_WINDOW_MS = 2 * 60 * 1000;
 
 export async function exchangeSync(userId: string, body: SyncExchangeBody) {
   const request = normalizeExchange(body);
@@ -522,13 +545,14 @@ async function existingReceipts(
   return new Map(result.rows.map((row) => [row.operation_id, row]));
 }
 
-async function applyOperation(
+export async function applyOperation(
   client: PoolClient,
   userId: string,
   deviceId: string,
   operation: NormalizedOperation,
   conflictPolicy: string,
-  quota: SyncQuotaUsage
+  quota: SyncQuotaUsage,
+  restoring: boolean = false
 ) {
   const currentResult = await client.query<EntityRow>(
     `SELECT revision, payload, deleted_at IS NOT NULL AS deleted
@@ -604,6 +628,13 @@ async function applyOperation(
 
   const revision = currentRevision + 1;
   const payloadJson = operation.payload === null ? null : JSON.stringify(operation.payload);
+  // 正常同步里被接受的写入，说明这台设备已经拿到过云端当前版本，是用户自己的修改，不留历史。
+  const historyReason: HistoryReason | null = !current || !HISTORY_ENTITY_TYPES.has(operation.entityType) ? null :
+    restoring ? 'restore' : conflictPolicy === 'local' && currentRevision !== operation.baseRevision ?
+      'local_first' : null;
+  if (historyReason) {
+    await recordEntityHistory(client, userId, deviceId, operation, payloadJson, historyReason);
+  }
   const write = await client.query<{ sequence_id: string }>(
     `WITH entity_write AS (
        INSERT INTO sync_entities (
@@ -666,6 +697,206 @@ async function applyOperation(
     revision,
     sequenceId
   };
+}
+
+/** 替换前把云端当前那份存进历史；内容没变就不存。顺带清掉过期和超出条数的旧记录。 */
+async function recordEntityHistory(
+  client: PoolClient,
+  userId: string,
+  deviceId: string,
+  operation: NormalizedOperation,
+  nextPayloadJson: string | null,
+  reason: HistoryReason
+): Promise<void> {
+  const inserted = await client.query(
+    `INSERT INTO sync_entity_history (
+       user_id, entity_type, entity_id, revision, payload,
+       written_by_device, written_at, replaced_by_device, reason
+     )
+     SELECT user_id, entity_type, entity_id, revision, payload,
+       updated_by_device, updated_at, $4, $5
+     FROM sync_entities
+     WHERE user_id = $1 AND entity_type = $2 AND entity_id = $3
+       AND payload IS DISTINCT FROM $6::jsonb`,
+    [userId, operation.entityType, operation.entityId, deviceId, reason, nextPayloadJson]
+  );
+  if (!inserted.rowCount) return;
+  await client.query(
+    `DELETE FROM sync_entity_history
+     WHERE user_id = $1 AND (
+       replaced_at < now() - make_interval(days => $4::int)
+       OR (entity_type = $2 AND entity_id = $3 AND id NOT IN (
+         SELECT id FROM sync_entity_history
+         WHERE user_id = $1 AND entity_type = $2 AND entity_id = $3
+         ORDER BY id DESC
+         LIMIT $5::int
+       ))
+     )`,
+    [userId, operation.entityType, operation.entityId, HISTORY_KEEP_DAYS, HISTORY_KEEP_PER_ENTITY]
+  );
+  // 每个账号的历史总量有上限，超出从最旧的删。单项最大 960KB，刚写入的那一份总能留下。
+  await client.query(
+    `DELETE FROM sync_entity_history
+     WHERE id IN (
+       SELECT id FROM (
+         SELECT id, sum(COALESCE(octet_length(payload::text), 0))
+           OVER (ORDER BY id DESC ROWS UNBOUNDED PRECEDING) AS kept_bytes
+         FROM sync_entity_history
+         WHERE user_id = $1
+       ) ranked
+       WHERE kept_bytes > $2::bigint
+     )`,
+    [userId, HISTORY_MAX_BYTES_PER_USER]
+  );
+}
+
+export interface SyncHistoryItem {
+  historyId: string;
+  entityType: string;
+  entityId: string;
+  deleted: boolean;
+}
+
+export interface SyncHistoryGroup {
+  groupId: string;
+  replacedAt: number;
+  deviceId: string;
+  deviceName: string;
+  reason: string;
+  items: SyncHistoryItem[];
+}
+
+/** 设置历史列表：同一台设备、同一原因、两分钟内的替换合成一组；只回元数据，不回内容。 */
+export async function listSyncHistory(
+  userId: string,
+  queryable: { query: PoolClient['query'] } = pool as unknown as { query: PoolClient['query'] }
+): Promise<{ groups: SyncHistoryGroup[] }> {
+  const result = await queryable.query<{
+    id: string;
+    entity_type: string;
+    entity_id: string;
+    deleted: boolean;
+    reason: string;
+    replaced_by_device: string;
+    device_name: string | null;
+    replaced_at_ms: string;
+  }>(
+    `SELECT history.id, history.entity_type, history.entity_id,
+       history.payload IS NULL AS deleted, history.reason, history.replaced_by_device,
+       device.device_name,
+       (extract(epoch FROM history.replaced_at) * 1000)::bigint AS replaced_at_ms
+     FROM sync_entity_history history
+     LEFT JOIN sync_devices device ON device.id = history.replaced_by_device
+     WHERE history.user_id = $1
+       AND history.replaced_at >= now() - make_interval(days => $2::int)
+     ORDER BY history.replaced_at DESC, history.id DESC
+     LIMIT $3::int`,
+    [userId, HISTORY_KEEP_DAYS, HISTORY_LIST_ROWS]
+  );
+  const groups: SyncHistoryGroup[] = [];
+  let oldestInGroup = 0;
+  for (const row of result.rows) {
+    const at = Number(row.replaced_at_ms);
+    let group = groups[groups.length - 1];
+    if (!group || group.deviceId !== row.replaced_by_device || group.reason !== row.reason ||
+      oldestInGroup - at > HISTORY_GROUP_WINDOW_MS) {
+      if (groups.length >= HISTORY_LIST_GROUPS) break;
+      group = {
+        groupId: `h${row.id}`,
+        replacedAt: at,
+        deviceId: row.replaced_by_device,
+        deviceName: row.device_name || '',
+        reason: row.reason,
+        items: []
+      };
+      groups.push(group);
+    }
+    oldestInGroup = at;
+    // 一组里同一项被替换了两次时，留更早的那份：那才是被替换之前的设置。
+    const item = { historyId: String(row.id), entityType: row.entity_type, entityId: row.entity_id,
+      deleted: row.deleted === true };
+    const index = group.items.findIndex(existing =>
+      existing.entityType === item.entityType && existing.entityId === item.entityId);
+    if (index >= 0) group.items[index] = item;
+    else group.items.push(item);
+  }
+  return { groups };
+}
+
+export interface SyncHistoryRestoreBody {
+  deviceId?: string;
+  historyIds?: unknown[];
+}
+
+/**
+ * 把选中的历史版本写回云端，作为新版本下发到所有设备。替换前的当前版本也会留进历史，恢复错了还能换回来。
+ * 客户端随后照常同步拿到结果。
+ */
+export async function restoreSyncHistory(userId: string, body: SyncHistoryRestoreBody) {
+  const deviceId = body?.deviceId?.trim() || '';
+  if (!UUID_PATTERN.test(deviceId)) {
+    throw new SyncApiError(400, 'INVALID_DEVICE_ID', '设备标识无效');
+  }
+  const ids = Array.isArray(body?.historyIds) ?
+    [...new Set(body.historyIds.map(value => String(value)))] : [];
+  if (ids.length === 0 || ids.length > HISTORY_RESTORE_MAX || ids.some(id => !/^[1-9]\d{0,17}$/.test(id))) {
+    throw new SyncApiError(400, 'INVALID_SYNC_HISTORY', '请选择要恢复的设置');
+  }
+  return inTransaction(client => restoreSyncHistoryIn(client, userId, deviceId, ids));
+}
+
+export async function restoreSyncHistoryIn(
+  client: PoolClient,
+  userId: string,
+  deviceId: string,
+  ids: string[]
+): Promise<{ restored: number }> {
+  await client.query(
+    'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+    [`sync-user:${userId}`]
+  );
+  const device = await client.query(
+    `SELECT 1 FROM sync_devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL`,
+    [deviceId, userId]
+  );
+  if (device.rows.length === 0) {
+    throw new SyncApiError(403, 'SYNC_DEVICE_NOT_READY', '请先在本机完成一次同步，再恢复设置');
+  }
+  const rows = await client.query<{ id: string; entity_type: string; entity_id: string; payload: unknown | null }>(
+    `SELECT id, entity_type, entity_id, payload
+     FROM sync_entity_history
+     WHERE user_id = $1 AND id = ANY($2::bigint[])
+     ORDER BY id`,
+    [userId, ids]
+  );
+  if (rows.rows.length !== ids.length) {
+    throw new SyncApiError(404, 'SYNC_HISTORY_NOT_FOUND', '这条设置历史已过期，请刷新后重试');
+  }
+  const quota = await loadSyncQuotaUsage(client, userId);
+  let restored = 0;
+  for (const row of rows.rows) {
+    const payloadJson = row.payload === null ? null : JSON.stringify(row.payload);
+    const current = await client.query<{ revision: string; deleted: boolean; same: boolean }>(
+      `SELECT revision, deleted_at IS NOT NULL AS deleted, payload IS NOT DISTINCT FROM $4::jsonb AS same
+       FROM sync_entities
+       WHERE user_id = $1 AND entity_type = $2 AND entity_id = $3`,
+      [userId, row.entity_type, row.entity_id, payloadJson]
+    );
+    const entity = current.rows[0];
+    if (entity?.same === true || (row.payload === null && !entity)) continue;
+    const ack = await applyOperation(client, userId, deviceId, {
+      opId: randomUUID(),
+      entityType: row.entity_type,
+      entityId: row.entity_id,
+      operation: row.payload === null ? 'delete' : 'upsert',
+      baseRevision: entity ? Number(entity.revision) : 0,
+      payload: row.payload,
+      payloadBytes: payloadJson === null ? 0 : Buffer.byteLength(payloadJson, 'utf8')
+    }, 'local', quota, true);
+    if (ack.accepted) restored++;
+  }
+  await persistSyncQuotaUsage(client, userId, quota);
+  return { restored };
 }
 
 async function loadSyncQuotaUsage(client: PoolClient, userId: string): Promise<SyncQuotaUsage> {

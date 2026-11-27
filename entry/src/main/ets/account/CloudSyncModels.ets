@@ -73,6 +73,37 @@ export class CloudSyncDeviceListResponse {
   devices: CloudSyncDevice[] = [];
 }
 
+/** 云端设置历史的一项（只有元数据）。 */
+export class CloudSyncHistoryItem {
+  historyId: string = '';
+  entityType: string = '';
+  entityId: string = '';
+  deleted: boolean = false;
+}
+
+/** 同一台设备同一次替换的云端设置历史。reason：local_first 本地为主强制替换；restore 恢复设置历史。 */
+export class CloudSyncHistoryGroup {
+  groupId: string = '';
+  replacedAt: number = 0;
+  deviceId: string = '';
+  deviceName: string = '';
+  reason: string = '';
+  items: CloudSyncHistoryItem[] = [];
+}
+
+export class CloudSyncHistoryList {
+  groups: CloudSyncHistoryGroup[] = [];
+}
+
+export class CloudSyncHistoryRestoreBody {
+  deviceId: string = '';
+  historyIds: string[] = [];
+}
+
+export class CloudSyncHistoryRestoreResult {
+  restored: number = 0;
+}
+
 export class CloudSyncSummary {
   activeEntityCount: number = 0;
   sourceCount: number = 0;

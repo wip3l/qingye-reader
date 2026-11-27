@@ -25,6 +25,9 @@ import {
   CloudSyncDeviceListResponse,
   CloudSyncExchangeRequest,
   CloudSyncExchangeResponse,
+  CloudSyncHistoryList,
+  CloudSyncHistoryRestoreBody,
+  CloudSyncHistoryRestoreResult,
   CloudSyncSummary
 } from './CloudSyncModels';
 
@@ -304,6 +307,24 @@ export class AccountCommerceApi {
   static async fetchSyncSummary(sessionToken: string): Promise<CloudSyncSummary> {
     const value = await AccountCommerceApi.request('/v1/sync/summary', 'GET', '', sessionToken);
     return JSON.parse(value) as CloudSyncSummary;
+  }
+
+  static async fetchSyncHistory(sessionToken: string): Promise<CloudSyncHistoryList> {
+    const value = await AccountCommerceApi.request('/v1/sync/history', 'GET', '', sessionToken);
+    const parsed = JSON.parse(value) as CloudSyncHistoryList;
+    const result = new CloudSyncHistoryList();
+    result.groups = Array.isArray(parsed?.groups) ? parsed.groups : [];
+    return result;
+  }
+
+  static async restoreSyncHistory(deviceId: string, historyIds: string[],
+    sessionToken: string): Promise<CloudSyncHistoryRestoreResult> {
+    const body = new CloudSyncHistoryRestoreBody();
+    body.deviceId = deviceId;
+    body.historyIds = historyIds;
+    const value = await AccountCommerceApi.request('/v1/sync/history/restore', 'POST',
+      JSON.stringify(body), sessionToken);
+    return JSON.parse(value) as CloudSyncHistoryRestoreResult;
   }
 
   static async renameSyncDevice(deviceId: string, deviceName: string, sessionToken: string): Promise<void> {

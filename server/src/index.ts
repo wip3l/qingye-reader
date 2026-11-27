@@ -39,11 +39,14 @@ import {
 import {
   exchangeSync,
   listSyncDevices,
+  listSyncHistory,
   renameSyncDevice,
+  restoreSyncHistory,
   revokeSyncDevice,
   syncSummary,
   SyncApiError,
-  SyncExchangeBody
+  SyncExchangeBody,
+  SyncHistoryRestoreBody
 } from './sync.js';
 import { exchangeReadingStats, ReadingStatsRequest } from './readingStats.js';
 import {
@@ -430,6 +433,18 @@ app.get('/v1/sync/devices', { preHandler: authenticate }, async (request) => {
 
 app.get('/v1/sync/summary', { preHandler: authenticate }, async (request) => {
   return syncSummary(requiredUserId(request));
+});
+
+app.get('/v1/sync/history', { preHandler: authenticate }, async (request) => {
+  return listSyncHistory(requiredUserId(request));
+});
+
+app.post<{ Body: SyncHistoryRestoreBody }>('/v1/sync/history/restore', {
+  preHandler: authenticate, bodyLimit: 16 * 1024
+}, async (request) => {
+  const userId = requiredUserId(request);
+  await enforceAccountRateLimit(userId, 'sync-exchange', config.http.syncRateLimitPerMinute);
+  return restoreSyncHistory(userId, request.body);
 });
 
 app.post<{ Params: { deviceId: string }; Body: { deviceName?: string } }>(

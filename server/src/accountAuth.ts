@@ -404,7 +404,7 @@ export async function requestAccountDeletion(tx: Transaction, userId: string, cu
  */
 export const DELETION_PURGES_TABLES = [
   'auth_sessions', 'account_recovery_codes', 'sync_changes', 'sync_devices', 'sync_entities',
-  'sync_operation_receipts', 'sync_user_usage', 'reading_stats_records', 'reading_stats_usage',
+  'sync_operation_receipts', 'sync_user_usage', 'sync_entity_history', 'reading_stats_records', 'reading_stats_usage',
   'lottery_web_sessions', 'lottery_web_verifications', 'cloud_download_tickets', 'cloud_file_tombstones',
   'shared_provider_key_grants'
 ] as const;

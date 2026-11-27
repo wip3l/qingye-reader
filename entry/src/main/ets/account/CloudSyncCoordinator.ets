@@ -16,8 +16,12 @@ import {
   CloudSyncChange,
   CloudSyncExchangeRequest,
   CloudSyncExchangeResponse,
+  CloudSyncHistoryList,
   CloudSyncOperation
 } from './CloudSyncModels';
+import { SyncPreferenceBaseline } from './SyncPreferenceBaseline';
+import { SettingsHistoryEntry, SettingsHistoryStore } from './SettingsHistoryStore';
+import { canonicalJson } from './CanonicalJson';
 import { CloudSyncSettings, CloudSyncSettingsStore } from './CloudSyncSettingsStore';
 import { CloudSyncIssue, CloudSyncIssueStore } from './CloudSyncIssueStore';
 import { CloudSyncChangeSnapshot, CloudSyncChangeTracker } from './CloudSyncChangeTracker';
@@ -336,7 +340,69 @@ export class CloudSyncCoordinator {
       return false;
     }
     const summary = await AccountCommerceApi.fetchSyncSummary(AccountSessionStore.token());
-    return Math.max(0, Math.floor(Number(summary.activeEntityCount) || 0)) > 0;
+    if (Math.max(0, Math.floor(Number(summary.activeEntityCount) || 0)) <= 0) {
+      return false;
+    }
+    // 新装机书架为空、设置都没改过时，本机没有要保护的数据，不用问，直接从云端恢复。
+    return !(await CloudSyncCoordinator.localIsUntouched(context));
+  }
+
+  private static readonly PREFERENCE_ENTITY_TYPES: Set<string> = new Set<string>([
+    'reader_settings', 'replace_rule', 'theme_settings', 'custom_theme_schemes',
+    'appearance_mode', 'bookshelf_display', 'search_preferences'
+  ]);
+
+  static isPreferenceEntityType(entityType: string): boolean {
+    return CloudSyncCoordinator.PREFERENCE_ENTITY_TYPES.has(entityType);
+  }
+
+  /** 新装机第一次启动时（主题恢复之后）记下各项设置的初始摘要，见 SyncPreferenceBaseline。 */
+  static async capturePreferenceBaseline(context: Context): Promise<void> {
+    if (await SyncPreferenceBaseline.checked(context)) {
+      return;
+    }
+    const hashes: Record<string, string> = {};
+    if (CloudSyncCoordinator.freshInstall()) {
+      for (const entity of await CloudSyncCoordinator.buildPreferenceEntities(context)) {
+        hashes[CloudSyncStateStore.entityKey(entity.entityType, entity.entityId)] = entity.contentHash;
+      }
+    }
+    await SyncPreferenceBaseline.save(context, hashes);
+  }
+
+  /** 从未更新过的安装：安装时间等于更新时间。覆盖安装升级后两者不同。 */
+  private static freshInstall(): boolean {
+    try {
+      const info = bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
+      return info.installTime > 0 && Math.abs(info.updateTime - info.installTime) < 60 * 1000;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /** 内容仍等于新装机初始值的设置项（自安装以来没改过）。 */
+  private static async untouchedPreferenceKeys(context: Context,
+    entities: LocalSyncEntity[]): Promise<Set<string>> {
+    const result = new Set<string>();
+    const baseline = await SyncPreferenceBaseline.load(context);
+    for (const entity of entities) {
+      if (!CloudSyncCoordinator.isPreferenceEntityType(entity.entityType)) continue;
+      const key = CloudSyncStateStore.entityKey(entity.entityType, entity.entityId);
+      const initial = baseline[key];
+      if (initial && initial === entity.contentHash) result.add(key);
+    }
+    return result;
+  }
+
+  private static async localIsUntouched(context: Context): Promise<boolean> {
+    const entities = await CloudSyncCoordinator.buildPreferenceEntities(context);
+    const untouched = await CloudSyncCoordinator.untouchedPreferenceKeys(context, entities);
+    if (untouched.size === 0 || untouched.size < entities.length) {
+      return false;
+    }
+    const db = AppDatabase.getInstance();
+    await db.initWithContext(context);
+    return (await db.getAllBooks()).length === 0;
   }
 
   static async syncAutomatically(context: Context,
@@ -436,6 +502,8 @@ export class CloudSyncCoordinator {
 
     let localEntities: LocalSyncEntity[] = [];
     let batch: CloudSyncOperation[] = [];
+    let untouchedKeys: Set<string> = new Set<string>();
+    let historyRecordId = '';
     try {
       const db = AppDatabase.getInstance();
       await db.initWithContext(context);
@@ -452,7 +520,13 @@ export class CloudSyncCoordinator {
         localEntities = (await CloudSyncCoordinator.buildLocalEntities(context, db, settings))
           .filter((entity: LocalSyncEntity) =>
             CloudSyncCoordinator.scopeAllows(settings, entity.entityType));
-        const operations = CloudSyncCoordinator.buildOperations(localEntities, state, settings);
+        // 首次同步不上传自安装以来没改过的设置，让云端的设置下载下来，无论选的是哪一端为主。
+        const initialSync = state.cursor === 0 && Object.keys(state.entities).length === 0;
+        untouchedKeys = initialSync ?
+          await CloudSyncCoordinator.untouchedPreferenceKeys(context, localEntities) : new Set<string>();
+        const operations = CloudSyncCoordinator.buildOperations(localEntities, state, settings)
+          .filter((operation: CloudSyncOperation) => !untouchedKeys.has(
+            CloudSyncStateStore.entityKey(operation.entityType, operation.entityId)));
         settings.pendingCount = operations.length;
         await CloudSyncSettingsStore.saveRuntimeState(context, userId, settings.status,
           settings.lastSuccessAt, settings.pendingCount, settings.errorMessage);
@@ -514,6 +588,12 @@ export class CloudSyncCoordinator {
               issues.push(CloudSyncCoordinator.rejectionIssue(ack, operationMap[ack.opId]));
             }
           }
+          try {
+            historyRecordId = await CloudSyncCoordinator.keepSettingsBeforeApply(context, response, operationMap,
+              localEntities, state, deviceId, settings, untouchedKeys, historyRecordId);
+          } catch (error) {
+            console.warn('保存设置历史失败:', error);
+          }
           CloudSyncChangeTracker.beginRemoteApply();
           try {
             result.conflicts += await CloudSyncCoordinator.applyAcknowledgements(
@@ -548,7 +628,12 @@ export class CloudSyncCoordinator {
             break;
           }
         }
-
+        // 云端没有、本次又没上传的设置项留到下一次同步上传。
+        // 本轮开始时的变更快照不含这次标记，结束时 markSynced 不会把它清掉。
+        if (Array.from(untouchedKeys).some((key: string) => !state.entities[key])) {
+          CloudSyncChangeTracker.markPreferenceChanged();
+          CloudSyncChangeTracker.markApplicationPreferenceChanged();
+        }
       }
       const generalDownloaded = result.downloaded;
       if (settings.readingDataEnabled) {
@@ -593,6 +678,148 @@ export class CloudSyncCoordinator {
       // until every page in this run has been applied, then avoid leaking them into the next run.
       CloudSyncCoordinator.protectedLocalBookEntityIdsDuringSync.clear();
     }
+  }
+
+  /**
+   * 这一页同步结果要替换本机设置前，把本机原来的那份存进设置历史。内容相同的不存；首次同步里自安装以来
+   * 没改过的设置（skipKeys）也不存，那只是默认值。同一次同步的各页存进同一条记录，返回记录 ID。
+   */
+  private static async keepSettingsBeforeApply(
+    context: Context,
+    response: CloudSyncExchangeResponse,
+    operationMap: Record<string, LocalSyncEntity>,
+    localEntities: LocalSyncEntity[],
+    state: CloudSyncLocalState,
+    deviceId: string,
+    settings: CloudSyncSettings,
+    skipKeys: Set<string>,
+    recordId: string
+  ): Promise<string> {
+    const local = new Map<string, LocalSyncEntity>();
+    for (const entity of localEntities) {
+      if (CloudSyncCoordinator.isPreferenceEntityType(entity.entityType)) {
+        local.set(CloudSyncStateStore.entityKey(entity.entityType, entity.entityId), entity);
+      }
+    }
+    const entries: SettingsHistoryEntry[] = [];
+    const seen = new Set<string>();
+    let sourceDeviceId = '';
+    const consider = (entityType: string, entityId: string, incoming: Object | null, fromDevice: string) => {
+      if (!CloudSyncCoordinator.isPreferenceEntityType(entityType) ||
+        !CloudSyncCoordinator.scopeAllows(settings, entityType)) {
+        return;
+      }
+      const key = CloudSyncStateStore.entityKey(entityType, entityId);
+      if (seen.has(key) || skipKeys.has(key)) return;
+      seen.add(key);
+      const current = local.get(key);
+      const currentJson = current ? current.payloadJson : '';
+      if (!currentJson && !incoming) return;
+      if (currentJson && incoming &&
+        canonicalJson(JSON.parse(currentJson) as Object) === canonicalJson(incoming)) {
+        return;
+      }
+      if (!sourceDeviceId && fromDevice) sourceDeviceId = fromDevice;
+      const entry = new SettingsHistoryEntry();
+      entry.entityType = entityType;
+      entry.entityId = entityId;
+      entry.payloadJson = currentJson;
+      entries.push(entry);
+    };
+    for (const ack of response.acknowledgements || []) {
+      if (ack.accepted || ack.error) continue;
+      const operation = operationMap[ack.opId];
+      if (!operation) continue;
+      const conflict = ack.conflict;
+      consider(operation.entityType, operation.entityId,
+        conflict && conflict.deleted !== true ? conflict.payload : null, '');
+    }
+    for (const change of response.changes || []) {
+      const entityState = state.entities[CloudSyncStateStore.entityKey(change.entityType, change.entityId)];
+      const knownRevision = entityState ? entityState.revision : 0;
+      if (change.revision < knownRevision ||
+        (change.deviceId === deviceId && change.revision === knownRevision)) {
+        continue;
+      }
+      consider(change.entityType, change.entityId,
+        change.operation === 'delete' ? null : change.payload, change.deviceId);
+    }
+    if (entries.length === 0) {
+      return recordId;
+    }
+    // 本机发起的云端恢复写回时，云端记的写入设备就是本机。
+    const reason = sourceDeviceId && sourceDeviceId === deviceId ?
+      SettingsHistoryStore.REASON_RESTORE : SettingsHistoryStore.REASON_SYNC;
+    return SettingsHistoryStore.append(context, recordId, reason, sourceDeviceId, entries);
+  }
+
+  /**
+   * 把本机设置历史里选中的项恢复到本机。恢复前先把当前设置存一条，恢复错了还能换回来。
+   * 恢复后的设置作为本机修改等待上传；调用方随后以“本地为主”同步，让其他设备也换回来。
+   */
+  static async restoreLocalSettings(context: Context, recordId: string, keys: string[]): Promise<number> {
+    if (CloudSyncCoordinator.running) {
+      try { await CloudSyncCoordinator.running; } catch (e) { /* 恢复不依赖这次同步的结果。 */ }
+    }
+    const wanted = new Set<string>(keys);
+    const entries = (await SettingsHistoryStore.entries(context, recordId)).filter((entry: SettingsHistoryEntry) =>
+      wanted.has(CloudSyncStateStore.entityKey(entry.entityType, entry.entityId)));
+    if (entries.length === 0) {
+      return 0;
+    }
+    const deviceId = await CloudSyncStateStore.deviceId(context);
+    const current = new Map<string, LocalSyncEntity>();
+    for (const entity of await CloudSyncCoordinator.buildPreferenceEntities(context)) {
+      current.set(CloudSyncStateStore.entityKey(entity.entityType, entity.entityId), entity);
+    }
+    const before: SettingsHistoryEntry[] = entries.map((entry: SettingsHistoryEntry) => {
+      const existing = current.get(CloudSyncStateStore.entityKey(entry.entityType, entry.entityId));
+      const kept = new SettingsHistoryEntry();
+      kept.entityType = entry.entityType;
+      kept.entityId = entry.entityId;
+      kept.payloadJson = existing ? existing.payloadJson : '';
+      return kept;
+    });
+    await SettingsHistoryStore.append(context, '', SettingsHistoryStore.REASON_RESTORE, deviceId, before);
+    const db = AppDatabase.getInstance();
+    await db.initWithContext(context);
+    // 不放进 beginRemoteApply：这些写入要作为本机修改上传。状态用临时对象，免得把它们记成已同步。
+    const scratch = new CloudSyncLocalState();
+    for (const entry of entries) {
+      if (entry.payloadJson) {
+        await CloudSyncCoordinator.applyEntity(context, db, entry.entityType, entry.entityId, 0, 'upsert',
+          JSON.parse(entry.payloadJson) as Object, scratch, deviceId);
+      } else {
+        await CloudSyncCoordinator.applyDelete(context, db, entry.entityType, entry.entityId,
+          new CloudSyncEntityState());
+      }
+    }
+    CloudSyncChangeTracker.markPreferenceChanged();
+    CloudSyncChangeTracker.markApplicationPreferenceChanged();
+    return entries.length;
+  }
+
+  static async fetchCloudSettingsHistory(context: Context): Promise<CloudSyncHistoryList> {
+    await AccountSessionStore.load(context);
+    if (!AccountSessionStore.isLoggedIn()) {
+      throw new Error('请先登录账号');
+    }
+    return AccountCommerceApi.fetchSyncHistory(AccountSessionStore.token());
+  }
+
+  /** 把云端设置历史里选中的版本写回云端（作为新版本下发到所有设备），再同步一次拿到本机。 */
+  static async restoreCloudSettings(context: Context, historyIds: string[]): Promise<number> {
+    await AccountSessionStore.load(context);
+    if (!AccountSessionStore.isLoggedIn()) {
+      throw new Error('请先登录账号');
+    }
+    if (CloudSyncCoordinator.running) {
+      try { await CloudSyncCoordinator.running; } catch (e) { /* 下面会再同步一次。 */ }
+    }
+    const deviceId = await CloudSyncStateStore.deviceId(context);
+    const result = await AccountCommerceApi.restoreSyncHistory(deviceId, historyIds, AccountSessionStore.token());
+    await CloudSyncCoordinator.syncNow(context, 'cloud');
+    return Math.max(0, Math.floor(Number(result.restored) || 0));
   }
 
   private static annotationSyncAvailable(): boolean {
@@ -838,6 +1065,13 @@ export class CloudSyncCoordinator {
       }
     }
 
+    result.push(...await CloudSyncCoordinator.buildPreferenceEntities(context));
+    return result;
+  }
+
+  /** 设置类同步项（阅读设置、主题、替换规则、外观等）。新装机基准和设置历史也用它取本机当前内容。 */
+  private static async buildPreferenceEntities(context: Context): Promise<LocalSyncEntity[]> {
+    const result: LocalSyncEntity[] = [];
     const readerSettings = await ReaderSettingsStore.load(context);
     const safeReaderSettings = ReaderPreferencesSync.toPayload(readerSettings);
     safeReaderSettings.typographyFollowsTheme = await ReaderSettingsStore.typographyFollowsTheme(context);
