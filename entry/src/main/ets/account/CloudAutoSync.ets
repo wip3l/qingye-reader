@@ -324,6 +324,8 @@ export class CloudAutoSync {
       AccountSessionStore.activeMembershipSku() !== 'SUPER_LIFETIME' ||
       CloudSyncSettingsStore.currentAccountId() !== userId) return false;
     const settings = CloudSyncSettingsStore.current();
+    // 总开关关闭时本机只算本地操作：删除不留云端删除标记，否则其他设备会跟着删。
+    if (!settings.enabled) return false;
     if (kind === CloudThemeSync.KIND) return settings.customThemesEnabled;
     return kind === 'BOOK' ? settings.localBooksEnabled : kind === 'FONT' && settings.customFontsEnabled;
   }

@@ -390,6 +390,8 @@ struct DataSyncPage {
       CloudSyncSettingsStore.STATUS_DISABLED;
     this.syncErrorMessage = '';
     await this.saveSettings();
+    // 书籍、字体、主题的文件同步也受总开关控制：关闭时收起云端占位，开启时对账一次。
+    CloudAutoSync.schedule(getContext(this), 0);
     if (value) {
       try {
         const conflictPolicy = await this.initialConflictPolicy();

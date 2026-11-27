@@ -339,7 +339,8 @@ export class CloudThemeSync {
       return false;
     }
     if (CloudSyncSettingsStore.currentAccountId() !== userId) await CloudSyncSettingsStore.load(context, userId);
-    return CloudSyncSettingsStore.currentAccountId() === userId && CloudSyncSettingsStore.current().customThemesEnabled;
+    const settings = CloudSyncSettingsStore.current();
+    return CloudSyncSettingsStore.currentAccountId() === userId && settings.enabled && settings.customThemesEnabled;
   }
 
   private static async collectLocal(context: Context): Promise<Map<string, LocalThemeItem>> {
