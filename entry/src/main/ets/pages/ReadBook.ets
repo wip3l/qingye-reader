@@ -7,6 +7,7 @@ import { ReaderBrightnessSession } from '../utils/ReaderBrightnessSession';
 import { ReaderEyeCareFilter } from '../components/reader/ReaderEyeCareFilter';
 import { ReaderEyeCare } from '../utils/ReaderEyeCare';
 import { ReaderReadingRuler } from '../utils/ReaderReadingRuler';
+import { ReaderNameStyle } from '../model/reader/ReaderNameStyle';
 import { HexColor } from '../utils/HexColor';
 import { ReaderReadingRulerSteps, ReaderRulerGeometry, ReaderRulerRow, ReaderRulerStep } from '../core/reader/ReaderReadingRulerSteps';
 import { ReaderReadingRulerRows } from '../core/reader/ReaderReadingRulerRows';
@@ -976,6 +977,14 @@ struct ReadBookPage {
   private cachedRegexRulesKey: string = '';
   private cachedRegexRules: ReaderRegexFontRule[] = [];
   private cachedRegexMatchSpecs: ReaderRuleMatchSpec[] = [];
+  private cachedEffectiveUserRules: ReaderRegexFontRule[] | null = null;
+  private cachedEffectiveNameRules: ReaderRegexFontRule[] | null = null;
+  private cachedEffectiveRegexRules: ReaderRegexFontRule[] = [];
+  private readerNameRules: ReaderRegexFontRule[] = [];
+  private readerNameRulesBook: string = '';
+  private readerNameRulesRevision: number = -1;
+  private readerNameRulesFontSize: number = -1;
+  private readerNameSignature: string = '';
   private cachedRegexMatchSpecsRules: ReaderRegexFontRule[] | null = null;
   private regexIndentMatcher: ReaderParagraphIndentMatcher | null = null;
   private regexIndentMatcherRules: ReaderRegexFontRule[] | null = null;
@@ -10671,7 +10680,7 @@ struct ReadBookPage {
     if (this.readerRegexFontMode === 'custom') {
       this.registerCustomReaderFontFamily(this.readerRegexFontFamily);
     }
-    const rules = this.getRegexRules();
+    const rules = this.getRegexRules().concat(this.getReaderNameRules());
     for (const rule of rules) {
       if (rule.fontMode === 'custom') {
         this.registerCustomReaderFontFamily(rule.fontFamily);
@@ -11639,6 +11648,8 @@ struct ReadBookPage {
 
   onMimoVoiceStateChanged(): void {
     this.publishTtsFloatingVoices();
+    // 人物档案存一次就发一次：只有人名上色生成的规则真的变了（开关、样式、颜色、新识别的人）才重新排版。
+    if (this.refreshReaderNameRules()) this.onReaderFontStyleChanged();
   }
 
   ttsQuickVoiceOptions(): SelectOption[] {
@@ -20808,8 +20819,61 @@ ${leading}` : leading;
   }
 
   /** 和 getRegexRules 一一对应的匹配参数，规则不变时复用。 */
+  /**
+   * 阅读页实际参与强调的规则：开着“正则字体”时是用户自己的规则，后面接上本书人名上色生成的规则
+   * （人名不受“正则字体”总开关管）。切片里的 ruleIndex 按这份列表取规则。
+   */
+  getEffectiveRegexRules(): ReaderRegexFontRule[] {
+    const names = this.getReaderNameRules();
+    const user = this.readerRegexFontEnabled ? this.getRegexRules() : [];
+    if (names.length === 0) return user;
+    if (this.cachedEffectiveUserRules !== user || this.cachedEffectiveNameRules !== names) {
+      this.cachedEffectiveUserRules = user;
+      this.cachedEffectiveNameRules = names;
+      this.cachedEffectiveRegexRules = user.concat(names);
+    }
+    return this.cachedEffectiveRegexRules;
+  }
+
+  /** 本书人名上色生成的规则（见 ReaderNameStyle）；换了书、人物档案存过、正文字号变了才重读。 */
+  getReaderNameRules(): ReaderRegexFontRule[] {
+    const book = this.book?.bookUrl || '';
+    if (book !== this.readerNameRulesBook || this.mimoVoicesRevision !== this.readerNameRulesRevision ||
+      this.readerFontSize !== this.readerNameRulesFontSize) {
+      this.refreshReaderNameRules();
+    }
+    return this.readerNameRules;
+  }
+
+  /** 重读本书人名规则；返回生成的规则有没有变（变了要重新排版）。 */
+  refreshReaderNameRules(): boolean {
+    const book = this.book?.bookUrl || '';
+    this.readerNameRulesBook = book;
+    this.readerNameRulesRevision = this.mimoVoicesRevision;
+    this.readerNameRulesFontSize = this.readerFontSize;
+    let rules: ReaderRegexFontRule[] = [];
+    if (book) {
+      try {
+        rules = ReaderNameStyle.rules(MimoStore.cast(book), this.readerFontSize);
+      } catch (error) {
+        console.warn('读取本书人名样式失败:', error);
+      }
+    }
+    const signature = rules.length > 0 ? ReaderRegexFontCodec.encode(rules) : '';
+    if (signature === this.readerNameSignature) return false;
+    this.readerNameSignature = signature;
+    this.readerNameRules = rules;
+    return true;
+  }
+
+  /** 排版缓存键里人名规则那一段。 */
+  readerNameIdentity(): string {
+    this.getReaderNameRules();
+    return this.readerNameSignature;
+  }
+
   getRegexMatchSpecs(): ReaderRuleMatchSpec[] {
-    const rules = this.getRegexRules();
+    const rules = this.getEffectiveRegexRules();
     if (this.cachedRegexMatchSpecsRules !== rules) {
       this.cachedRegexMatchSpecs = ReaderRegexFontCodec.matchSpecs(rules);
       this.cachedRegexMatchSpecsRules = rules;
@@ -20823,7 +20887,7 @@ ${leading}` : leading;
    */
   getRegexTextSlices(text: string, titleRanges: number[][] = []): ReadTextSlice[] {
     const displayText = text || '';
-    if (!this.readerRegexFontEnabled || this.getRegexRules().length === 0) return [];
+    if (this.getEffectiveRegexRules().length === 0) return [];
     try {
       return ReaderRegexRuleHits.collect(this.getRegexMatchSpecs(), displayText, titleRanges)
         .map((hit: ReaderRuleHit): ReadTextSlice => {
@@ -20843,7 +20907,7 @@ ${leading}` : leading;
   }
 
   getRegexRuleBySlice(slice: ReadTextSlice): ReaderRegexFontRule | null {
-    const rules = this.getRegexRules();
+    const rules = this.getEffectiveRegexRules();
     if (!slice.highlighted || slice.ruleIndex < 0 || slice.ruleIndex >= rules.length) {
       return null;
     }
@@ -21065,7 +21129,7 @@ ${leading}` : leading;
     for (const block of document.blocks) {
       if (block.title) titleRanges.push([block.displayStart, block.displayEnd]);
     }
-    const slices: ReadTextSlice[] = this.readerRegexFontEnabled ?
+    const slices: ReadTextSlice[] = this.getEffectiveRegexRules().length > 0 ?
       this.getRegexTextSlices(document.displayText, titleRanges) : [];
     const titleStyles = this.buildReaderV2TitleStyles(document);
     const result: ReaderV2SpanStyleRange[] = titleStyles.slice();
@@ -25319,6 +25383,7 @@ ${leading}` : leading;
     const regexIdentity = `${this.readerRegexFontEnabled}_${this.readerRegexFontRulesRaw}_` +
       `${this.readerRegexFontPattern}_${this.readerRegexFontMode}_${this.readerRegexFontFamily}_` +
       `${this.readerRegexFontSize}_${this.readerRegexShadowColor}_${includeThemeRevision ? this.themeRevision : ''}_` +
+      `${this.readerNameIdentity()}_` +
       `${this.themeRegexEmphasisMode()}_${this.themeRegexBubbleStyleId()}_reader_action_layout_v7`;
     return `${this.readerFontSize}_${this.readerFontWeight}_${this.readerLetterSpacing}_${this.readerTextAlign}_${this.readerLineHeight}_${this.readerParagraphSpacing}_` +
       `${this.readerParagraphIndent}_${this.readerCommentBubbleSize}_${this.readerCommentCard}_` +

@@ -40,6 +40,7 @@ const MODULES = [
   'core/reader/ReaderDialogueMatcher.ts',
   'core/reader/ReaderRegexRuleHits.ts',
   'core/reader/ReaderReadingRulerSteps.ts',
+  'core/reader/ReaderNamePatterns.ts',
   'core/lan/LanReaderActions.ts',
 ];
 

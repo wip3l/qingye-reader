@@ -42,6 +42,10 @@ import {
 } from '../model/reader/ReaderRegexFontRule';
 import { ReaderRegexRuleHits, ReaderRuleMatchSpec } from '../core/reader/ReaderRegexRuleHits';
 import { ReaderDialogueMatcher } from '../core/reader/ReaderDialogueMatcher';
+import { ReaderNameStyle } from '../model/reader/ReaderNameStyle';
+import { ReaderNamePatterns } from '../core/reader/ReaderNamePatterns';
+import { MimoBookCast, MimoStore } from '../utils/mimo/MimoStore';
+import { MimoRole } from '../core/mimo/MimoPolicy';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ListDissolve } from '../utils/ListDissolve';
@@ -76,6 +80,10 @@ export const READER_FONT_SECTION_BODY: number = 1;
 
 /** 共用规则控件时，编辑页草稿用的下标（-1 已被标题强调占用）。 */
 const EDITING_REGEX_RULE_INDEX: number = -2;
+/** 人名样式不在规则列表里，编辑时用这个下标（小于 0，和新建一样不在列表里找）。 */
+const NAME_STYLE_RULE_INDEX = -3;
+const NAME_STYLE_BOOK_PARAM = ReaderNameStyle.PARAM_BOOK;
+const NAME_STYLE_ROLE_PARAM = ReaderNameStyle.PARAM_ROLE;
 /** 正则规则列表的行高：列表嵌在页面滚动里，按行数给定高度。 */
 const REGEX_RULE_ROW_HEIGHT: number = 64;
 const TITLE_PREVIEW_BOX_ID: string = 'reader_title_preview_box';
@@ -187,11 +195,26 @@ export struct ReaderFontSettingsEditor {
   private readerFontStyleSaveTimerId: number = -1;
   // 从主题排版页打开时只编辑那一页的草稿，保存与否由主题排版页决定。
   private draftMode: boolean = false;
+  // 人名样式模式（见 openNameStyleEditor）：改的是哪本书、哪个人（空为全书的人名样式）。
+  private nameStyleBook: string = '';
+  private nameStyleRoleId: string = '';
+  private nameStyleRoleName: string = '';
+  private nameStyleOpened: boolean = false;
+  private nameStylePreviewNames: string[] = [];
+  private nameStyleSnapshotExtra: string = '';
+  @State nameStyleColorMode: string = ReaderNameStyle.MODE_ROLE;
+  @State nameStyleFollow: boolean = false;
 
   aboutToAppear(): void {
     this.onCloseReady(() => { this.closeReaderFontSettings(); });
     this.onShownReady(() => { this.onPageShow(); });
     const params = router.getParams() as Record<string, Object> | undefined;
+    // 从“本书人物”打开：直接进规则编辑页改本书的人名样式（或某个人单独的样式），保存写回人物档案。
+    if (!this.embedded && params && typeof params[NAME_STYLE_BOOK_PARAM] === 'string') {
+      this.nameStyleBook = params[NAME_STYLE_BOOK_PARAM] as string;
+      this.nameStyleRoleId = typeof params[NAME_STYLE_ROLE_PARAM] === 'string' ?
+        params[NAME_STYLE_ROLE_PARAM] as string : '';
+    }
     this.draftMode = !!params && params[ThemeTypographyDraft.DRAFT_PARAM] === true &&
       ThemeTypographyDraft.current() !== null;
     this.loadSettings();
@@ -295,6 +318,7 @@ export struct ReaderFontSettingsEditor {
       this.regexRules = this.parseRegexRules(settings);
       this.bumpRegexHighlightRefresh();
       this.readerSettingsLoaded = true;
+      if (this.isNameStyleMode() && !this.nameStyleOpened) this.openNameStyleEditor();
       this.onStylePreviewChanged(settings);
     } catch (e) {
       console.warn('加载阅读字体设置失败:', e);
@@ -305,7 +329,10 @@ export struct ReaderFontSettingsEditor {
 
   build() {
     Column() {
-      if (this.embedded) {
+      if (this.isNameStyleMode()) {
+        // 只用来改人名样式时底下不放字体设置页，编辑页收起时不会先露出它再返回。
+        Blank()
+      } else if (this.embedded) {
         this.pageContent()
       } else {
         PageScaffold({ title: this.draftMode ? '主题阅读字体' : '阅读字体', scroller: this.pageScroller,
@@ -835,6 +862,10 @@ export struct ReaderFontSettingsEditor {
 
   saveRegexRuleEditor(): void {
     if (!this.regexEditorShown) return;
+    if (this.isNameStyleMode()) {
+      this.saveNameStyle();
+      return;
+    }
     const rule = ReaderRegexFontCodec.cloneRule(this.editingRegexRule);
     const next = this.regexRules.slice();
     const index = this.editingRegexRuleListIndex();
@@ -852,15 +883,16 @@ export struct ReaderFontSettingsEditor {
   /** 返回时有改动（新建的规则总算有改动）就问是否保存。 */
   leaveRegexRuleEditor(): void {
     if (!this.regexEditorShown) return;
-    const changed = this.isEditingNewRegexRule() ||
-      this.encodeRegexRules([this.editingRegexRule]) !== this.editingRegexRuleSnapshot;
+    const changed = this.isNameStyleMode() ? this.nameStyleChanged() : (this.isEditingNewRegexRule() ||
+      this.encodeRegexRules([this.editingRegexRule]) !== this.editingRegexRuleSnapshot);
     if (!changed) {
       this.closeRegexRuleEditor();
       return;
     }
     ThemedDialog.showAlertDialog(this.getUIContext(), {
       title: '是否保存？',
-      message: this.isEditingNewRegexRule() ? '这条新规则还没有保存。' : '这条规则的修改还没有保存。',
+      message: this.isNameStyleMode() ? '人名样式的修改还没有保存。' :
+        (this.isEditingNewRegexRule() ? '这条新规则还没有保存。' : '这条规则的修改还没有保存。'),
       primaryButton: { value: '不保存', action: () => this.closeRegexRuleEditor() },
       secondaryButton: { value: '保存', action: () => this.saveRegexRuleEditor() }
     });
@@ -922,6 +954,8 @@ export struct ReaderFontSettingsEditor {
   closeRegexRuleEditor(): void {
     this.activeRegexInputKey = '';
     this.regexEditorShown = false;
+    // 只为改人名样式打开的这一页：编辑页收起就回到本书人物页。
+    if (this.isNameStyleMode()) router.back();
   }
 
   updateRegexRule(index: number, updater: (rule: ReaderRegexFontRule) => void): void {
@@ -1654,9 +1688,153 @@ export struct ReaderFontSettingsEditor {
     })
   }
 
+  isNameStyleMode(): boolean {
+    return this.nameStyleBook !== '';
+  }
+
+  /** 改某个人的样式、又开着“跟随人名样式”时，编辑页只留开关和预览。 */
+  nameStyleEditable(): boolean {
+    return !(this.isNameStyleMode() && this.nameStyleRoleId !== '' && this.nameStyleFollow);
+  }
+
+  nameStyleTitle(): string {
+    return this.nameStyleRoleId ? `${this.nameStyleRoleName}的人名样式` : '人名样式';
+  }
+
+  /**
+   * 人名样式和正则规则用同一个编辑页：规则从本书人物档案里取（没设过用默认样式），隐藏名称、匹配方式、正则、
+   * 段首缩进和“命中里显示其他规则”，顶上换成“按人物 / 统一颜色”（某个人则是“跟随人名样式”）。保存写回人物档案。
+   */
+  openNameStyleEditor(): void {
+    this.nameStyleOpened = true;
+    let cast: MimoBookCast;
+    try {
+      cast = MimoStore.cast(this.nameStyleBook);
+    } catch (error) {
+      console.warn('读取本书人物失败:', error);
+      router.back();
+      return;
+    }
+    const characters = ReaderNameStyle.characters(cast);
+    const colors = ReaderNameStyle.colors(cast);
+    let rule = ReaderNameStyle.sharedRule(cast, this.readerFontSize);
+    this.nameStyleColorMode = ReaderNameStyle.colorMode(cast);
+    this.nameStyleFollow = false;
+    let names: string[] = characters.slice(0, 4).map((role: MimoRole): string => role.name);
+    if (this.nameStyleRoleId) {
+      const index = characters.findIndex((role: MimoRole): boolean => role.id === this.nameStyleRoleId);
+      if (index < 0) {
+        router.back();
+        return;
+      }
+      const role = characters[index];
+      this.nameStyleRoleName = role.name;
+      const own = ReaderNameStyle.ownRule(role);
+      this.nameStyleFollow = !own;
+      if (own) {
+        rule = own;
+      } else if (this.nameStyleColorMode === ReaderNameStyle.MODE_ROLE && colors[index] >= 0) {
+        // 从人名样式起步时，颜色先取这个人现在的颜色，改起来是在它的基础上改。
+        const pair = ReaderNamePatterns.PALETTE[colors[index]];
+        rule.customTextColor = pair[0];
+        rule.customTextColorDark = pair[1];
+        rule.customHighlightColor = pair[0];
+        rule.customHighlightColorDark = pair[1];
+        rule.customBubbleColor = pair[0];
+        rule.customBubbleColorDark = pair[1];
+      }
+      names = [role.name].concat(role.aliases || []);
+    }
+    rule.pattern = ReaderNamePatterns.pattern(names);
+    rule.matcher = '';
+    this.nameStylePreviewNames = names.filter((name: string): boolean =>
+      (name || '').trim().length >= ReaderNamePatterns.MIN_NAME_LENGTH);
+    this.openRegexRuleEditor(NAME_STYLE_RULE_INDEX, rule);
+    this.nameStyleSnapshotExtra = `${this.nameStyleColorMode}|${this.nameStyleFollow}`;
+  }
+
+  nameStyleChanged(): boolean {
+    return this.encodeRegexRules([this.editingRegexRule]) !== this.editingRegexRuleSnapshot ||
+      `${this.nameStyleColorMode}|${this.nameStyleFollow}` !== this.nameStyleSnapshotExtra;
+  }
+
+  saveNameStyle(): void {
+    try {
+      const cast = MimoStore.cast(this.nameStyleBook);
+      const rule = ReaderRegexFontCodec.cloneRule(this.editingRegexRule);
+      rule.id = 'name_style';
+      rule.name = '人名';
+      rule.pattern = '';
+      rule.matcher = '';
+      if (this.nameStyleRoleId) {
+        const role = cast.roles.find((item: MimoRole): boolean => item.id === this.nameStyleRoleId);
+        if (role) role.nameRule = this.nameStyleFollow ? '' : ReaderNameStyle.encodeOne(rule);
+      } else {
+        cast.nameRule = ReaderNameStyle.encodeOne(rule);
+        cast.nameColorMode = this.nameStyleColorMode;
+      }
+      MimoStore.saveCast(this.nameStyleBook, cast);
+    } catch (error) {
+      console.warn('保存人名样式失败:', error);
+      HdsFeedback.showToast('保存人名样式失败');
+    }
+    this.closeRegexRuleEditor();
+  }
+
+  /** 人名样式编辑页顶上：全书是“按人物 / 统一颜色”，某个人是“跟随人名样式”开关。 */
+  @Builder
+  nameStyleHeader() {
+    if (this.nameStyleRoleId) {
+      Row({ space: AppSpacing.MD }) {
+        Column({ space: 2 }) {
+          Text('跟随人名样式')
+            .fontSize(AppFontSize.BODY_LARGE)
+            .fontColor(this.primaryTextColor())
+          Text(`关掉后单独设置，只影响“${this.nameStylePreviewNames.join('、') || this.nameStyleRoleName}”`)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        AdaptiveSwitch({
+          isOn: this.nameStyleFollow,
+          accessibilityLabel: '跟随人名样式',
+          onChange: (isOn: boolean) => {
+            this.nameStyleFollow = isOn;
+            this.bumpRegexHighlightRefresh();
+          }
+        })
+      }
+      .width('100%')
+      .constraintSize({ minHeight: 56 })
+    } else {
+      Column({ space: AppSpacing.SM }) {
+        Text('颜色')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.subTextColor())
+          .width('100%')
+        SettingSegment({
+          labels: ['按人物', '统一颜色'],
+          selected: this.nameStyleColorMode === ReaderNameStyle.MODE_ONE ? 1 : 0,
+          inset: false,
+          onSelect: (selected: number) => {
+            this.nameStyleColorMode = selected === 1 ? ReaderNameStyle.MODE_ONE : ReaderNameStyle.MODE_ROLE;
+          }
+        })
+        Text(this.nameStyleColorMode === ReaderNameStyle.MODE_ONE ? '所有人名都用下面“自定义”里设的颜色。' :
+          '各人用自己的颜色（在本书人物页点色点更换），下面“自定义”里的颜色不用；“跟随主题”“无强调”时不按人分色。')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .width('100%')
+      }
+      .width('100%')
+    }
+  }
+
   @Builder
   regexRuleEditorCover() {
-    PageScaffold({ title: this.isEditingNewRegexRule() ? '新建规则' : '编辑规则',
+    PageScaffold({ title: this.isNameStyleMode() ? this.nameStyleTitle() :
+      (this.isEditingNewRegexRule() ? '新建规则' : '编辑规则'),
       onBack: () => this.leaveRegexRuleEditor(),
       actions: () => {
         this.regexRuleEditorActions()
@@ -1745,6 +1923,10 @@ export struct ReaderFontSettingsEditor {
   regexRuleEditorContent(refreshKey: number) {
     Column() {
       Column({ space: AppSpacing.MD }) {
+        if (this.isNameStyleMode()) {
+          this.nameStyleHeader()
+        }
+        if (!this.isNameStyleMode()) {
         TextInput({ text: this.editingRegexRule.name, placeholder: '规则名称' })
           .fontSize(AppFontSize.BODY)
           .fontColor(this.primaryTextColor())
@@ -1815,7 +1997,9 @@ export struct ReaderFontSettingsEditor {
               });
             })
         }
+        }
 
+        if (this.nameStyleEditable()) {
         Column({ space: AppSpacing.SM }) {
           Text('作用范围')
             .fontSize(AppFontSize.BODY)
@@ -1840,7 +2024,7 @@ export struct ReaderFontSettingsEditor {
         }
         .width('100%')
 
-        if (ReaderRegexScope.includesBody(this.editingRegexRule.scope)) {
+        if (!this.isNameStyleMode() && ReaderRegexScope.includesBody(this.editingRegexRule.scope)) {
           Column({ space: AppSpacing.SM }) {
             Text('段首缩进（字符）')
               .fontSize(AppFontSize.BODY)
@@ -1864,7 +2048,9 @@ export struct ReaderFontSettingsEditor {
           .width('100%')
         }
 
-        this.regexDialogueSwitch('nest')
+        if (!this.isNameStyleMode()) {
+          this.regexDialogueSwitch('nest')
+        }
 
         this.compactFontModeItem('字体类型', this.editingRegexRule.fontMode, this.editingRegexRule.fontFamily,
           (mode: string, family: string) => {
@@ -1881,6 +2067,7 @@ export struct ReaderFontSettingsEditor {
           } })
 
         this.regexEmphasisSettings(EDITING_REGEX_RULE_INDEX, refreshKey)
+        }
 
         // 编辑页盖住了设置页顶部的实时预览，嵌入时也显示规则预览。
         this.regexRulePreviewItem(EDITING_REGEX_RULE_INDEX, refreshKey)
@@ -1895,7 +2082,7 @@ export struct ReaderFontSettingsEditor {
     .clip(true)
     .backgroundColor(this.cardColor())
 
-    if (!this.isEditingNewRegexRule()) {
+    if (!this.isEditingNewRegexRule() && !this.isNameStyleMode()) {
       Button('删除规则')
         .fontSize(AppFontSize.BODY)
         .fontColor(ThemeRuntime.dangerColor(this.appDarkMode))
@@ -2587,6 +2774,12 @@ export struct ReaderFontSettingsEditor {
    */
   regexPreviewBodies(rule: ReaderRegexFontRule): string[] {
     const bodies: string[] = [];
+    if (this.isNameStyleMode()) {
+      const first = this.nameStylePreviewNames.length > 0 ? this.nameStylePreviewNames[0] : '林舟';
+      const second = this.nameStylePreviewNames.length > 1 ? this.nameStylePreviewNames[1] : first;
+      bodies.push(`${first}站在门边，看着檐下的雨。\n“${second}，进来吧。”${first}笑了笑。`);
+      return bodies;
+    }
     if (ReaderRegexFontCodec.isDialogue(rule)) {
       // 依次露出跨段对话、写反的引号；开了“短引号不算对话”再加一句招式名。
       bodies.push('他说：“你好。”她点头说：「走吧。」\n“那年冬天特别冷，河面冻得能跑马。\n“开春冰就化了。”\n' +

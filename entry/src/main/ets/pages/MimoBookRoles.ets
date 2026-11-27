@@ -1,6 +1,7 @@
 import { router } from '@kit.ArkUI';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingRow, SettingNavRow } from '../components/common/SettingRow';
+import { BookNameStyleSection } from '../components/BookNameStyleSection';
 import { MimoVoicePolicy } from '../core/mimo/MimoVoicePolicy';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -164,6 +165,8 @@ struct MimoBookRolesPage {
           SettingNavRow({ title: '预览重新分配', description: '跳过锁定和手动指定的人物', showDivider: false,
             onTap: () => router.pushUrl({ url: 'pages/MimoVoices', params: { screen: 'changes', book: this.book } }) })
         }.width('100%').backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
+
+        BookNameStyleSection({ book: this.book })
 
         Column() {
           ForEach(this.roles, (role: MimoRole, index: number) => {

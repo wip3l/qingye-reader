@@ -3,6 +3,7 @@ import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow } from '../components/common/SettingRow';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { CastAvatar, CastPill, CastVoicePicker } from '../components/CastVoiceViews';
+import { BookNameStyleSection } from '../components/BookNameStyleSection';
 import { CastScheme, CastVoicePolicy, CastVoiceRef } from '../core/mimo/CastVoicePolicy';
 import { MimoVoicePolicy } from '../core/mimo/MimoVoicePolicy';
 import { MimoRole } from '../core/mimo/MimoPolicy';
@@ -411,6 +412,8 @@ struct CastBookRolesPage {
           SettingNavRow({ title: '音色方案', value: this.schemeName + (this.followsDefault ? '' : ' · 本书单独设置'),
             showDivider: false, onTap: (): void => this.chooseScheme() })
         }.width('100%').backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
+
+        BookNameStyleSection({ book: this.book })
 
         Row({ space: AppSpacing.MD }) {
           Text('人物').fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium)

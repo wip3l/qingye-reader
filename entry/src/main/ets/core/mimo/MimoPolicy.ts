@@ -23,6 +23,10 @@ export class MimoRole {
   /** Offline/custom voice for multi-voice reading: a pool pick kept stable across chapters, or a manual choice. */
   castVoice?: CastVoiceRef;
   castManual?: boolean;
+  /** 正文人名上色：色板下标；没有为自动分配，-1 为不上色（见 ReaderNameStyle）。 */
+  nameColor?: number;
+  /** 这个人单独设的人名样式（一条强调规则的 JSON）；空为跟随本书的人名样式。 */
+  nameRule?: string;
 }
 
 export class MimoUnit {

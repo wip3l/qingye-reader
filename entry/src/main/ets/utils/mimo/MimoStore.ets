@@ -33,6 +33,10 @@ export class MimoBookCast {
   castSchemeId?: string;
   /** When this cast was first saved. Cached role analysis belongs to one cast; clearing the cast starts over. */
   epoch?: number;
+  /** 正文里人名上色（只对这本书）；人名样式是一条强调规则的 JSON，颜色按人物（role）或统一（one）。 */
+  nameStyleOn?: boolean;
+  nameRule?: string;
+  nameColorMode?: string;
 }
 export class MimoCastSummary {
   /** Empty for casts saved before the book was recorded; see linkLegacyCasts. */
