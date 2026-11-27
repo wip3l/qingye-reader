@@ -141,6 +141,24 @@ assert.equal(policy.httpConcurrency('10/1000'), 3);
 assert.equal(policy.httpConcurrency('1/2000'), 1);
 assert.equal(policy.completionsUrl('https://api.example.com/v1/'), 'https://api.example.com/v1/chat/completions');
 assert.equal(policy.completionsUrl('https://api.example.com/v1/chat/completions'), 'https://api.example.com/v1/chat/completions');
+// 列出模型：地址换算、各种回复格式、只会思考的模型。
+assert.equal(policy.modelsUrl('https://api.example.com/v1/'), 'https://api.example.com/v1/models');
+assert.equal(policy.modelsUrl('https://api.example.com/v1/chat/completions'), 'https://api.example.com/v1/models');
+assert.equal(policy.modelsUrl(''), '');
+assert.deepEqual([...policy.parseModelList(JSON.stringify({ object: 'list', data: [{ id: 'b-model' }, { id: 'a-model' }, { id: 'a-model' }] }))],
+  ['a-model', 'b-model'], 'OpenAI data[].id, deduplicated and sorted');
+assert.deepEqual([...policy.parseModelList(JSON.stringify({ models: [{ name: 'models/gemini-2.5-flash' }] }))], ['gemini-2.5-flash']);
+assert.deepEqual([...policy.parseModelList(JSON.stringify(['x', 'y']))], ['x', 'y']);
+assert.deepEqual([...policy.parseModelList('not json')], []);
+assert.deepEqual([...policy.parseModelList(JSON.stringify({ data: [{ id: 'x'.repeat(200) }, { foo: 1 }, null] }))], []);
+for (const name of ['deepseek-reasoner', 'deepseek-r1', 'deepseek-ai/DeepSeek-R1', 'qwen/qwen3-235b-a22b-thinking-2507',
+  'Qwen/QwQ-32B', 'o1', 'o3-mini', 'openai/o4-mini', 'kimi-k2-thinking']) {
+  assert.ok(policy.thinkingOnlyModel(name), name + ' thinks');
+}
+for (const name of ['deepseek-flash', 'deepseek-chat', 'gpt-4o', 'gpt-5', 'qwen/qwen3-30b-a3b', 'gemini-2.5-flash',
+  'doubao-seed-1-6-flash', 'r10-model', 'proto-1']) {
+  assert.ok(!policy.thinkingOnlyModel(name), name + ' is not marked');
+}
 assert.equal(policy.validUrl('ftp://x/y'), false);
 assert.equal(policy.validUrl('https://api.example.com/v1/chat/completions'), true);
 const custom = policy.normalize({ schemes: [], analysis: { provider: 'custom', url: 'https://a.test/v1/chat/completions', model: ' m ', verified: true } });

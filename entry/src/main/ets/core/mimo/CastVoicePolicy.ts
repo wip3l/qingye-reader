@@ -341,6 +341,50 @@ export class CastVoicePolicy {
     return /\/chat\/completions$/i.test(url) ? url : url + '/chat/completions';
   }
 
+  /** 列出模型的地址：OpenAI 兼容接口在同一层的 /models（填了完整 chat/completions 也能换算）。 */
+  static modelsUrl(value: string): string {
+    const url = (value || '').trim().replace(/\/+$/, '').replace(/\/chat\/completions$/i, '');
+    return url ? url + '/models' : '';
+  }
+
+  /**
+   * 从 /models 的回复里取模型名：OpenAI 兼容的 data[].id，以及少数接口的 models[].id / name
+   * （Gemini 原生是 "models/xxx"，去掉前缀）。去重、按名字排序，最多 2000 个。
+   */
+  static parseModelList(body: string): string[] {
+    let parsed: Object;
+    try { parsed = JSON.parse(body) as Object; } catch (_) { return []; }
+    const record = parsed as Record<string, Object>;
+    const list: Object[] = Array.isArray(parsed) ? parsed as Object[] :
+      (Array.isArray(record['data']) ? record['data'] as Object[] :
+        (Array.isArray(record['models']) ? record['models'] as Object[] : []));
+    const names: Set<string> = new Set<string>();
+    for (const item of list) {
+      let name = '';
+      if (typeof item === 'string') {
+        name = item;
+      } else if (item && typeof item === 'object') {
+        const entry = item as Record<string, Object>;
+        name = typeof entry['id'] === 'string' ? entry['id'] as string :
+          (typeof entry['name'] === 'string' ? entry['name'] as string : '');
+      }
+      name = name.trim().replace(/^models\//, '');
+      if (name && name.length <= 120) names.add(name);
+      if (names.size >= 2000) break;
+    }
+    return Array.from(names).sort((a: string, b: string): number => a.localeCompare(b));
+  }
+
+  /**
+   * 名字一看就是“只会思考”的推理模型（关不掉思考，识别人物时容易把输出额度用光）：
+   * reasoner、thinking、R1、QwQ、OpenAI 的 o1/o3/o4 系列。
+   */
+  static thinkingOnlyModel(name: string): boolean {
+    const id = (name || '').toLowerCase();
+    const last = id.split('/').pop() || id;
+    return /reasoner|thinking|qwq/.test(id) || /(^|[-_.:])r1($|[-_.:])/.test(last) || /^o[134]($|-)/.test(last);
+  }
+
   /**
    * Loudness of 16-bit mono speech: RMS over the 20 ms windows that are not silence, so pauses and
    * trailing silence do not make a voice look quieter than it sounds. 0 when there is no speech.

@@ -2,6 +2,7 @@ import http from '@ohos.net.http';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
 import { MimoAnalysis, MimoAssignment, MimoRole, MimoRoleProposal, MimoUnit, MimoPolicy, MimoSseParser } from '../../core/mimo/MimoPolicy';
+import { CastVoicePolicy } from '../../core/mimo/CastVoicePolicy';
 
 class MimoMessage {
   role: string = '';
@@ -73,6 +74,12 @@ class MimoHttpError extends Error {
   }
 }
 
+/** 分析接口提供的模型名；status 是列模型请求的 HTTP 状态码，0 表示没连上或回复看不懂。 */
+export class AnalysisModelList {
+  models: string[] = [];
+  status: number = 0;
+}
+
 /** Another OpenAI-compatible chat endpoint used only for telling who is speaking. */
 export class MimoAnalysisTarget {
   url: string = '';
@@ -101,6 +108,36 @@ export class MimoClient {
   private static readonly STRICT_HOSTS: string[] = ['openai.com', 'googleapis.com', 'openrouter.ai'];
   private generation: number = 0;
   private aborters: (() => void)[] = [];
+
+  /**
+   * 向兼容 OpenAI 的接口要模型列表（GET {地址}/models，不产生用量）。拿不到时不抛错，
+   * 返回空列表和原因：status 是 HTTP 状态码，0 表示没连上或回复看不懂。
+   */
+  async listModels(key: string, baseUrl: string): Promise<AnalysisModelList> {
+    const result = new AnalysisModelList();
+    const url = CastVoicePolicy.modelsUrl(baseUrl);
+    if (!url) return result;
+    const client = http.createHttp();
+    const abort = (): void => client.destroy();
+    this.aborters.push(abort);
+    try {
+      const response = await client.request(url, {
+        method: http.RequestMethod.GET,
+        header: { 'Authorization': 'Bearer ' + key },
+        usingProxy: false, usingCache: false,
+        connectTimeout: 10000, readTimeout: 15000, maxLimit: 8 * 1024 * 1024,
+        expectDataType: http.HttpDataType.STRING
+      });
+      result.status = response.responseCode;
+      if (response.responseCode === 200) result.models = CastVoicePolicy.parseModelList(String(response.result));
+    } catch (_) {
+      result.status = 0;
+    } finally {
+      this.aborters = this.aborters.filter((item: () => void): boolean => item !== abort);
+      client.destroy();
+    }
+    return result;
+  }
 
   stop(): void {
     this.generation++;

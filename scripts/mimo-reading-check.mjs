@@ -62,9 +62,11 @@ for(let size=1;size<=wire.length;size++) {
 const clientSource=fs.readFileSync(new URL('../entry/src/main/ets/utils/mimo/MimoClient.ets',import.meta.url),'utf8')
   .replace(/^import .*;\r?\n/gm,'').replaceAll('export ','');
 let transport;
-const fakeHttp={RequestMethod:{POST:'POST'},HttpDataType:{STRING:1},createHttp:()=>typeof transport==='function'?transport():transport};
+let castPolicyLate=null;
+const fakeHttp={RequestMethod:{POST:'POST',GET:'GET'},HttpDataType:{STRING:1},createHttp:()=>typeof transport==='function'?transport():transport};
 const FakeClient=vm.runInNewContext(stripTypeScriptTypes(clientSource+'\nMimoClient'),{
   http:fakeHttp, MimoPolicy, MimoSseParser, MimoAnalysis:policy.MimoAnalysis, setTimeout, clearTimeout, console,
+  get CastVoicePolicy(){return castPolicyLate;},
   util:{TextDecoder:{create:()=>{const d=new TextDecoder();return {decodeWithStream:(b,o)=>d.decode(b,o)}}},
     Base64Helper:class {decodeSync(s){return new Uint8Array(Buffer.from(s,'base64'));}}},
 });
@@ -367,6 +369,7 @@ let savedCast=null;let proposals=[];let beforeReceive=null;const speechVoices=[]
 const castPolicy=vm.runInNewContext(stripTypeScriptTypes(fs.readFileSync(new URL('../entry/src/main/ets/core/mimo/CastVoicePolicy.ts',import.meta.url),'utf8')
   .replace(/^import .*;\r?\n/gm,'').replace(/^export \{.*;\r?\n/gm,'').replaceAll('export ','')+'\n({CastVoicePolicy})'),
   {CastVoiceRef:policy.CastVoiceRef,MimoRole}).CastVoicePolicy;
+castPolicyLate=castPolicy;
 const castScheme=castPolicy.scheme('s','默认方案');const castUnsupported=new Set();const castSpoken=[];let castPcmWrites=[];
 let truncateNext=0;let truncateThinking=false;let customAnalysis=null;const analysisTargets=[];let decodeFails=false;const localLevels=new Map();
 let localBusy=0;let localOverlap=false;
@@ -783,5 +786,22 @@ assert.equal(focus.join(''),mimoB,'a mismatched preparation is discarded');
   focus.length=0;await session.read(long,{...options,chapter:'think2'});
   assert.equal(events.filter(e=>e.startsWith('analyze:')).length,paused,'no requests while paused');
   truncateThinking=false;settings.multi=false;
+}
+// 添加接口页：向接口要模型列表（GET /models），拿不到时不抛错，只带回状态码。
+{
+  const calls=[];
+  transport=()=>({destroy(){},request:async(url,options)=>{calls.push([url,options.method,options.header.Authorization]);
+    return {responseCode:200,header:{},result:JSON.stringify({data:[{id:'deepseek-v4-pro'},{id:'deepseek-flash'}]})};}});
+  const listed=await client.listModels('sk-x','https://api.deepseek.com/v1/');
+  assert.deepEqual([...listed.models],['deepseek-flash','deepseek-v4-pro']);
+  assert.equal(listed.status,200);
+  assert.deepEqual(calls[0],['https://api.deepseek.com/v1/models','GET','Bearer sk-x']);
+  transport=()=>({destroy(){},request:async()=>({responseCode:401,header:{},result:'{"error":"bad key"}'})});
+  const denied=await client.listModels('bad','https://api.example.test/v1');
+  assert.equal(denied.models.length,0);assert.equal(denied.status,401);
+  transport=()=>({destroy(){},request:async()=>{throw new Error('offline');}});
+  const offline=await client.listModels('k','https://api.example.test/v1');
+  assert.equal(offline.models.length,0);assert.equal(offline.status,0,'network errors come back as status 0');
+  assert.equal((await client.listModels('k','')).models.length,0,'no address, no request');
 }
 console.log('MiMo session checks passed: source focus, cached replay, failed segment retention, short-unit merging, synthesis and analysis prefetch, stale chapter cancellation, next chapter preparation, continuous chapter handoff, narrator fallback on truncation, pause after repeated thinking cuts.');
