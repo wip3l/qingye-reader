@@ -1904,42 +1904,43 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     CloudSyncChangeTracker.markDataChanged();
   }
 
-  private resultSetToBook(resultSet: relationalStore.ResultSet): Book {
+  private resultSetToBook(resultSet: relationalStore.ResultSet,
+    columns: Map<string, number> = this.columnIndexMap(resultSet)): Book {
     const book = new Book();
-    book.bookUrl = this.getStringColumn(resultSet, 'bookUrl');
-    book.tocUrl = this.getStringColumn(resultSet, 'tocUrl');
-    book.origin = this.getStringColumn(resultSet, 'origin', 'local');
-    book.originName = this.getStringColumn(resultSet, 'originName');
-    book.name = this.getStringColumn(resultSet, 'name');
-    book.author = this.getStringColumn(resultSet, 'author');
-    book.kind = this.getStringColumn(resultSet, 'kind');
-    book.status = this.getStringColumn(resultSet, 'status');
-    book.customTag = this.getStringColumn(resultSet, 'customTag');
-    book.coverUrl = this.getStringColumn(resultSet, 'coverUrl');
-    book.customCoverUrl = this.getStringColumn(resultSet, 'customCoverUrl');
-    book.intro = this.getStringColumn(resultSet, 'intro');
-    book.customIntro = this.getStringColumn(resultSet, 'customIntro');
-    book.charset = this.getStringColumn(resultSet, 'charset');
-    book.type = this.getLongColumn(resultSet, 'type');
-    book.group = this.getLongColumn(resultSet, 'groupId');
-    book.isPinned = this.getLongColumn(resultSet, 'isPinned') === 1;
-    book.latestChapterTitle = this.getStringColumn(resultSet, 'latestChapterTitle');
-    book.updateTime = this.getStringColumn(resultSet, 'updateTime');
-    book.latestChapterTime = this.getLongColumn(resultSet, 'latestChapterTime');
-    book.confirmedChapterUpdateTime = this.getLongColumn(resultSet, 'confirmedChapterUpdateTime');
-    book.lastCheckTime = this.getLongColumn(resultSet, 'lastCheckTime');
-    book.lastCheckCount = this.getLongColumn(resultSet, 'lastCheckCount');
-    book.totalChapterNum = this.getLongColumn(resultSet, 'totalChapterNum');
-    book.durChapterTitle = this.getStringColumn(resultSet, 'durChapterTitle');
-    book.durChapterIndex = this.getLongColumn(resultSet, 'durChapterIndex');
-    book.durChapterPos = this.getLongColumn(resultSet, 'durChapterPos');
-    book.durChapterTime = this.getLongColumn(resultSet, 'durChapterTime');
-    book.wordCount = this.getStringColumn(resultSet, 'wordCount');
-    book.canUpdate = this.getLongColumn(resultSet, 'canUpdate', 1) === 1;
-    book.order = this.getLongColumn(resultSet, 'bookOrder');
-    book.originOrder = this.getLongColumn(resultSet, 'originOrder');
-    book.variable = this.getStringColumn(resultSet, 'variable');
-    const readConfigStr = this.getStringColumn(resultSet, 'readConfig');
+    book.bookUrl = this.readStringColumn(resultSet, columns, 'bookUrl');
+    book.tocUrl = this.readStringColumn(resultSet, columns, 'tocUrl');
+    book.origin = this.readStringColumn(resultSet, columns, 'origin', 'local');
+    book.originName = this.readStringColumn(resultSet, columns, 'originName');
+    book.name = this.readStringColumn(resultSet, columns, 'name');
+    book.author = this.readStringColumn(resultSet, columns, 'author');
+    book.kind = this.readStringColumn(resultSet, columns, 'kind');
+    book.status = this.readStringColumn(resultSet, columns, 'status');
+    book.customTag = this.readStringColumn(resultSet, columns, 'customTag');
+    book.coverUrl = this.readStringColumn(resultSet, columns, 'coverUrl');
+    book.customCoverUrl = this.readStringColumn(resultSet, columns, 'customCoverUrl');
+    book.intro = this.readStringColumn(resultSet, columns, 'intro');
+    book.customIntro = this.readStringColumn(resultSet, columns, 'customIntro');
+    book.charset = this.readStringColumn(resultSet, columns, 'charset');
+    book.type = this.readLongColumn(resultSet, columns, 'type');
+    book.group = this.readLongColumn(resultSet, columns, 'groupId');
+    book.isPinned = this.readLongColumn(resultSet, columns, 'isPinned') === 1;
+    book.latestChapterTitle = this.readStringColumn(resultSet, columns, 'latestChapterTitle');
+    book.updateTime = this.readStringColumn(resultSet, columns, 'updateTime');
+    book.latestChapterTime = this.readLongColumn(resultSet, columns, 'latestChapterTime');
+    book.confirmedChapterUpdateTime = this.readLongColumn(resultSet, columns, 'confirmedChapterUpdateTime');
+    book.lastCheckTime = this.readLongColumn(resultSet, columns, 'lastCheckTime');
+    book.lastCheckCount = this.readLongColumn(resultSet, columns, 'lastCheckCount');
+    book.totalChapterNum = this.readLongColumn(resultSet, columns, 'totalChapterNum');
+    book.durChapterTitle = this.readStringColumn(resultSet, columns, 'durChapterTitle');
+    book.durChapterIndex = this.readLongColumn(resultSet, columns, 'durChapterIndex');
+    book.durChapterPos = this.readLongColumn(resultSet, columns, 'durChapterPos');
+    book.durChapterTime = this.readLongColumn(resultSet, columns, 'durChapterTime');
+    book.wordCount = this.readStringColumn(resultSet, columns, 'wordCount');
+    book.canUpdate = this.readLongColumn(resultSet, columns, 'canUpdate', 1) === 1;
+    book.order = this.readLongColumn(resultSet, columns, 'bookOrder');
+    book.originOrder = this.readLongColumn(resultSet, columns, 'originOrder');
+    book.variable = this.readStringColumn(resultSet, columns, 'variable');
+    const readConfigStr = this.readStringColumn(resultSet, columns, 'readConfig');
     if (readConfigStr) {
       try {
         book.readConfig = JSON.parse(readConfigStr);
@@ -1947,12 +1948,34 @@ export class AppDatabase implements BookSourceRuntimePersistence {
         book.readConfig = null;
       }
     }
-    book.syncTime = this.getLongColumn(resultSet, 'syncTime');
-    book.identityKey = this.getStringColumn(resultSet, 'identityKey') || BookIdentity.keyOfBook(book);
-    book.pendingAddToShelf = this.getLongColumn(resultSet, 'pendingAddToShelf') === 1;
-    book.isPrivate = this.getLongColumn(resultSet, 'isPrivate') === 1;
-    book.shelfModifiedTime = this.getLongColumn(resultSet, 'shelfModifiedTime');
+    book.syncTime = this.readLongColumn(resultSet, columns, 'syncTime');
+    book.identityKey = this.readStringColumn(resultSet, columns, 'identityKey') || BookIdentity.keyOfBook(book);
+    book.pendingAddToShelf = this.readLongColumn(resultSet, columns, 'pendingAddToShelf') === 1;
+    book.isPrivate = this.readLongColumn(resultSet, columns, 'isPrivate') === 1;
+    book.shelfModifiedTime = this.readLongColumn(resultSet, columns, 'shelfModifiedTime');
     return book;
+  }
+
+  /** 列名到列号；整表读书时每个结果集只查一次，免得每行每列都跨一次原生接口按名字找。 */
+  private columnIndexMap(resultSet: relationalStore.ResultSet): Map<string, number> {
+    const columns = new Map<string, number>();
+    const names = resultSet.columnNames || [];
+    for (let i = 0; i < names.length; i++) columns.set(names[i], i);
+    return columns;
+  }
+
+  private readStringColumn(resultSet: relationalStore.ResultSet, columns: Map<string, number>, column: string,
+    fallback: string = ''): string {
+    const index = columns.get(column);
+    if (index === undefined) return fallback;
+    return resultSet.getString(index) || fallback;
+  }
+
+  private readLongColumn(resultSet: relationalStore.ResultSet, columns: Map<string, number>, column: string,
+    fallback: number = 0): number {
+    const index = columns.get(column);
+    if (index === undefined) return fallback;
+    return resultSet.getLong(index);
   }
 
   private getStringColumn(resultSet: relationalStore.ResultSet, column: string, fallback: string = ''): string {

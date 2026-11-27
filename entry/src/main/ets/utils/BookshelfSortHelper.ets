@@ -6,8 +6,11 @@ export class BookshelfSortHelper {
    * 关书时封面才缩得回点开的那一格；回到书架后由书架放开，再把它挪到新位置。进程内单例。
    */
   private static heldReadTimes: Map<string, number> = new Map<string, number>();
+  /** 按住的阅读时间每变一次加一；按阅读时间排好的结果拿它判断还能不能接着用。 */
+  static heldRevision: number = 0;
 
   static holdReadTime(book: Book): void {
+    BookshelfSortHelper.heldRevision++;
     BookshelfSortHelper.heldReadTimes.clear();
     if (!book.bookUrl) return;
     BookshelfSortHelper.heldReadTimes.set(book.bookUrl, BookshelfSortHelper.getBookReadTime(book));
@@ -18,6 +21,7 @@ export class BookshelfSortHelper {
   }
 
   static releaseReadTimes(): void {
+    if (BookshelfSortHelper.heldReadTimes.size > 0) BookshelfSortHelper.heldRevision++;
     BookshelfSortHelper.heldReadTimes.clear();
   }
 

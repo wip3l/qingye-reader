@@ -107,6 +107,12 @@ const SHELF_AUDIO_DOWNLOAD_CONCURRENCY: number = 2;
  */
 const SHELF_REFRESH_CONCURRENCY: number = 6;
 const SHELF_REFRESH_PER_SOURCE: number = 2;
+/** 启动后的静默检查跳过这么久之内检查过的书；手动下拉仍全部检查。 */
+const SHELF_SILENT_REFRESH_RECHECK_MS: number = 6 * 60 * 60 * 1000;
+/** 首帧书架出来后至少等这么久才开始静默检查。 */
+const SHELF_SILENT_REFRESH_START_DELAY_MS: number = 3000;
+/** 手指离开、滚动停下满这么久才算书架静止；静默检查只在静止时派新书。 */
+const SHELF_SILENT_REFRESH_IDLE_MS: number = 1500;
 /**
  * 单本检查更新的时长上限。网络请求有自己的超时，但网页解析、书源脚本卡住时不会结束，那一路会一直占着、进度停住；
  * 超时就算这本失败，这一路丢掉旧引擎（它可能还卡在这本书上）换个新的接着查。
@@ -128,6 +134,7 @@ const SHELF_SWITCH_SECTION_DONE: number = 4;
 const SHELF_SWITCH_SECTION_MISSING: number = 5;
 const SHELF_COVER_INITIAL_PREFETCH_COUNT: number = 16;
 const SHELF_COVER_UPDATE_BATCH_MS: number = 48;
+const LATEST_READ_TILE_CACHE_SIZE: number = 6;
 const SHELF_UPDATE_BADGE_VARIABLE: string = 'shelfHasUpdate';
 const SHELF_SEARCH_INPUT_KEY: string = 'bookshelf_search_input';
 /**
@@ -155,6 +162,21 @@ const PRIVATE_SHELF_EXIT_DURATION: number = 340;
 const PRIVATE_SHELF_PREMOUNT_DELAY: number = 16;
 
 /** 关书挪位时单独飞的平面封面：按 width/height 排版，只用缩放平移从 from 走到 to，由 tileGroupFlyProgress 驱动。 */
+/** 某份书架数组挑出的最近阅读书（平铺置顶卡），见 getLatestReadTileBooks。 */
+class LatestReadTileCacheEntry {
+  books: Book[];
+  count: number;
+  held: number;
+  result: Book[];
+
+  constructor(books: Book[], count: number, held: number, result: Book[]) {
+    this.books = books;
+    this.count = count;
+    this.held = held;
+    this.result = result;
+  }
+}
+
 class TileGroupFlyer {
   key: string = '';
   cover: ResourceStr = '';
@@ -362,11 +384,8 @@ export struct BookshelfPage {
   @StorageLink('cloudDownloadStatus') cloudDownloadStatus: string = '';
   private cloudBookOpenRequest: number = 0;
   @State allBooks: Book[] = [];
-  private shelfListBooksSource: ShelfBookDataSource = new ShelfBookDataSource();
-  private shelfTileBooksSource: ShelfBookDataSource = new ShelfBookDataSource();
-  private shelfTileEntriesSource: ShelfTileEntryDataSource = new ShelfTileEntryDataSource();
-  private shelfTileEntriesCacheKey: string = '';
-  private shelfTileEntriesCache: ShelfTileSortEntry[] = [];
+  private latestReadTileCache: LatestReadTileCacheEntry[] = [];
+  private normalizedBookNames: Map<string, string> = new Map<string, string>();
   @State shelfCategoryRevision: number = 0;
   @State privateShelfRevealed: boolean = false;
   private shelfCategoryPages: Map<string, ShelfCategoryPage> = new Map();
@@ -392,6 +411,8 @@ export struct BookshelfPage {
   /** 横滑到隐私书架时手指还在屏幕上，这时拉起系统认证框会被立即取消，等抬手再拉起。 */
   private privateShelfBiometricQueued: boolean = false;
   private shelfContentTouching: boolean = false;
+  /** 最近一次触摸或滚动书架的时间，静默检查据此等书架静止。 */
+  private shelfLastInteractionAt: number = 0;
   @State privateShelfPasswordInput: string = '';
   @State privateShelfPasswordError: string = '';
   private privateShelfUnlockDialogSession: SystemDialogSession = new SystemDialogSession();
@@ -660,6 +681,11 @@ export struct BookshelfPage {
   @State shelfCoverMap: Map<string, string> = new Map();
   @State shelfCoverRenderVersions: Map<string, number> = new Map();
   private shelfCoverRawUrls: Map<string, string> = new Map();
+  /**
+   * 网络封面在磁盘上的缓存文件（没有时为 ''），构建卡片时同步查一次就记住。冷启动时 shelfCoverMap 是空的，
+   * 不先查磁盘的话每张卡先按网络地址加载，异步查到缓存后再换成本地文件重新解码，且每批换图都让整屏封面重算。
+   */
+  private shelfCoverDiskHits: Map<string, string> = new Map();
   private shelfCoverCacheRevision: number = 0;
   private shelfCoverBookTasks: Set<string> = new Set();
   private pendingShelfCoverUpdates: Map<string, string> = new Map();
@@ -1074,6 +1100,7 @@ export struct BookshelfPage {
   onShelfCoverSettingsChanged(): void {
     this.shelfCoverMap = new Map();
     this.shelfCoverRawUrls.clear();
+    this.shelfCoverDiskHits.clear();
     this.refreshShelfCoverCache(this.books);
   }
 
@@ -1218,13 +1245,12 @@ export struct BookshelfPage {
     if (!snapshot.fresh || !settled) this.scheduleLoadBooks();
   }
 
-  reloadShelfDataSources(force: boolean = false, invalidatePages: boolean = true): void {
+  /**
+   * 让分类页按新数据重建：各页的列表、平铺数据源在 shelfCategoryPage 里按签名重算，这里只作废签名。
+   * force 是旧时书架另有一套整架数据源时用的，现在作废签名本来就会整份替换。
+   */
+  reloadShelfDataSources(_force: boolean = false, invalidatePages: boolean = true): void {
     if (invalidatePages) this.shelfCategoryRevision++;
-    this.shelfTileEntriesCacheKey = '';
-    this.shelfTileEntriesCache = [];
-    this.shelfListBooksSource.replace(this.books, force);
-    this.shelfTileBooksSource.replace(this.getTileBooksWithoutLatest(this.books), force);
-    this.shelfTileEntriesSource.replace(this.getSortedTileRootEntries(this.books), force);
   }
 
   shelfBookMotionDelay(): number {
@@ -1256,7 +1282,13 @@ export struct BookshelfPage {
     // Run once per process after the first local shelf snapshot is visible. The refresh deliberately
     // has no spinner or toast so cold startup remains responsive.
     // 书架设置“自动获取更新”关闭时跳过（只在网页解析开启时显示，关闭网页解析时在线书本就不在书架上）。
+    // 目录解析在主线程上，开头几秒和手指在书架上时都不开始，免得和首屏、滑动抢帧。
     setTimeout(async () => {
+      await this.waitForShelfIdle();
+      if (!this.shelfComponentActive) {
+        bookshelfColdStartRefreshStarted = false;
+        return;
+      }
       try {
         const settings = await BookshelfDisplaySettingsStore.load(getContext(this));
         if (!settings.autoRefresh) {
@@ -1272,7 +1304,17 @@ export struct BookshelfPage {
       }).catch((e: Error) => {
         console.error('[ShelfRefresh] cold-start silent refresh failed:', e);
       });
-    }, 600);
+    }, SHELF_SILENT_REFRESH_START_DELAY_MS);
+  }
+
+  /** 书架静止（没在触摸、滚动停下满 SHELF_SILENT_REFRESH_IDLE_MS）时返回；书架页卸载时也立即返回。 */
+  async waitForShelfIdle(): Promise<void> {
+    while (this.shelfComponentActive) {
+      const quietFor = Date.now() - this.shelfLastInteractionAt;
+      if (!this.shelfContentTouching && quietFor >= SHELF_SILENT_REFRESH_IDLE_MS) return;
+      const wait = this.shelfContentTouching ? 300 : Math.max(100, SHELF_SILENT_REFRESH_IDLE_MS - quietFor);
+      await new Promise<void>((resolve: () => void) => setTimeout(resolve, wait));
+    }
   }
 
   async deleteBook(book: Book) {
@@ -2148,6 +2190,7 @@ export struct BookshelfPage {
     this.bumpShelfBookCoverRenderVersion(current.bookUrl);
     this.shelfCoverMap = new Map();
     this.shelfCoverRawUrls.clear();
+    this.shelfCoverDiskHits.clear();
     this.refreshShelfCoverCache(this.books);
   }
 
@@ -2307,6 +2350,7 @@ export struct BookshelfPage {
       nextMap.delete(key);
       this.shelfCoverRawUrls.delete(key);
     }
+    for (const cover of covers) this.shelfCoverDiskHits.delete(cover);
     this.shelfCoverMap = nextMap;
   }
 
@@ -2376,12 +2420,15 @@ export struct BookshelfPage {
       }
       const key = this.shelfCoverKey(book, i);
       if (this.shelfCoverMap.get(key) && this.shelfCoverRawUrls.get(key) === raw) continue;
+      // 构建时已按磁盘缓存显示，再写进 shelfCoverMap 只会让整屏封面白算一遍。
+      if (this.shelfCoverDiskHit(raw)) continue;
       try {
         const local = await BookCoverCache.resolveCachedCoverAsync(context, raw) ||
           await BookCoverCache.resolveCover(context, raw);
         if (revision !== this.shelfCoverCacheRevision) return new Map();
         if (local && local !== raw) {
           this.shelfCoverRawUrls.set(key, raw);
+          this.shelfCoverDiskHits.set(raw, local);
           updates.set(key, local);
         }
       } catch (e) {
@@ -2754,6 +2801,7 @@ export struct BookshelfPage {
   }
 
   onShelfBodyTouch(event: TouchEvent): void {
+    this.shelfLastInteractionAt = Date.now();
     if (event.type === TouchType.Down) {
       this.shelfContentTouching = true;
       this.prewarmShelfOpeningBackdrop();
@@ -5629,6 +5677,7 @@ export struct BookshelfPage {
   }
 
   onShelfListScroll(delta: number, offset: number): void {
+    this.shelfLastInteractionAt = Date.now();
     const reveal = CollapsingHeader.backdropReveal(offset);
     if (reveal !== this.shelfHeaderBackdropReveal) this.shelfHeaderBackdropReveal = reveal;
     if (this.shelfCategoryAnimating) return;
@@ -6176,7 +6225,16 @@ export struct BookshelfPage {
   getLatestReadTileBooks(books: Book[] = this.books): Book[] {
     const count = this.isLatestTileCardLarge() ?
       BookshelfDisplaySettingsStore.normalizeLastReadPinCount(this.bookshelfLastReadPinCount) : 1;
-    return BookshelfSortHelper.getPinnedRecentReadBooks(books, count);
+    // 平铺的每个格子构建时都要问一次（行距、补位），书多时每次整架排序会随格子数成倍放大。
+    // 书架数组都是整份换新、不原地改，按数组本身、条数和按住的阅读时间认缓存。
+    const held = BookshelfSortHelper.heldRevision;
+    const hit = this.latestReadTileCache.find((entry: LatestReadTileCacheEntry): boolean =>
+      entry.books === books && entry.count === count && entry.held === held);
+    if (hit) return hit.result;
+    const entry = new LatestReadTileCacheEntry(books, count, held,
+      BookshelfSortHelper.getPinnedRecentReadBooks(books, count));
+    this.latestReadTileCache = [entry, ...this.latestReadTileCache.slice(0, LATEST_READ_TILE_CACHE_SIZE - 1)];
+    return entry.result;
   }
 
   shouldShowLatestExpandedTileBook(pageKey: string = ''): boolean {
@@ -6221,19 +6279,22 @@ export struct BookshelfPage {
     // Reading-page return updates allBooks/books in separate reactive assignments; consulting allBooks here used
     // to let the new expanded card coexist with the old ordinary entry for one retained data-source generation.
     const latestBooks = this.getLatestReadTileBooks(books);
-    const latestBookUrls = latestBooks.map((book: Book): string => book.bookUrl).join('|');
-    const cacheKey = `${mode}_${viewKey}_${this.shelfBaseGroupId()}_${this.isBookMultiSelect ? '1' : '0'}_` +
-      `${this.shouldShowLatestExpandedTileBook() ? latestBookUrls : ''}_` +
-      `${books.map((book: Book) => `${book.bookUrl}:${book.name}:${book.author}:${this.getBookReadTime(book)}:${this.getBookAddTime(book)}:` +
-        `${this.shelfUpdateSortTime(book)}:${book.group}:${book.isPinned ? '1' : '0'}`).join('|')}_` +
-      `${this.shelfGroups.map((group: BookGroup) => `${group.groupId}:${group.groupName}:${group.pinned ? '1' : '0'}`).join('|')}`;
-    if (cacheKey === this.shelfTileEntriesCacheKey) {
-      return this.shelfTileEntriesCache;
-    }
+    // 只在分类页签名变化时由 shelfCategoryPage 调用一次，不另做缓存（缓存键要把整架书拼成串，和重算差不多贵）。
+    const groupIds = new Set<number>(this.shelfGroups.map((group: BookGroup): number => group.groupId));
+    const groupBooksById = new Map<number, Book[]>();
+    const rootBooks: Book[] = [];
+    books.forEach((book: Book): void => {
+      const grouped = book.group > 0 && groupIds.has(book.group);
+      if (grouped) {
+        const list = groupBooksById.get(book.group);
+        if (list) list.push(book);
+        else groupBooksById.set(book.group, [book]);
+      }
+      if (book.isPinned || !grouped) rootBooks.push(book);
+    });
     const entries: ShelfTileSortEntry[] = [];
     // 置顶书籍在“全部”平铺页作为根级快捷项展示；它仍保留原分组归属，进入分组后也可找到。
-    const ungroupedBooks = this.getTileBooksWithoutLatest(books.filter((book: Book) => book.isPinned ||
-      book.group <= 0 || !this.shelfGroups.some((group: BookGroup) => group.groupId === book.group)), latestBooks);
+    const ungroupedBooks = this.getTileBooksWithoutLatest(rootBooks, latestBooks);
     ungroupedBooks.forEach((book: Book, index: number) => {
       const entry = new ShelfTileSortEntry();
       entry.kind = 'book';
@@ -6250,7 +6311,7 @@ export struct BookshelfPage {
 
     const bookOffset = ungroupedBooks.length;
     this.getTileFolderGroups(books).forEach((group: BookGroup, index: number) => {
-      const groupBooks = books.filter((book: Book) => book.group === group.groupId);
+      const groupBooks = groupBooksById.get(group.groupId) || [];
       const entry = new ShelfTileSortEntry();
       entry.kind = 'group';
       entry.key = `group_${viewKey}_${group.groupId}`;
@@ -6267,8 +6328,6 @@ export struct BookshelfPage {
     });
 
     entries.sort((a: ShelfTileSortEntry, b: ShelfTileSortEntry) => this.compareTileRootEntry(a, b, mode));
-    this.shelfTileEntriesCacheKey = cacheKey;
-    this.shelfTileEntriesCache = entries;
     return entries;
   }
 
@@ -6541,6 +6600,7 @@ export struct BookshelfPage {
           // 分组页的标题栏不收起，只让毛玻璃按滚动显现。
           const reveal = CollapsingHeader.backdropReveal(page.tileOffset);
           if (reveal !== this.tileGroupBackdropReveal) this.tileGroupBackdropReveal = reveal;
+          this.shelfLastInteractionAt = Date.now();
           this.onTileGroupBarScroll(delta, page.tileOffset);
         } else {
           this.onShelfListScroll(delta, page.tileOffset);
@@ -9134,9 +9194,26 @@ export struct BookshelfPage {
       const raw = covers[i];
       const key = this.shelfCoverKey(book, i);
       const cached = this.shelfCoverRawUrls.get(key) === raw ? (this.shelfCoverMap.get(key) || '') : '';
-      displayCovers.push(cached || raw);
+      displayCovers.push(cached || this.shelfCoverDiskHit(raw) || raw);
     }
     return displayCovers;
+  }
+
+  /** 网络封面已缓存到磁盘时的本地地址；只查一次磁盘（不下载），查不到记为 ''，下载完由 shelfCoverMap 换上。 */
+  shelfCoverDiskHit(raw: string): string {
+    if (!raw || (!raw.startsWith('http://') && !raw.startsWith('https://'))) return '';
+    const known = this.shelfCoverDiskHits.get(raw);
+    if (known !== undefined) return known;
+    let local = '';
+    try {
+      local = BookCoverCache.resolveCachedCover(getContext(this), raw);
+    } catch (_error) {
+      local = '';
+    }
+    if (local === raw) local = '';
+    if (this.shelfCoverDiskHits.size >= 4096) this.shelfCoverDiskHits.clear();
+    this.shelfCoverDiskHits.set(raw, local);
+    return local;
   }
 
   shelfCoverKey(book: Book, index: number): string {
@@ -11321,8 +11398,11 @@ export struct BookshelfPage {
     }
     const shelfBooks = silent ? [...this.allBooks] : [...this.books];
     let skippedFinished = 0;
+    const checkedSince = Date.now() - SHELF_SILENT_REFRESH_RECHECK_MS;
     const targets = shelfBooks.filter((book: Book) => {
       if (!book.bookUrl || LocalBookService.isLocalBook(book) || !book.canUpdate) return false;
+      // 静默检查不重查不久前查过的书：书多时频繁开关软件，每次都整架重查会让启动后一直卡。
+      if (silent && book.lastCheckTime > checkedSince) return false;
       if (this.isFinishedBook(book)) {
         skippedFinished++;
         return false;
@@ -11377,6 +11457,9 @@ export struct BookshelfPage {
         let engine = ReadBookEngine.createShelfRefreshWorker();
         engine.chapterUpdateBatchTime = refreshStartedAt;
         while (pending.length > 0) {
+          // 静默检查时手指在书架上就先不派新书，已在查的照常跑完。
+          if (silent) await this.waitForShelfIdle();
+          if (pending.length === 0) break;
           const shelfBook = takeNext();
           if (!shelfBook) {
             // 剩下的书所属书源都已满额，等任意一本刷完再挑。
@@ -13415,15 +13498,8 @@ export struct BookshelfPage {
     this.sortMode = mode;
     const source = this.booksForShelfScope(this.shelfScope);
     const sorted = this.sortBooks(source, mode);
+    // 分类页的数据源由 shelfCategoryPage 按新签名（含排序方式）重建。
     this.books = sorted;
-    // Both layouts read from their own LazyForEach source, and the tile grid additionally caches
-    // its root entries. Invalidate the cache before rebuilding so the tile layout cannot render a
-    // stale entry order produced by the previous sort mode.
-    this.shelfTileEntriesCacheKey = '';
-    this.shelfTileEntriesCache = [];
-    this.shelfListBooksSource.replace(sorted, true);
-    this.shelfTileBooksSource.replace(this.getTileBooksWithoutLatest(sorted), true);
-    this.shelfTileEntriesSource.replace(this.getSortedTileRootEntries(sorted, mode), true);
   }
 
   private persistShelfSortMode(mode: string): void {
@@ -13468,10 +13544,16 @@ export struct BookshelfPage {
     if (!name) {
       return '';
     }
-    return name
+    // 按书名排序时每次比较都要整理两边的书名，书多时同一个名字会被整理几十次。
+    const cached = this.normalizedBookNames.get(name);
+    if (cached !== undefined) return cached;
+    const normalized = name
       .trim()
       .replace(/^[《〈「『“"'(\[【\s]+/g, '')
       .replace(/[》〉」』”"')\]】\s]+$/g, '');
+    if (this.normalizedBookNames.size >= 4096) this.normalizedBookNames.clear();
+    this.normalizedBookNames.set(name, normalized);
+    return normalized;
   }
 
   shelfTileBookDisplayName(book: Book): string {
