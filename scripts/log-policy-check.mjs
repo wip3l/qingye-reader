@@ -11,7 +11,8 @@ const files = scan.flatMap((p) => {
   });
   return walk(p);
 });
-const SENSITIVE_NAME = '(cookie|token|password|passwd|secret|authorization)';
+// token 后面跟 s 的是用量计数（如 completion_tokens），不是凭据。
+const SENSITIVE_NAME = '(cookie|token(?!s)|password|passwd|secret|authorization)';
 const SENSITIVE_VALUE = new RegExp(
   `\\$\\{[^}]*${SENSITIVE_NAME}[^}]*\\}|,\\s*[\\w.]*${SENSITIVE_NAME}\\w*\\s*[,)]`, 'i');
 const violations = [];
