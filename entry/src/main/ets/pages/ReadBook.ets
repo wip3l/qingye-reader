@@ -603,7 +603,11 @@ struct ReadBookPage {
   @State pageViewWidth: number = 0;
   @State pageViewHeight: number = 0;
   @State readerBottomInfoBarMeasuredHeight: number = 0;
-  @State readerInitialPageReady: boolean = false;
+  @State @Watch('onReaderInitialPageReadyChanged') readerInitialPageReady: boolean = false;
+  /** 恢复阅读位置期间点的翻页（1 下一页、-1 上一页，0 没有）：落到存档页后补上。tap 走点击翻页（经过阅读尺）。 */
+  private readerRestorePendingTurn: number = 0;
+  private readerRestorePendingTurnByTap: boolean = false;
+  private readerRestorePendingTurnTimer: number = -1;
   @State readerInitialOpening: boolean = true;
   @State readerWebFetchRuntimeNeeded: boolean = false;
   /**
@@ -4529,6 +4533,11 @@ struct ReadBookPage {
         this.readerComicPaginationPanel()
       } else if (this.shouldShowReaderLoadingOverlay()) {
         this.readerLoadingPanel()
+      }
+
+      // 恢复阅读位置期间正式点击层不在，这一层在加载遮罩之上接住点按与滑动，免得整段时间点了没反应。
+      if (!this.showMenu && !this.showToc && !this.showSettings && this.isReaderRestoringSavedPosition()) {
+        this.readerRestoreInputLayer()
       }
 
       if (this.bookmarkPullActive) {
@@ -13934,6 +13943,106 @@ struct ReadBookPage {
           )
         )
     }
+  }
+
+  /**
+   * 开书（或重排后）正在逐页排到存档位置：首页已排出，屏幕上多半还盖着上次关书时这一页的图，看起来已经能读，
+   * 但正式点击层要等落到存档页才挂上。长章节读到章末时要排上百页，可能好几秒。
+   */
+  isReaderRestoringSavedPosition(): boolean {
+    return !this.readerInitialPageReady && !this.isLoading && this.contentPages.length > 0 &&
+      (this.pendingRestorePageIndex >= 0 || this.readerTypographyRestoreOffset >= 0) &&
+      !this.quickJumpBusy && !this.readerComicChapterSwitching && this.readerContinuousCommitChapter < 0 &&
+      !this.readerComicPaginationParsing && !this.isReaderContinuousScrollSurfaceActive() &&
+      !this.isReaderComicModeActive();
+  }
+
+  /** 恢复阅读位置期间的点击层：呼出菜单立即生效，翻页（点按或滑动）记下最后一下，落到存档页后补上。 */
+  @Builder
+  readerRestoreInputLayer() {
+    Column()
+      .width('100%')
+      .height('100%')
+      .backgroundColor(Color.Transparent)
+      .onClick((event: ClickEvent) => {
+        this.handleReaderRestoreTap(event.x, event.y);
+      })
+      .gesture(
+        PanGesture({ direction: PanDirection.All, distance: this.readerTapSlop })
+          .onActionEnd((event: GestureEvent) => {
+            this.handleReaderRestoreSwipe(event);
+          })
+      )
+  }
+
+  /** 与正式点击层相同的分区：自定义九宫格、默认上/左上一页、下/右下一页、中间菜单；只点不翻的模式整屏呼出菜单。 */
+  readerRestoreTapAction(x: number, y: number): number {
+    const mode = this.readerEffectivePageTurnMode();
+    const width = Math.max(1, this.pageViewWidth || this.getPageTurnWidth());
+    const height = Math.max(1, this.pageViewHeight || this.getPageTurnHeight());
+    if (mode === 2) return this.readerTapZoneActionAt(this.getTapZoneIndex(x, y, width, height));
+    if (mode === 1) return 1;
+    if (mode !== 0) return 0;
+    if (y < height * 0.3) return 3;
+    if (y > height * 0.7) return 2;
+    if (x < width / 3) return 3;
+    if (x > width * 2 / 3) return 2;
+    return 1;
+  }
+
+  handleReaderRestoreTap(x: number, y: number): void {
+    if (!this.isReaderRestoringSavedPosition()) return;
+    const action = this.readerRestoreTapAction(x, y);
+    if (action === 1) {
+      this.clearReaderRestorePendingTurn();
+      this.updateReaderMenuAnchorByPoint(x);
+      this.showMenu = true;
+    } else if (action === 2 || action === 3) {
+      this.readerRestorePendingTurn = action === 2 ? 1 : -1;
+      this.readerRestorePendingTurnByTap = true;
+    }
+  }
+
+  handleReaderRestoreSwipe(event: GestureEvent): void {
+    if (!this.isReaderRestoringSavedPosition()) return;
+    const axisVelocity = this.isVerticalPageTurnAnimation() ? event.velocityY : event.velocityX;
+    const velocity = Number.isFinite(axisVelocity) ? Math.abs(axisVelocity) : 0;
+    if (!this.isReaderPageTurnCommitGesture(event.offsetX, event.offsetY, velocity)) return;
+    const mode = this.readerEffectivePageTurnMode();
+    if (!this.isVerticalPageTurnAnimation() && mode !== 1 && mode !== 2) return;
+    const offset = this.isVerticalPageTurnAnimation() ? event.offsetY : event.offsetX;
+    this.readerRestorePendingTurn = offset < 0 ? 1 : -1;
+    this.readerRestorePendingTurnByTap = false;
+  }
+
+  clearReaderRestorePendingTurn(): void {
+    this.readerRestorePendingTurn = 0;
+    if (this.readerRestorePendingTurnTimer >= 0) {
+      clearTimeout(this.readerRestorePendingTurnTimer);
+      this.readerRestorePendingTurnTimer = -1;
+    }
+  }
+
+  /** 落到存档页：补上等待期间的那次翻页。等这一帧画出存档页、书架翻开动画也走完再翻。 */
+  onReaderInitialPageReadyChanged(): void {
+    if (!this.readerInitialPageReady || this.readerRestorePendingTurn === 0 ||
+      this.readerRestorePendingTurnTimer >= 0) return;
+    const bookUrl = this.bookUrl;
+    this.readerRestorePendingTurnTimer = setTimeout((): void => {
+      this.readerRestorePendingTurnTimer = -1;
+      const direction = this.readerRestorePendingTurn;
+      const byTap = this.readerRestorePendingTurnByTap;
+      this.readerRestorePendingTurn = 0;
+      if (direction === 0 || this.bookUrl !== bookUrl || !this.readerPageVisible || !this.readerInitialPageReady ||
+        this.showMenu || this.showToc || this.showSettings || this.shouldBlockReaderInteraction()) return;
+      if (byTap) {
+        this.readerTapTurn(direction);
+      } else if (direction > 0) {
+        this.turnNext();
+      } else {
+        this.turnPrev();
+      }
+    }, Math.max(50, this.delayPastShelfOpening(0)));
   }
 
   canHandleReaderPageTurnPan(): boolean {
