@@ -27,6 +27,15 @@ export class MimoRole {
   nameColor?: number;
   /** 这个人单独设的人名样式（一条强调规则的 JSON）；空为跟随本书的人名样式。 */
   nameRule?: string;
+  /** 并进这个人物的重复档案的 id：存下的识别结果、纠正里还写着旧 id，按它找回这个人。 */
+  mergedIds?: string[];
+  /** 本机从原文里数到的性别线索（代词、称谓）：[男, 女]。 */
+  genderVotes?: number[];
+}
+
+/** A stored correction or anything else that points at a character by id. */
+export interface MimoRoleRef {
+  roleId: string;
 }
 
 export class MimoUnit {
@@ -44,6 +53,7 @@ export class MimoRoleProposal {
   name: string = '';
   aliases: string[] = [];
   gender: string = '';
+  genderEvidence?: string;
   age: string = 'unknown';
   ageEvidence: string = '';
   ageConfidence: number = 0;
@@ -54,6 +64,8 @@ export class MimoAssignment {
   roleId: string = 'narrator';
   emotion: string = '平静';
   confidence: number = 0;
+  /** 存下的识别结果用：这句已经数过性别线索。 */
+  voted?: boolean;
 }
 
 export class MimoAnalysis {
@@ -167,7 +179,8 @@ export class MimoPolicy {
     const roleIds: Set<string> = new Set<string>();
     for (const role of result.roles) {
       if (!role || typeof role.id !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(role.id) ||
-        roleIds.has(role.id) || typeof role.name !== 'string' || !role.name.trim() || role.name.length > 40 ||
+        // 名字可以空：给已有人物补报性别时模型可能只写 id；空名字的新人物在合并时丢掉。
+        roleIds.has(role.id) || typeof role.name !== 'string' || role.name.length > 40 ||
         !Array.isArray(role.aliases) || role.aliases.length > 12 ||
         role.aliases.some((alias: string): boolean => typeof alias !== 'string' || alias.length > 40)) {
         throw new Error('角色档案格式无效，请重试');
@@ -229,6 +242,204 @@ export class MimoPolicy {
   }
   private static readonly SPEECH_VERB: RegExp =
     /说|道|问|答|喊|叫|嚷|吼|笑|叹|骂|劝|应|哭|嘀咕|低语|开口|补充|解释|追问|反问|喝|吩咐|嘟囔|喃喃|吐槽|感慨|提醒|安慰|命令|回应|回答/;
+
+  /** 人名比对用：去掉空白和间隔号，“凯里尔斯”“凯里 · 尔斯”算同一个名字。 */
+  static nameKey(name: string): string {
+    return (typeof name === 'string' ? name : '').replace(/[\s·・•．]/g, '');
+  }
+  /** 参与同名比对的名字：空名字和默认的“旁白”不算，免得没起名字的人物被并到一起。 */
+  private static matchKey(name: string): string {
+    const key = MimoPolicy.nameKey(name);
+    return key === '旁白' ? '' : key;
+  }
+
+  static knownGender(gender: string): boolean {
+    return gender === 'male' || gender === 'female';
+  }
+
+  /**
+   * 按名字找已有的人物。几批识别同时在路上、或模型每次起的英文 id 不一样时，同一个人会被当成新人物报上来；
+   * 名字相同、新名字是已有人物的别名、或已有人物的名字在新报的别名里，都算同一个人。旁白不参与。
+   */
+  static sameNamed(roles: MimoRole[], name: string, aliases: string[] = []): MimoRole | undefined {
+    const key = MimoPolicy.matchKey(name);
+    if (!key) return undefined;
+    for (const role of roles) {
+      if (role.id !== 'narrator' && MimoPolicy.matchKey(role.name) === key) return role;
+    }
+    const others = (Array.isArray(aliases) ? aliases : []).map((alias: string): string => MimoPolicy.matchKey(alias))
+      .filter((alias: string): boolean => alias.length >= 2);
+    for (const role of roles) {
+      if (role.id === 'narrator') continue;
+      const own = MimoPolicy.matchKey(role.name);
+      if (own.length >= 2 && others.includes(own)) return role;
+      if (key.length >= 2 && (role.aliases || []).some((alias: string): boolean => MimoPolicy.matchKey(alias) === key)) {
+        return role;
+      }
+    }
+    return undefined;
+  }
+
+  /** 识别结果里的人物 id 换成档案里现有的：重复档案并掉后，旧 id 记在留下的那个人的 mergedIds 里。 */
+  static resolveRoleId(roles: MimoRole[], id: string): string {
+    if (roles.some((role: MimoRole): boolean => role.id === id)) return id;
+    const owner = roles.find((role: MimoRole): boolean => Array.isArray(role.mergedIds) && role.mergedIds.includes(id));
+    return owner ? owner.id : id;
+  }
+
+  /** other 并进 target：名字成为别名、旧 id 记下，target 没有的性别、年龄、音色、人名样式从 other 补。 */
+  static mergeRole(target: MimoRole, other: MimoRole): void {
+    const own = MimoPolicy.nameKey(target.name);
+    const names: string[] = [];
+    for (const name of (target.aliases || []).concat([other.name], other.aliases || [])) {
+      const value = typeof name === 'string' ? name.trim() : '';
+      if (value && value.length <= 40 && MimoPolicy.nameKey(value) !== own && !names.includes(value)) names.push(value);
+    }
+    target.aliases = names.slice(0, 12);
+    const ids = (target.mergedIds || []).slice();
+    for (const id of [other.id].concat(other.mergedIds || [])) {
+      if (id !== target.id && !ids.includes(id)) ids.push(id);
+    }
+    target.mergedIds = ids;
+    if (!MimoPolicy.knownGender(target.gender) && MimoPolicy.knownGender(other.gender)) target.gender = other.gender;
+    if ((!target.age || target.age === 'unknown') && other.age && other.age !== 'unknown') {
+      target.age = other.age; target.ageEvidence = other.ageEvidence;
+    }
+    if (Array.isArray(other.genderVotes)) MimoPolicy.addVotes(target, other.genderVotes);
+    if (!target.castVoice && other.castVoice) { target.castVoice = other.castVoice; target.castManual = other.castManual; }
+    if (target.nameColor === undefined && other.nameColor !== undefined) target.nameColor = other.nameColor;
+    if (!target.nameRule && other.nameRule) target.nameRule = other.nameRule;
+    if (!target.lead && other.lead) target.lead = true;
+  }
+
+  /**
+   * 合并同名的重复档案。留下标了主角、手动选过音色或声音、已知性别的那个，都一样时留最早的；
+   * refs（纠正等）里指向被并掉的人改指留下的人。没有重复时返回 null。
+   */
+  static dedupeRoles(roles: MimoRole[], refs: MimoRoleRef[]): MimoRole[] | null {
+    const groups: Map<string, MimoRole[]> = new Map<string, MimoRole[]>();
+    for (const role of roles) {
+      if (role.id === 'narrator') continue;
+      const key = MimoPolicy.matchKey(role.name);
+      if (!key) continue;
+      const group = groups.get(key);
+      if (group) group.push(role); else groups.set(key, [role]);
+    }
+    const score = (role: MimoRole): number => (role.lead ? 8 : 0) + (role.castManual ? 4 : 0) +
+      (role.manual || role.locked ? 2 : 0) + (MimoPolicy.knownGender(role.gender) ? 1 : 0);
+    const removed: Map<string, string> = new Map<string, string>();
+    groups.forEach((group: MimoRole[]): void => {
+      if (group.length < 2) return;
+      let keep = group[0];
+      for (const role of group) if (score(role) > score(keep)) keep = role;
+      for (const role of group) {
+        if (role === keep) continue;
+        MimoPolicy.mergeRole(keep, role);
+        removed.set(role.id, keep.id);
+      }
+    });
+    if (removed.size === 0) return null;
+    for (const ref of refs) {
+      const to = removed.get(ref.roleId);
+      if (to) ref.roleId = to;
+    }
+    return roles.filter((role: MimoRole): boolean => !removed.has(role.id));
+  }
+
+  private static readonly MALE_CUE: RegExp = /他|男|先生|少爷|公子|王子|国王|丈夫|父|爸|哥|弟|兄|叔|伯|爷|老头|小伙/;
+  private static readonly FEMALE_CUE: RegExp = /她|女|姑娘|小姐|公主|夫人|太太|妻|母|妈|姐|妹|娘|婆|奶|阿姨/;
+
+  /** 模型给的性别依据：要逐字出自原文，并且确实含有这个性别的代词或称谓。 */
+  static genderEvidence(gender: string, evidence: string | undefined, source: string): boolean {
+    const text = typeof evidence === 'string' ? evidence.trim() : '';
+    if (!MimoPolicy.knownGender(gender) || !text || text.length > 120 || !source.includes(text)) return false;
+    return (gender === 'male' ? MimoPolicy.MALE_CUE : MimoPolicy.FEMALE_CUE).test(text);
+  }
+
+  private static readonly MALE_AFTER: RegExp = /^(先生|少爷|公子|王子|大叔|叔叔|大爷|爷爷|老爷|哥哥|大哥|弟弟|兄)/;
+  private static readonly FEMALE_AFTER: RegExp = /^(小姐|姑娘|公主|夫人|女士|姐姐|大姐|妹妹|阿姨|奶奶|太太|小妹|女王|大婶)/;
+  private static readonly MALE_BEFORE: RegExp = /(少年|男孩|男子|男人|王子|国王|老头|小伙子?)$/;
+  private static readonly FEMALE_BEFORE: RegExp = /(少女|女孩|女子|女人|公主|女王|姑娘|老太太|妇人)$/;
+
+  /**
+   * 本机数性别线索，不问模型。一句里只出现一个人物时才数：名字紧挨的称谓（“凯里尔斯先生”“少女艾琳”），
+   * 以及叙述里名字后面紧接的那个分句以“他/她”开头（“凯里尔斯推开门，他……”）。
+   * 宾语位置的代词（“递给她”）和隔了几个分句的代词多半指别人，对白里的代词指谁说不准，都不算。
+   * 每句最多一票，返回 人物 id → [男, 女]。
+   */
+  static genderHints(texts: string[], roles: MimoRole[]): Map<string, number[]> {
+    const result: Map<string, number[]> = new Map<string, number[]>();
+    const names: string[][] = [];
+    for (const role of roles) {
+      if (role.id === 'narrator') continue;
+      for (const name of [role.name].concat(role.aliases || [])) {
+        const value = typeof name === 'string' ? name.trim() : '';
+        if (value.length >= 2) names.push([value, role.id]);
+      }
+    }
+    names.sort((a: string[], b: string[]): number => b[0].length - a[0].length);
+    for (const text of texts) {
+      const dialogue = /^\s*[“「『"]/.test(text);
+      for (const sentence of text.split(/[。！？!?…\n]/)) {
+        if (sentence.length < 3) continue;
+        const hits: number[][] = [];
+        const taken: boolean[] = new Array<boolean>(sentence.length).fill(false);
+        let id = '';
+        let mixed = false;
+        for (const pair of names) {
+          let from = sentence.indexOf(pair[0]);
+          while (from >= 0) {
+            const end = from + pair[0].length;
+            let free = true;
+            for (let k = from; k < end; k++) if (taken[k]) { free = false; break; }
+            if (free) {
+              for (let k = from; k < end; k++) taken[k] = true;
+              hits.push([from, end]);
+              if (id && id !== pair[1]) mixed = true;
+              id = pair[1];
+            }
+            from = sentence.indexOf(pair[0], end);
+          }
+        }
+        if (!id || mixed) continue;
+        hits.sort((a: number[], b: number[]): number => a[0] - b[0]);
+        let male = false;
+        let female = false;
+        for (const hit of hits) {
+          const before = sentence.slice(0, hit[0]), after = sentence.slice(hit[1]);
+          if (MimoPolicy.MALE_AFTER.test(after) || MimoPolicy.MALE_BEFORE.test(before)) male = true;
+          if (MimoPolicy.FEMALE_AFTER.test(after) || MimoPolicy.FEMALE_BEFORE.test(before)) female = true;
+        }
+        if (!dialogue) {
+          const rest = sentence.slice(hits[0][1]);
+          const comma = rest.search(/[，,；;：:]/);
+          const next = comma >= 0 ? rest.slice(comma + 1).replace(/^\s+/, '') : '';
+          if (/^他(?![们人乡日处物])/.test(next)) male = true;
+          else if (/^她(?!们)/.test(next)) female = true;
+        }
+        if (male === female) continue;
+        const votes = result.get(id) || [0, 0];
+        votes[male ? 0 : 1]++;
+        result.set(id, votes);
+      }
+    }
+    return result;
+  }
+
+  static addVotes(role: MimoRole, votes: number[]): void {
+    const own = Array.isArray(role.genderVotes) && role.genderVotes.length === 2 ? role.genderVotes : [0, 0];
+    role.genderVotes = [own[0] + (votes[0] || 0), own[1] + (votes[1] || 0)];
+  }
+
+  /** 线索累计 3 票以上、八成一致才定下性别；不够返回空串。 */
+  static votedGender(votes: number[] | undefined): string {
+    if (!Array.isArray(votes)) return '';
+    const male = votes[0] || 0, female = votes[1] || 0, total = male + female;
+    if (total < 3) return '';
+    if (male >= total * 0.8) return 'male';
+    if (female >= total * 0.8) return 'female';
+    return '';
+  }
 
   static letters(text: string): number {
     const matches = text.match(/[\p{L}\p{N}]/gu);

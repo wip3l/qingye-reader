@@ -361,16 +361,45 @@ export class MimoReadingSession {
     const latest = MimoStore.cast(book);
     const library = MimoStore.library();
     let changed = false;
+    const learned: string[] = [];
+    // 只补还不明的性别；改了性别的人物按新性别重新配 MiMo 声音（锁定、手动选过的不动）。
+    const learnGender = (role: MimoRole, gender: string, how: string): void => {
+      if (MimoPolicy.knownGender(role.gender) || !MimoPolicy.knownGender(gender)) return;
+      role.gender = gender;
+      if (!role.locked && !role.manual) MimoStore.assign(role, latest, library);
+      learned.push(`${role.id}=${gender}/${how}`);
+      changed = true;
+    };
+    const source = context + batch.map((unit: MimoUnit): string => unit.text).join('');
+    // 模型当成新人物报上来、其实档案里已有同名的：新 id → 已有人物 id。
+    const renamed: Map<string, string> = new Map<string, string>();
     for (const proposal of analysis.roles) {
-      if (proposal.id === 'narrator' || latest.roles.some((role: MimoRole): boolean => role.id === proposal.id)) continue;
+      if (proposal.id === 'narrator') continue;
+      const gender = MIMO_GENDERS.includes(proposal.gender) ? proposal.gender : 'unknown';
+      const existing = latest.roles.find((role: MimoRole): boolean => role.id === proposal.id);
+      if (existing) {
+        // 已有人物补报性别，要附上核对得上的原文依据。
+        if (MimoPolicy.genderEvidence(gender, proposal.genderEvidence, source + after)) learnGender(existing, gender, 'model');
+        continue;
+      }
+      if (!proposal.name.trim()) continue;
+      const named = MimoPolicy.sameNamed(latest.roles, proposal.name, proposal.aliases);
+      if (named) {
+        renamed.set(proposal.id, named.id);
+        const duplicate = new MimoRole();
+        duplicate.id = proposal.id; duplicate.name = proposal.name; duplicate.aliases = proposal.aliases;
+        MimoPolicy.mergeRole(named, duplicate);
+        learnGender(named, gender, 'model');
+        changed = true;
+        continue;
+      }
       if (latest.roles.length >= 200) continue;
       const role = new MimoRole();
       role.id = proposal.id;
       role.name = proposal.name;
       role.aliases = proposal.aliases;
-      role.gender = MIMO_GENDERS.includes(proposal.gender) ? proposal.gender : 'unknown';
+      role.gender = gender;
       const evidence = typeof proposal.ageEvidence === 'string' ? proposal.ageEvidence.trim() : '';
-      const source = context + batch.map((unit: MimoUnit): string => unit.text).join('');
       if (MIMO_AGES.includes(proposal.age) && proposal.age !== 'unknown' &&
         Number.isFinite(proposal.ageConfidence) && proposal.ageConfidence >= 0.8 && proposal.ageConfidence <= 1 &&
         evidence.length > 0 && evidence.length <= 120 && source.includes(evidence)) {
@@ -386,9 +415,10 @@ export class MimoReadingSession {
       const unit = batch[position];
       const item = analysis.assignments.find((assignment): boolean => assignment.unitId === unit.id);
       if (!item) throw new Error('角色标注不完整');
-      const known = latest.roles.some((role: MimoRole): boolean => role.id === item.roleId);
+      const roleId = renamed.get(item.roleId) || MimoPolicy.resolveRoleId(latest.roles, item.roleId);
+      const known = latest.roles.some((role: MimoRole): boolean => role.id === roleId);
       unit.uncertain = !known || item.confidence < 0.7;
-      unit.roleId = unit.uncertain ? 'narrator' : item.roleId;
+      unit.roleId = unit.uncertain ? 'narrator' : roleId;
       unit.emotion = MimoPolicy.emotion(item.emotion);
       // 原文写明了是谁说的，以原文为准（用户的逐句纠正在朗读时仍优先）。
       const prev = position > 0 ? batch[position - 1].text : context;
@@ -401,6 +431,27 @@ export class MimoReadingSession {
       }
     }
     if (tagged > 0) console.info(`[TTS] role tags: units=${batch[0].id}-${batch[batch.length - 1].id},tagged=${tagged},overruled=${overruled}`);
+    // 本机数代词和称谓给人物投性别票。每句只数一次（存下的识别结果上记 voted），重读不重复计票；
+    // 以前识别过、没数过的句子再读到时补数。
+    try { stored = JSON.parse(fs.readTextSync(storePath)) as Record<string, MimoAssignment>; } catch (_) {}
+    const unvoted: number[] = [];
+    for (let position = 0; position < batch.length; position++) {
+      const saved = stored[unitKeys[position]];
+      if (saved && saved.voted !== true) unvoted.push(position);
+    }
+    if (unvoted.length > 0) {
+      const hints = MimoPolicy.genderHints(unvoted.map((position: number): string => batch[position].text), latest.roles);
+      hints.forEach((votes: number[], id: string): void => {
+        const role = latest.roles.find((item: MimoRole): boolean => item.id === id);
+        if (!role) return;
+        MimoPolicy.addVotes(role, votes);
+        changed = true;
+        learnGender(role, MimoPolicy.votedGender(role.genderVotes), 'votes');
+      });
+      for (const position of unvoted) stored[unitKeys[position]].voted = true;
+      MimoStore.write(storePath, JSON.stringify(stored));
+    }
+    if (learned.length > 0) console.info(`[TTS] role gender: units=${batch[0].id}-${batch[batch.length - 1].id},${learned.join(',')}`);
     if (changed) MimoStore.saveCast(book, latest, bookName);
   }
 

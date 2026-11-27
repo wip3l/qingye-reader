@@ -161,6 +161,48 @@ assert.deepEqual(analysisNotices,[1000,2000], 'analysis retries notify independe
   assert.equal(tag(units[0].text,units[1].text,units[2].text),'shen');
   assert.equal(tag(units[1].text,units[2].text,units[3].text),'lin');
 }
+// 同名人物：按名字认回已有的人，重复档案合并，纠正改指留下的人。
+{
+  const role=(id,name,extra={})=>Object.assign(new MimoRole(),{id,name,aliases:[]},extra);
+  const roles=[new MimoRole(),role('kai','凯里尔斯',{aliases:['凯']}),role('lin','林晚',{aliases:['阿晚']})];
+  assert.equal(MimoPolicy.sameNamed(roles,'凯里尔斯')?.id,'kai');
+  assert.equal(MimoPolicy.sameNamed(roles,'凯里 · 尔斯')?.id,'kai','spaces and middle dots are ignored');
+  assert.equal(MimoPolicy.sameNamed(roles,'阿晚')?.id,'lin','a new name that is a known alias');
+  assert.equal(MimoPolicy.sameNamed(roles,'晚晚',['林晚'])?.id,'lin','a known name among the new aliases');
+  assert.equal(MimoPolicy.sameNamed(roles,'旁白'),undefined,'the narrator is never matched');
+  assert.equal(MimoPolicy.sameNamed(roles,'嘉豪'),undefined);
+  const dup=[new MimoRole(),role('k1','凯里尔斯',{gender:'unknown'}),role('k2','凯里尔斯',{gender:'male',lead:true,castVoice:{kind:'local',id:'m',name:'男'}}),
+    role('k3','凯里尔斯',{gender:'unknown',age:'teen',ageEvidence:'十五岁',genderVotes:[2,0]}),role('w','维尔')];
+  const refs=[{roleId:'k1'},{roleId:'k3'},{roleId:'w'}];
+  const merged=MimoPolicy.dedupeRoles(dup,refs);
+  assert.deepEqual(merged.map(r=>r.id),['narrator','k2','w'],'the lead is kept');
+  assert.deepEqual(refs.map(r=>r.roleId),['k2','k2','w'],'corrections follow the kept character');
+  assert.deepEqual([...merged[1].mergedIds].sort(),['k1','k3']);
+  assert.equal(merged[1].age,'teen');assert.deepEqual([...merged[1].genderVotes],[2,0]);
+  assert.equal(MimoPolicy.resolveRoleId(merged,'k3'),'k2','stored analysis with an old id still finds the character');
+  assert.equal(MimoPolicy.resolveRoleId(merged,'w'),'w');
+  assert.equal(MimoPolicy.dedupeRoles(merged,[]),null,'nothing left to merge');
+}
+// 本机性别线索：一句只有一个人物时，紧挨名字的称谓和下一分句开头的他/她。
+{
+  const role=(id,name)=>Object.assign(new MimoRole(),{id,name,aliases:[]});
+  const roles=[new MimoRole(),role('kai','凯里尔斯'),role('lin','林晚')];
+  const votes=texts=>Object.fromEntries([...MimoPolicy.genderHints(texts,roles)].map(([id,v])=>[id,[...v]]));
+  assert.deepEqual(votes(['凯里尔斯推开门，他走了进去。']),{kai:[1,0]});
+  assert.deepEqual(votes(['少女林晚站在门口。','林晚小姐笑了。']),{lin:[0,2]});
+  assert.deepEqual(votes(['凯里尔斯递给她一杯水。']),{},'an object pronoun refers to someone else');
+  assert.deepEqual(votes(['凯里尔斯推开门，屋里的人都看着他，她轻声问。']),{},'only the clause right after the name counts');
+  assert.deepEqual(votes(['凯里尔斯看着林晚，她笑了。']),{},'two characters in one sentence are skipped');
+  assert.deepEqual(votes(['“凯里尔斯走了，她还在等。”']),{},'pronouns inside dialogue are skipped');
+  assert.deepEqual(votes(['凯里尔斯推开门，他们都笑了。']),{},'plural pronouns are skipped');
+  assert.equal(MimoPolicy.votedGender([2,0]),'','too few votes');
+  assert.equal(MimoPolicy.votedGender([3,0]),'male');
+  assert.equal(MimoPolicy.votedGender([4,2]),'','votes that disagree decide nothing');
+  assert.equal(MimoPolicy.votedGender([1,8]),'female');
+  assert.ok(MimoPolicy.genderEvidence('female','她推开门','凯里尔斯来了。她推开门。'));
+  assert.ok(!MimoPolicy.genderEvidence('female','凯里尔斯来了','凯里尔斯来了。她推开门。'),'evidence must carry a gendered word');
+  assert.ok(!MimoPolicy.genderEvidence('male','他推开门','凯里尔斯来了。她推开门。'),'evidence must be quoted from the text');
+}
 // 识别请求附带下文，提示模型说话人可能在对白之后交代。
 {
   let sentBody=null;
@@ -327,7 +369,34 @@ for(const [age,evidence,confidence,expected] of [
   const role=savedCast.roles.find(r=>r.id==='he');assert.equal(role.age,expected);
   if(expected==='child')assert.equal(role.preset.age,'child');else assert.equal(role.preset.id,'');
 }
-settings.multi=false;proposals=[];savedCast=null;
+// 模型把已有人物换了个 id 当新人物报上来：认回原来的人，不另建档案，标注也落在原来的人身上。
+{
+  const known=()=>({roles:[{id:'narrator',name:'旁白',voice:'白桦',aliases:[]},
+    {id:'kai',name:'凯里尔斯',aliases:[],gender:'unknown',age:'unknown',voice:'苏打'}],corrections:[],emotion:'自然'});
+  files.clear();settings.multi=true;savedCast=known();
+  proposals=[{id:'kai2',name:'凯里尔斯',aliases:[],gender:'male',age:'unknown',ageEvidence:'',ageConfidence:0}];
+  assignRole=u=>u.text.startsWith('“')?'kai2':'narrator';
+  const roleSeen=[];
+  await session.read('凯里尔斯想了想：“走吧。”',{...options,onFocus:()=>roleSeen.push(storage.get('mimoCurrentRole'))});
+  assert.deepEqual(savedCast.roles.map(r=>r.id),['narrator','kai'],'no duplicate character');
+  assert.equal(savedCast.roles[1].gender,'male');assert.deepEqual(savedCast.roles[1].mergedIds,['kai2']);
+  assert.ok(roleSeen.some(r=>String(r).includes('凯里尔斯')),'the line is read as the existing character: '+roleSeen);
+  // 已有人物补报性别：依据要出自原文、含有性别字眼。
+  for(const [evidence,expected] of [['原文没有的话','unknown'],['凯里尔斯走过来','unknown'],['她推开门','female']]){
+    files.clear();savedCast=known();assignRole=null;
+    proposals=[{id:'kai',name:'凯里尔斯',aliases:[],gender:'female',genderEvidence:evidence,age:'unknown',ageEvidence:'',ageConfidence:0}];
+    await session.read('凯里尔斯走过来。她推开门。',options);
+    assert.equal((savedCast.roles.find(r=>r.id==='kai')||{}).gender,expected,evidence);
+  }
+  // 本机计票：三句线索定下性别，重读同一段不重复计票。
+  files.clear();savedCast=known();proposals=[];assignRole=null;
+  const hinted='凯里尔斯推开门，他走了进去。凯里尔斯先生笑了笑。凯里尔斯转过身，他看着窗外。';
+  await session.read(hinted,options);
+  assert.equal(savedCast.roles[1].gender,'male');assert.deepEqual(savedCast.roles[1].genderVotes,[3,0]);
+  await session.read(hinted,options);
+  assert.deepEqual(savedCast.roles[1].genderVotes,[3,0],'a replay does not count the same sentences again');
+}
+settings.multi=false;proposals=[];savedCast=null;assignRole=null;
 
 // A voice edit while the first network request is pending retries the same text without audible duplication.
 files.clear();focus.length=0;speechVoices.length=0;settings.voice='白桦';

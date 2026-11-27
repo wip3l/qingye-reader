@@ -3,7 +3,7 @@ import { util } from '@kit.ArkTS';
 import { BusinessError } from '@kit.BasicServicesKit';
 import fs from '@ohos.file.fs';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
-import { MimoRole, MIMO_VOICES } from '../../core/mimo/MimoPolicy';
+import { MimoPolicy, MimoRole, MIMO_VOICES } from '../../core/mimo/MimoPolicy';
 import { MimoVoiceLibrary, MimoVoiceScheme, MimoVoicePreset, MimoVoicePolicy, MimoVoiceChange, MimoVoiceChoice } from '../../core/mimo/MimoVoicePolicy';
 
 export class MimoSettings {
@@ -352,11 +352,18 @@ export class MimoStore {
   }
   static cast(book: string): MimoBookCast {
     try {
-      const cast = JSON.parse(fs.readTextSync(MimoStore.root() + '/cast_' + MimoStore.hash(book) + '.json')) as MimoBookCast;
+      const path = MimoStore.root() + '/cast_' + MimoStore.hash(book) + '.json';
+      const cast = JSON.parse(fs.readTextSync(path)) as MimoBookCast;
       if (Array.isArray(cast.roles) && cast.roles.length > 0 && Array.isArray(cast.corrections)) {
         cast.schemeId = typeof cast.schemeId === 'string' ? cast.schemeId : '';
         cast.assignmentEnabled = typeof cast.assignmentEnabled === 'boolean' ? cast.assignmentEnabled : undefined;
         cast.castSchemeId = typeof cast.castSchemeId === 'string' ? cast.castSchemeId : '';
+        // 早先只按 id 认人，几批识别同时在路上时同一个人会建好几份档案：读出来就并掉，并直接写回（不算一次修改）。
+        const deduped = MimoPolicy.dedupeRoles(cast.roles, cast.corrections);
+        if (deduped) {
+          cast.roles = deduped;
+          MimoStore.write(path, JSON.stringify(cast));
+        }
         return cast;
       }
     } catch (_) {}
