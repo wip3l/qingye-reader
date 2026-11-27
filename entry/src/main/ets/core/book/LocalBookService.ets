@@ -2151,9 +2151,10 @@ export class LocalBookService {
     const file = await fs.open(path, fs.OpenMode.READ_ONLY);
     const digest = cryptoFramework.createMd('SHA256');
     const chunkSize = 256 * 1024;
+    // 同一块缓冲区反复读：云同步会连着给很多本书算指纹，每块新开缓冲区会在回收前积下大量 native 内存。
+    const buffer = new ArrayBuffer(chunkSize);
     try {
       while (true) {
-        const buffer = new ArrayBuffer(chunkSize);
         const readSize = await fs.read(file.fd, buffer);
         if (readSize <= 0) break;
         digest.updateSync({ data: new Uint8Array(buffer, 0, readSize) });

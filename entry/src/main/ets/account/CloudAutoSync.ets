@@ -17,6 +17,7 @@ import { ReaderFontHelper } from '../utils/ReaderFontHelper';
 import { ReaderFontBootstrap } from '../utils/ReaderFontBootstrap';
 import { ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { copyFile } from '../platform/Files';
+import { CrashContextTrail } from '../utils/CrashContextTrail';
 
 /** 云端有、本机还没下载的字体，供各字体下拉框置灰显示。 */
 export class CloudRemoteFont {
@@ -61,6 +62,8 @@ class LocalFontData {
 export class CloudAutoSync {
   static readonly STORAGE_REMOTE_FONTS: string = 'cloudRemoteFontsRaw';
   static readonly STORAGE_REVISION: string = 'cloudAutoSyncRevision';
+  /** 崩溃记录“正在用”里的名字：被系统结束时能看出同步走到哪一步。 */
+  private static readonly TRAIL_KEY: string = '云文件同步';
   static readonly PLACEHOLDER_KEY: string = 'cloudPlaceholder';
   static readonly CLOUD_FILE_ID_KEY: string = 'cloudFileId';
   private static readonly STORE: string = 'cloud_auto_sync';
@@ -122,6 +125,7 @@ export class CloudAutoSync {
       await task;
     } finally {
       CloudAutoSync.running = null;
+      CrashContextTrail.mark(CloudAutoSync.TRAIL_KEY, '');
       if (CloudAutoSync.rerun) {
         CloudAutoSync.rerun = false;
         CloudAutoSync.schedule(context, 500);
@@ -296,13 +300,16 @@ export class CloudAutoSync {
     if (AccountSessionStore.account().userId !== userId) return;
     const uploads: CloudUploadJob[] = [];
     if (CloudAutoSync.scopeEnabled(userId, 'FONT')) {
+      CrashContextTrail.mark(CloudAutoSync.TRAIL_KEY, '字体对账');
       await CloudAutoSync.syncFonts(context, files, tombstones, uploads);
     }
     if (CloudAutoSync.scopeEnabled(userId, 'BOOK')) {
+      CrashContextTrail.mark(CloudAutoSync.TRAIL_KEY, '本地书对账');
       await CloudAutoSync.syncBooks(context, files, tombstones, uploads);
     }
     const themes = CloudAutoSync.scopeEnabled(userId, CloudThemeSync.KIND);
     if (themes) {
+      CrashContextTrail.mark(CloudAutoSync.TRAIL_KEY, '自定义主题对账');
       await CloudThemeSync.sync(context, userId, files, tombstones, uploads);
     }
     try {
@@ -335,11 +342,14 @@ export class CloudAutoSync {
     const cloudFonts = files.filter((file: CloudFileItem) => file.kind === 'FONT');
     const fontTombs = tombstones.filter((tomb: CloudTombstone) => tomb.kind === 'FONT');
     const linked = new Set<string>();
-    for (const font of CloudAutoSync.localFonts()) {
+    const fonts = CloudAutoSync.localFonts();
+    for (let i = 0; i < fonts.length; i++) {
+      const font = fonts[i];
       const cloudId = CloudAutoSync.cloudIdFromPath(font.filePath);
       let file = cloudId ? cloudFonts.find((item: CloudFileItem) => item.id === cloudId) : undefined;
       let hash = '';
       if (!file) {
+        CrashContextTrail.mark(CloudAutoSync.TRAIL_KEY, `字体对账 ${i + 1}/${fonts.length}`);
         try {
           hash = await CloudAutoSync.fontHash(context, font.filePath);
         } catch (e) {
@@ -561,6 +571,8 @@ export class CloudAutoSync {
       if (!CloudAutoSync.scopeEnabled(userId, job.kind)) continue;
       if (CloudAutoSync.failedUploads.has(job.key) || AccountSessionStore.account().userId !== userId) continue;
       try {
+        CrashContextTrail.mark(CloudAutoSync.TRAIL_KEY,
+          `上传${job.kind === 'FONT' ? '字体' : job.kind === 'BOOK' ? '本地书' : '主题'} ${uploads.indexOf(job) + 1}/${uploads.length}`);
         await CloudFileClient.stage(context, job.path, job.name, job.kind, job.meta, true, job.manifestHash);
         await CloudFileClient.upload(context, () => {});
         done.push(job.key);

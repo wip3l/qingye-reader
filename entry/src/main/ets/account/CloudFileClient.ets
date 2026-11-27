@@ -13,6 +13,8 @@ import { CloudTransferTicket, CloudFileItem, CloudFileList, CloudFileMeta, Cloud
 import { copyFile } from '../platform/Files';
 
 export class CloudFileClient {
+  /** 与服务端一致的分块大小。 */
+  private static readonly CHUNK_BYTES: number = 1048576;
   private static paused: boolean = false;
   private static transferring: boolean = false;
   private static transferFinished: Promise<void> = Promise.resolve();
@@ -62,15 +64,26 @@ export class CloudFileClient {
   /** 与服务端一致的文件指纹：每 1MB 分块 sha256 拼接后再取 sha256。 */
   static async manifestHashOfFile(path: string): Promise<string> {
     const size = (await fs.stat(path)).size;
-    const hashes: string[] = [];
     const source = await fs.open(path, fs.OpenMode.READ_ONLY);
     try {
-      for (let offset = 0, index = 0; offset < size; index++) {
-        const length = Math.min(1048576, size - offset);
-        hashes.push(`${index}:${length}:${CloudFileClient.sha256(await CloudFileClient.read(source.fd, offset, length))}`);
-        offset += length;
-      }
+      return await CloudFileClient.manifestHashOfFd(source.fd, size);
     } finally { await fs.close(source); }
+  }
+  /**
+   * 逐块读进同一块缓冲区再算指纹。这里是按磁盘速度连读的：字体云同步启动后要给每款本地字体算一遍，
+   * 每块都新开缓冲区时几秒内就积下几 GB 待回收的 native 内存，字体多的用户会被系统按内存超限结束。
+   */
+  private static async manifestHashOfFd(fd: number, size: number, userId: string = ''): Promise<string> {
+    const hashes: string[] = [];
+    const buffer = new ArrayBuffer(Math.min(CloudFileClient.CHUNK_BYTES, Math.max(1, size)));
+    for (let offset = 0, index = 0; offset < size; index++) {
+      if (userId) CloudFileClient.check(userId);
+      const length = Math.min(CloudFileClient.CHUNK_BYTES, size - offset);
+      // 末尾不满一块时用正好大小的缓冲区，算指纹的数据与整块读出时完全一样。
+      const target = length === buffer.byteLength ? buffer : new ArrayBuffer(length);
+      hashes.push(`${index}:${length}:${CloudFileClient.sha256(await CloudFileClient.readInto(fd, target, offset, length))}`);
+      offset += length;
+    }
     return CloudFileClient.sha256(new util.TextEncoder().encodeInto(hashes.join('\n')));
   }
   static async pending(context: Context): Promise<CloudUploadTask | null> {
@@ -120,17 +133,10 @@ export class CloudFileClient {
       if (!CloudFileClient.isFileKind(task.kind)) throw new Error('同步配置请通过数据同步管理，请取消此上传任务');
       const store = await preferences.getPreferences(context, 'cloud_file_transfers');
       if (!task.manifestHash) {
-        const hashes: string[] = [];
         const source = await fs.open(task.path, fs.OpenMode.READ_ONLY);
         try {
-          for (let offset = 0, index = 0; offset < task.bytes; index++) {
-            CloudFileClient.check(userId);
-            const length = Math.min(1048576, task.bytes - offset);
-            hashes.push(`${index}:${length}:${CloudFileClient.sha256(await CloudFileClient.read(source.fd, offset, length))}`);
-            offset += length;
-          }
+          task.manifestHash = await CloudFileClient.manifestHashOfFd(source.fd, task.bytes, userId);
         } finally { await fs.close(source); }
-        task.manifestHash = CloudFileClient.sha256(new util.TextEncoder().encodeInto(hashes.join('\n')));
         await store.put(`upload_${userId}`, JSON.stringify(task)); await store.flush();
       }
       const prepared = JSON.parse(await CloudFileClient.transferRequest('/prepare', 'POST', JSON.stringify({
@@ -294,15 +300,22 @@ export class CloudFileClient {
     if (CloudFileClient.paused) throw new Error('传输已暂停，可稍后继续');
     if (!userId || AccountSessionStore.account().userId !== userId || !AccountSessionStore.isLoggedIn()) throw new Error('账号已改变，传输已停止');
   }
+  /** 读一块到新的独立缓冲区（上传时要整块交给网络请求）。 */
   private static async read(fd: number, offset: number, length: number): Promise<Uint8Array> {
-    const data = new Uint8Array(length); let read = 0;
+    return CloudFileClient.readInto(fd, new ArrayBuffer(length), offset, length);
+  }
+  /** 读 length 字节到 buffer 开头，返回这一段的视图；缓冲区可以反复用。 */
+  private static async readInto(fd: number, buffer: ArrayBuffer, offset: number, length: number): Promise<Uint8Array> {
+    let read = await fs.read(fd, buffer, { offset: offset, length: length });
+    if (read <= 0) throw new Error('本地文件不完整');
+    // 少见的读不满：剩下的另读再拼上。
     while (read < length) {
-      const buffer = new ArrayBuffer(length - read);
-      const count = await fs.read(fd, buffer, { offset: offset + read, length: buffer.byteLength });
+      const rest = new ArrayBuffer(length - read);
+      const count = await fs.read(fd, rest, { offset: offset + read, length: rest.byteLength });
       if (count <= 0) throw new Error('本地文件不完整');
-      data.set(new Uint8Array(buffer, 0, count), read); read += count;
+      new Uint8Array(buffer).set(new Uint8Array(rest, 0, count), read); read += count;
     }
-    return data;
+    return new Uint8Array(buffer, 0, length);
   }
   private static sha256(bytes: Uint8Array): string {
     const md = cryptoFramework.createMd('SHA256'); md.updateSync({ data: bytes });
