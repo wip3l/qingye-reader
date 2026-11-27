@@ -13,9 +13,15 @@ import { ReadStatsDevice } from './ReadStatsDevice';
  * 同一时刻只计一个通道（听书优先），避免"阅读页开着朗读"被双计。
  * 本机开关见 setRecordingOptions，所有采集点照常上报，闸门只在这里。
  * 结算时机：通道/书目切换、每 60 秒定时、应用前后台切换；跨午夜的时间段按 00:00 拆分到两天。
+ *
+ * 时长按两次结算之间的墙钟算，进程被系统冻结（熄屏后朗读断流、长时任务被挂起等）时定时器也停了，
+ * 通道却还开着；解冻后的第一次结算会把整段冻结时间算进去。所以每次结算
+ * 记下“还活着”的时间点，距上次超过 STALL_MS 就只算到那个时间点，冻结期间不计。
  */
 export class ReadStatsTracker {
   private static readonly FLUSH_INTERVAL_MS: number = 60000;
+  /** 定时结算连续错过约三次，按进程曾被冻结处理。 */
+  private static readonly STALL_MS: number = ReadStatsTracker.FLUSH_INTERVAL_MS * 3;
 
   private static instance: ReadStatsTracker | null = null;
 
@@ -27,6 +33,8 @@ export class ReadStatsTracker {
   private ttsBookUrl: string = '';
   private currentBookUrl: string = '';
   private segmentStart: number = 0;
+  /** 计时中最近一次确认进程在跑的时间（开段、每次结算时更新）。 */
+  private lastAliveAt: number = 0;
   private flushTimerId: number = -1;
   private dbReady: boolean = false;
   private ownerId: string = '';
@@ -108,16 +116,23 @@ export class ReadStatsTracker {
     this.settleCurrentSegment(Date.now());
     this.currentBookUrl = target;
     this.segmentStart = target ? Date.now() : 0;
+    this.lastAliveAt = this.segmentStart;
     this.updateFlushTimer();
   }
 
   private settleCurrentSegment(now: number): void {
     if (!this.currentBookUrl || this.segmentStart <= 0 || now <= this.segmentStart) return;
+    let end = now;
+    if (this.lastAliveAt > 0 && now - this.lastAliveAt > ReadStatsTracker.STALL_MS) {
+      end = Math.max(this.segmentStart, this.lastAliveAt);
+      console.warn(`[ReadStats] 计时中断 ${Math.round((now - this.lastAliveAt) / 1000)} 秒，按进程被冻结处理，这段不计`);
+    }
+    this.lastAliveAt = now;
     const entries: ReadStatsEntry[] = [];
     let cursor = this.segmentStart;
-    while (cursor < now) {
+    while (cursor < end) {
       const nextMidnight = ReadStatsTracker.nextMidnightTs(cursor);
-      const segmentEnd = Math.min(now, nextMidnight);
+      const segmentEnd = Math.min(end, nextMidnight);
       const durationMs = segmentEnd - cursor;
       if (durationMs > 0) {
         const entry = new ReadStatsEntry();

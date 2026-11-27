@@ -16676,7 +16676,12 @@ struct ReadBookPage {
 
   /** 用户（或定时）主动结束朗读：先把阅读页落到正在读的句子，再停。 */
   stopTtsReadingAtSpokenPosition(): void {
-    this.settleReaderOnSpokenPosition();
+    // 定位只是顺带的：出错也必须停下朗读，否则定时到点后朗读和听书计时会一直走下去。
+    try {
+      this.settleReaderOnSpokenPosition();
+    } catch (error) {
+      console.warn('[TTS] 停止时定位到朗读句子失败:', error);
+    }
     this.stopTtsReading();
   }
 
