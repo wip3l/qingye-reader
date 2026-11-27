@@ -13,7 +13,7 @@
 <p align="center">
   <a href="docs/manual/shots/01-companion-v6.webp"><img src="docs/manual/shots/01-companion-v6.webp" width="19%" alt="陪伴书架：立体书本、分组与继续阅读；把每日阅读，变成温柔的陪伴" /></a>
   <a href="docs/manual/shots/02-discover-v6.webp"><img src="docs/manual/shots/02-discover-v6.webp" width="19%" alt="搜索与发现：精选榜单与分类，一屏探索；在线搜索，找到下一段好故事" /></a>
-  <a href="docs/manual/shots/03-formats-v6.webp"><img src="docs/manual/shots/03-formats-v6.webp" width="19%" alt="在线与离线：TXT / EPUB / MOBI / PDF；支持 ZIP 批量导入与远程书库" /></a>
+  <a href="docs/manual/shots/03-formats-v7.webp"><img src="docs/manual/shots/03-formats-v7.webp" width="19%" alt="在线与离线：TXT / EPUB / MOBI / AZW3 / FB2 / PDF / CBZ；支持 ZIP 批量导入与 OPDS、WebDAV 远程书库" /></a>
   <a href="docs/manual/shots/04-statistics-v6.webp"><img src="docs/manual/shots/04-statistics-v6.webp" width="19%" alt="阅读统计：阅读与听书合并计时；阅读趋势、书籍排行，看见时间的积累" /></a>
   <a href="docs/manual/shots/05-continuity-v6.webp"><img src="docs/manual/shots/05-continuity-v6.webp" width="19%" alt="数据同步：书架、进度、书签与统计随账号同步；本地书籍与自定义字体，也能带着走" /></a>
 </p>
