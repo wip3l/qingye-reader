@@ -14,6 +14,7 @@ const MODULES = [
   'core/book/ReaderActionMarker.ts',
   'core/book/EpubNoteLink.ts',
   'core/book/EpubLinkTarget.ts',
+  'core/book/EpubCssBackground.ts',
   'core/book/EpubHtmlConverter.ts',
   'core/book/EpubChapterPlanner.ts',
   'core/book/EpubTextOffsetMap.ts',

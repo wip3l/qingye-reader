@@ -3,6 +3,7 @@ import { util } from '@kit.ArkTS';
 import { image } from '@kit.ImageKit';
 import { Book, BookChapter, ReaderActionMarker } from '@legado/sourceengine';
 import { EpubChapterPlanner, EpubChapterSegment } from './EpubChapterPlanner';
+import { EpubCssBackground, EpubCssBackgroundRule, EpubPageStyle } from './EpubCssBackground';
 import { EpubConvertResult, EpubHtmlConverter, EpubImageRef } from './EpubHtmlConverter';
 import { EpubLinkLocation, EpubLinkTarget } from './EpubLinkTarget';
 import { EpubNoteLink } from './EpubNoteLink';
@@ -24,6 +25,9 @@ export class LocalChapterContentLoader {
   private static readonly MAX_SIZED_IMAGES_WITHOUT_TEXT: number = 24;
   private static readonly IMAGE_SIZE_CACHE_LIMIT: number = 512;
   private static imageSizeCache: Map<string, number[]> = new Map<string, number[]>();
+  private static readonly STYLESHEET_CACHE_LIMIT: number = 32;
+  /** 解析过的样式表（只留背景图规则），键里带文件大小和修改时间，书重新解压后不会读到旧的。 */
+  private static stylesheetCache: Map<string, EpubCssBackgroundRule[]> = new Map<string, EpubCssBackgroundRule[]>();
 
   static async load(book: Book, chapter: BookChapter): Promise<string> {
     if (book.getVariable('localFormat') === 'pdf') return '';
@@ -42,6 +46,7 @@ export class LocalChapterContentLoader {
     let content = '';
     let cachedPath = '';
     let cachedBody = '';
+    let cachedStyle: EpubPageStyle | null = null;
     for (const segment of segments) {
       const path = EpubHtmlConverter.normalizePath(segment.path);
       if (!path.startsWith(`${extractRoot}/`) || !this.exists(path)) continue;
@@ -50,10 +55,13 @@ export class LocalChapterContentLoader {
         piece = ReaderImageMarker.create(path);
       } else {
         if (cachedPath !== path) {
-          cachedBody = EpubHtmlConverter.bodyOf(await this.readHtmlFile(path));
+          const html = await this.readHtmlFile(path);
+          cachedBody = EpubHtmlConverter.bodyOf(html);
+          cachedStyle = await this.pageStyle(html, path, extractRoot);
           cachedPath = path;
         }
-        piece = (await this.convertBody(cachedBody, path, extractRoot, segment.startId, segment.endId)).content;
+        piece = (await this.convertBody(cachedBody, path, extractRoot, segment.startId, segment.endId,
+          cachedStyle)).content;
       }
       if (!piece) continue;
       // 与 EpubChapterPlanner.addPiece 的拼接方式保持一致，缓存被清理后重建的正文偏移才不会变化。
@@ -121,7 +129,7 @@ export class LocalChapterContentLoader {
    * 尺寸写入图片标记供分页使用，同时用来识别行内小图。
    */
   static async convertBody(body: string, filePath: string, extractRoot: string, startId: string,
-    endId: string): Promise<EpubConvertResult> {
+    endId: string, pageStyle: EpubPageStyle | null = null): Promise<EpubConvertResult> {
     const root = EpubHtmlConverter.normalizePath(extractRoot);
     const file = EpubHtmlConverter.normalizePath(filePath);
     const baseDir = EpubHtmlConverter.parentPath(file);
@@ -147,15 +155,77 @@ export class LocalChapterContentLoader {
       }
       return ref;
     };
-    const first = EpubHtmlConverter.convertBody(body, resolve, startId, endId, resolveLink);
-    if (first.imagePaths.length === 0 ||
+    const first = EpubHtmlConverter.convertBody(body, resolve, startId, endId, resolveLink, pageStyle);
+    if ((first.imagePaths.length === 0 && first.backgroundPaths.length === 0) ||
       (!first.hasText && first.imagePaths.length > LocalChapterContentLoader.MAX_SIZED_IMAGES_WITHOUT_TEXT)) {
       return first;
     }
-    for (const path of first.imagePaths) {
+    for (const path of first.imagePaths.concat(first.backgroundPaths)) {
       sizes.set(path, await this.imageSize(path));
     }
-    return EpubHtmlConverter.convertBody(body, resolve, startId, endId, resolveLink);
+    return EpubHtmlConverter.convertBody(body, resolve, startId, endId, resolveLink, pageStyle);
+  }
+
+  /**
+   * 一个 XHTML 文件的样式上下文（链接的样式表、<style>、<html>/<body> 标签），供应用排版找出当插图用的背景图。
+   * 外部样式表里 url() 相对样式表本身，这里换成以解压目录为根的绝对写法（/OEBPS/...），转换时照常解析。
+   */
+  static async pageStyle(html: string, filePath: string, extractRoot: string): Promise<EpubPageStyle> {
+    const style = new EpubPageStyle();
+    style.rootTags = EpubCssBackground.rootTags(html);
+    const root = EpubHtmlConverter.normalizePath(extractRoot);
+    const baseDir = EpubHtmlConverter.parentPath(EpubHtmlConverter.normalizePath(filePath));
+    for (const href of EpubCssBackground.stylesheetHrefs(html)) {
+      const cssPath = EpubHtmlConverter.resolvePath(baseDir, EpubHtmlConverter.decodeEntities(href), root);
+      if (!cssPath || !cssPath.startsWith(`${root}/`) || !this.exists(cssPath)) continue;
+      const rules = await this.stylesheetRules(cssPath, root, style.rules.length);
+      style.rules = style.rules.concat(rules);
+    }
+    style.rules = style.rules.concat(EpubCssBackground.parseRules(EpubCssBackground.styleBlocks(html), null,
+      style.rules.length));
+    return style;
+  }
+
+  private static async stylesheetRules(cssPath: string, root: string,
+    orderBase: number): Promise<EpubCssBackgroundRule[]> {
+    let key = cssPath;
+    try {
+      const stat = fs.statSync(cssPath);
+      key = `${cssPath}|${stat.size}|${stat.mtime}`;
+    } catch (_) {
+    }
+    let rules = this.stylesheetCache.get(key);
+    if (!rules) {
+      let css = '';
+      try {
+        css = await this.readHtmlFile(cssPath);
+      } catch (error) {
+        console.warn('[LocalChapterContentLoader] read stylesheet failed:', cssPath, error);
+      }
+      const cssDir = EpubHtmlConverter.parentPath(cssPath);
+      rules = EpubCssBackground.parseRules(css, (url: string): string => {
+        const target = EpubHtmlConverter.resolvePath(cssDir, url, root);
+        return target.startsWith(`${root}/`) ? target.substring(root.length) : '';
+      });
+      this.stylesheetCache.set(key, rules);
+      while (this.stylesheetCache.size > LocalChapterContentLoader.STYLESHEET_CACHE_LIMIT) {
+        const oldest = this.stylesheetCache.keys().next().value as string | undefined;
+        if (oldest === undefined) break;
+        this.stylesheetCache.delete(oldest);
+      }
+    }
+    // 同一份样式表被多个文件共用，顺序号按本文件里的位置重新编。
+    return rules.map((rule: EpubCssBackgroundRule, index: number): EpubCssBackgroundRule => {
+      const copy = new EpubCssBackgroundRule();
+      copy.tag = rule.tag;
+      copy.id = rule.id;
+      copy.classes = rule.classes;
+      copy.specificity = rule.specificity;
+      copy.order = orderBase + index;
+      copy.url = rule.url;
+      copy.repeat = rule.repeat;
+      return copy;
+    });
   }
 
   /** 读出注释链接指向的注释正文；找不到时返回 null。 */
@@ -236,17 +306,19 @@ export class LocalChapterContentLoader {
     const location = new EpubLinkLocation();
     location.chapterIndex = found.index;
     const segment = found.segment;
-    const body = EpubHtmlConverter.bodyOf(await this.readHtmlFile(path));
+    const html = await this.readHtmlFile(path);
+    const body = EpubHtmlConverter.bodyOf(html);
+    const style = await this.pageStyle(html, path, root);
     // 锚点就是这一章的起点、或文件里找不到这个锚点时，落在这一段的开头。
     const anchor = target.fragment && target.fragment !== segment.startId &&
       EpubHtmlConverter.findAnchorOffset(body, target.fragment) >= 0 ? target.fragment : '';
     const plain = (content: string): string => ReaderActionMarker.strip(content.replace(
       new RegExp(`${LocalChapterContentLoader.escape(ReaderImageMarker.PREFIX)}[\\s\\S]*?` +
         `${LocalChapterContentLoader.escape(ReaderImageMarker.SUFFIX)}`, 'g'), ''));
-    const after = await this.convertBody(body, path, root, anchor || segment.startId, segment.endId);
+    const after = await this.convertBody(body, path, root, anchor || segment.startId, segment.endId, style);
     location.needle = EpubLinkTarget.needle(plain(after.content));
     if (anchor) {
-      const before = await this.convertBody(body, path, root, segment.startId, anchor);
+      const before = await this.convertBody(body, path, root, segment.startId, anchor, style);
       location.estimate = plain(before.content).length;
     }
     return location;

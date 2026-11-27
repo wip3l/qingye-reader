@@ -1,4 +1,5 @@
 import { ReaderActionMarker } from '@legado/sourceengine';
+import { EpubCssBackground, EpubCssBackgroundValue, EpubPageStyle } from './EpubCssBackground';
 import { EpubNoteLink } from './EpubNoteLink';
 import { ReaderImageMarker } from './ReaderImageMarker';
 
@@ -22,6 +23,11 @@ export class EpubConvertResult {
   /** 以块级标记输出的图片路径（去重，按出现顺序）。 */
   imagePaths: string[] = [];
   hasText: boolean = false;
+  /**
+   * 还不知道尺寸、因此这次没有放进正文的 CSS 背景图（见 EpubCssBackground）。
+   * 调用方读出尺寸后再转换一次，够大的背景图才当插图放进去。
+   */
+  backgroundPaths: string[] = [];
   /** 第一个标题元素（h1-h6）的文本，供没有目录条目的章节取名。 */
   headingText: string = '';
 }
@@ -49,6 +55,13 @@ class EpubPendingImage {
 export class EpubHtmlConverter {
   /** 行内图片（外字、小图标）的最大边长，超过即视为插图。 */
   static readonly INLINE_IMAGE_MAX_SIDE: number = 64;
+  /**
+   * CSS 背景图当插图的条件：所在片段的文字不超过这么多字（卷首页、人物卡；正文页的纸纹不算），
+   * 短边至少这么多像素、长宽比不超过这个值（标题底纹、花边、分隔条不算）。
+   */
+  static readonly BACKGROUND_MAX_TEXT: number = 800;
+  static readonly BACKGROUND_MIN_SIDE: number = 240;
+  static readonly BACKGROUND_MAX_ASPECT: number = 2.5;
 
   private static readonly IMAGE_OPEN: string = '\uE000';
   private static readonly IMAGE_CLOSE: string = '\uE001';
@@ -186,17 +199,20 @@ export class EpubHtmlConverter {
   }
 
   static convert(html: string, resolveImage: EpubImageResolver, startId: string = '',
-    endId: string = ''): EpubConvertResult {
-    return EpubHtmlConverter.convertBody(EpubHtmlConverter.bodyOf(html), resolveImage, startId, endId);
+    endId: string = '', pageStyle: EpubPageStyle | null = null): EpubConvertResult {
+    return EpubHtmlConverter.convertBody(EpubHtmlConverter.bodyOf(html), resolveImage, startId, endId, null,
+      pageStyle);
   }
 
   /**
    * resolveLink 为空时链接按普通文字处理（注释弹窗里的注释正文就是这样转换的）；
    * 给出时注释编号换成可点的动作标记，本文件里被这些编号引用的脚注块不再留在正文里；
    * 指向书里其他位置的链接也换成动作标记，显示的仍是链接原来的文字。
+   * pageStyle 给出时，文字很少的片段里设了 CSS 背景图的元素把背景图当插图放在元素开头（见 EpubCssBackground）。
    */
   static convertBody(body: string, resolveImage: EpubImageResolver, startId: string = '',
-    endId: string = '', resolveLink: EpubLinkResolver | null = null): EpubConvertResult {
+    endId: string = '', resolveLink: EpubLinkResolver | null = null,
+    pageStyle: EpubPageStyle | null = null): EpubConvertResult {
     const result = new EpubConvertResult();
     const images: EpubPendingImage[] = [];
     let source = EpubHtmlConverter.sliceBody(body, startId, endId)
@@ -235,6 +251,9 @@ export class EpubHtmlConverter {
       images.push(new EpubPendingImage(ref, alt));
       return `${EpubHtmlConverter.IMAGE_OPEN}${images.length - 1}${EpubHtmlConverter.IMAGE_CLOSE}`;
     };
+    if (pageStyle) {
+      source = EpubHtmlConverter.insertBackgrounds(source, body, startId, pageStyle, resolveImage, result, pushImage);
+    }
     source = source
       // 应用排版放不了书里的音频、视频：多看音频的封面图（placeholder）、视频的海报（poster）当插图显示，
       // 播放要到“文件排版”里点（见 EpubOriginalScript 的 setupMedia）。
@@ -641,6 +660,66 @@ export class EpubHtmlConverter {
     }
     return html.length > EpubHtmlConverter.MAX_NOTE_HTML_LENGTH ?
       html.substring(0, EpubHtmlConverter.MAX_NOTE_HTML_LENGTH) : html;
+  }
+
+  /**
+   * 把片段里 CSS 背景图换成插图标记，放在设了背景的元素开头；<html>/<body> 的背景放在片段最前面，
+   * 只给文件的第一段。文字多的片段（正文页的纸纹）、片段里已有同一张 <img>、平铺的背景都跳过；
+   * 尺寸未知的先记进 result.backgroundPaths，等调用方读出尺寸再判断够不够大。
+   */
+  private static insertBackgrounds(source: string, body: string, startId: string, pageStyle: EpubPageStyle,
+    resolveImage: EpubImageResolver, result: EpubConvertResult,
+    pushImage: (ref: EpubImageRef | null, alt: string) => string): string {
+    const inlineBackground = source.indexOf('background') >= 0 ||
+      pageStyle.rootTags.some((tag: string): boolean => tag.indexOf('background') >= 0);
+    if (pageStyle.rules.length === 0 && !inlineBackground) return source;
+    const text = EpubHtmlConverter.decodeEntities(source.replace(/<[^>]+>/g, '')).replace(/\s+/g, '');
+    if (text.length > EpubHtmlConverter.BACKGROUND_MAX_TEXT) return source;
+    const used = new Set<string>();
+    const imageTag = /<(?:img|image)\b[^>]*>/gi;
+    let image = imageTag.exec(source);
+    while (image) {
+      const src = EpubHtmlConverter.findHtmlAttribute(image[0], ['src', 'xlink:href', 'href']);
+      const ref = src && !/^(?:data:|https?:)/i.test(src) ? resolveImage(EpubHtmlConverter.decodeEntities(src)) : null;
+      if (ref && ref.path) used.add(ref.path);
+      image = imageTag.exec(source);
+    }
+    const take = (value: EpubCssBackgroundValue | null): string => {
+      if (!value || !value.url || value.repeat) return '';
+      const ref = resolveImage(EpubHtmlConverter.decodeEntities(value.url));
+      if (!ref || !ref.path || used.has(ref.path)) return '';
+      used.add(ref.path);
+      if (ref.width <= 0 || ref.height <= 0) {
+        if (!result.backgroundPaths.includes(ref.path)) result.backgroundPaths.push(ref.path);
+        return '';
+      }
+      const shortSide = Math.min(ref.width, ref.height);
+      const longSide = Math.max(ref.width, ref.height);
+      if (shortSide < EpubHtmlConverter.BACKGROUND_MIN_SIDE ||
+        longSide / shortSide > EpubHtmlConverter.BACKGROUND_MAX_ASPECT) {
+        return '';
+      }
+      return pushImage(ref, '');
+    };
+    let prefix = '';
+    if (EpubHtmlConverter.sliceStartsFile(body, startId)) {
+      for (const tag of pageStyle.rootTags) prefix += take(EpubCssBackground.backgroundOf(tag, pageStyle));
+    }
+    const converted = source.replace(/<[a-zA-Z][\w:-]*\b[^<>]*>/g, (tag: string): string => {
+      if (/^<(?:img|image|br|hr)\b/i.test(tag)) return tag;
+      const token = take(EpubCssBackground.backgroundOf(tag, pageStyle));
+      return token ? `${tag}${token}` : tag;
+    });
+    return prefix ? `${prefix}\n${converted}` : converted;
+  }
+
+  /** 片段是不是从文件开头起（前面没有文字和图片）：<body> 的背景只放进这一段。 */
+  private static sliceStartsFile(body: string, startId: string): boolean {
+    if (!startId) return true;
+    const offset = EpubHtmlConverter.findAnchorOffset(body, startId);
+    if (offset <= 0) return true;
+    const before = body.substring(0, offset).replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, '');
+    return !EpubHtmlConverter.inlineText(before) && !/<(?:img|image)\b/i.test(before);
   }
 
   /** 注释正文：去掉返回正文的编号链接后按普通正文转换。 */

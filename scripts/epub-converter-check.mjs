@@ -8,7 +8,7 @@ import { loadReaderModules } from './lib/load-reader-modules.mjs';
 
 const { EpubHtmlConverter, EpubImageRef, EpubChapterPlanner, EpubChapterSegment, EpubTocEntry, ReaderImageMarker,
   ReaderActionMarker, EpubNoteLink, EpubLinkTarget, EpubTextOffsetMap, EpubOriginalDocument, EpubOriginalPiece, EpubOriginalPosition,
-  EpubOriginalSpot, EpubOriginalScript, EpubOriginalLayoutOptions, ReaderNightImage, EpubDuokanExtensions, cleanup } =
+  EpubOriginalSpot, EpubOriginalScript, EpubOriginalLayoutOptions, ReaderNightImage, EpubDuokanExtensions, EpubCssBackground, EpubPageStyle, cleanup } =
   await loadReaderModules();
 
 let failures = 0;
@@ -371,6 +371,67 @@ try {
     equal((big.match(/\[\[LEGADO_READER_ACTION_V3:/g) || []).length, count, `${count} 个注释编号都换成注释标记`);
     // 改前同一用例约 15 秒（主线程卡死被系统杀掉），改后约 200ms。
     check(elapsed < 1500, `单文件 ${count} 条注释转换耗时 ${elapsed.toFixed(0)}ms`);
+  }
+
+  console.log('css backgrounds');
+  {
+    const bgSizes = { 'vol.jpg': [1080, 1920], 'portrait.png': [600, 800], 'paper.jpg': [1080, 1920],
+      'banner.png': [1200, 200], 'tile.png': [100, 100] };
+    const bgResolve = (src) => {
+      const ref = new EpubImageRef();
+      ref.path = src.startsWith('/') ? `/book${src}` : `/book/Text/${src}`;
+      const size = bgSizes[src.split('/').pop()];
+      if (size) {
+        ref.width = size[0];
+        ref.height = size[1];
+      }
+      return ref;
+    };
+    const bgMarker = (path, name) => ReaderImageMarker.create(path, bgSizes[name][0], bgSizes[name][1]);
+    const styleOf = (html, css = '') => {
+      const style = new EpubPageStyle();
+      style.rootTags = EpubCssBackground.rootTags(html);
+      style.rules = EpubCssBackground.parseRules(css, (url) => `/OEBPS/${url.replace(/^\.\.\//, '')}`)
+        .concat(EpubCssBackground.parseRules(EpubCssBackground.styleBlocks(html), null, 1000));
+      return style;
+    };
+    const run = (html, css = '', startId = '', endId = '') =>
+      EpubHtmlConverter.convertBody(EpubHtmlConverter.bodyOf(html), bgResolve, startId, endId, null, styleOf(html, css));
+
+    const volume = '<html><head><link rel="stylesheet" href="../Styles/a.css"/></head>' +
+      '<body class="vol"><div class="v-title">少年起微末</div><p>第一册</p></body></html>';
+    const css = '/* c */ body.vol { background: url(../Images/vol.jpg) no-repeat center; background-size: cover; }' +
+      '@media screen { .card { background-image: url("../Images/portrait.png"); } } @font-face { src: url(x.ttf); }';
+    equal(EpubCssBackground.stylesheetHrefs(volume).join(','), '../Styles/a.css', '找出链接的样式表');
+    equal(run(volume, css).content, `${bgMarker('/book/OEBPS/Images/vol.jpg', 'vol.jpg')}\n\n少年起微末\n\n第一册`,
+      '<body> 的背景图放在卷首页最前面，文字照常保留');
+    equal(run('<html><body><div class="card"><p>崔东山</p></div></body></html>', css).content,
+      `${bgMarker('/book/OEBPS/Images/portrait.png', 'portrait.png')}\n\n崔东山`, '@media 里元素的背景图放在元素开头');
+    equal(run('<html><body><div style="background-image:url(&quot;portrait.png&quot;)">人物</div></body></html>').content,
+      `${bgMarker('/book/Text/portrait.png', 'portrait.png')}\n\n人物`, 'style 属性里的背景图相对 XHTML 解析');
+    equal(run('<html><head><style>.t{background:url(banner.png) no-repeat}</style></head><body><h1 class="t">卷一</h1></body></html>')
+      .content, '卷一', '扁长的标题底纹不当插图');
+    equal(run('<html><head><style>body{background:url(tile.png)}</style></head><body><p>短</p></body></html>').content,
+      '短', '小图不当插图');
+    equal(run('<html><head><style>body{background-image:url(paper.jpg);background-repeat:repeat-y}</style></head><body><p>短</p></body></html>')
+      .content, '短', '写明平铺的背景是纸纹，不当插图');
+    equal(run(`<html><head><style>body{background:url(paper.jpg) no-repeat}</style></head><body><p>${'正文'.repeat(500)}</p></body></html>`)
+      .content, '正文'.repeat(500), '文字多的正文页不放背景图');
+    equal(run('<html><head><style>.a{background:url(vol.jpg) no-repeat} div.a{background:none}</style></head><body><div class="a">字</div></body></html>')
+      .content, '字', '特异度更高的规则把背景去掉');
+    equal(run('<html><head><style>.a{background:url(vol.jpg)}</style></head><body><div class="a"><img src="vol.jpg"/></div></body></html>')
+      .content, bgMarker('/book/Text/vol.jpg', 'vol.jpg'), '同一张图已有 <img> 时不重复');
+    equal(run('<html><head><style>p:hover{background:url(vol.jpg)} .x p{background:url(portrait.png) no-repeat}</style></head><body><p>字</p></body></html>')
+      .content, `${bgMarker('/book/Text/portrait.png', 'portrait.png')}\n\n字`, '伪类规则忽略，祖先选择器按最后一段匹配');
+    const unsized = EpubHtmlConverter.convertBody('<p>字</p>', (src) => { const r = new EpubImageRef(); r.path = `/u/${src}`; return r; },
+      '', '', null, styleOf('<html><body style="background:url(big.jpg)"></body></html>'));
+    equal(unsized.content, '字', '尺寸未知的背景图先不放进正文');
+    equal(unsized.backgroundPaths.join(','), '/u/big.jpg', '尺寸未知的背景图记下来等读出尺寸');
+    const split = '<html><body class="vol"><h2 id="a">一</h2><p>甲</p><h2 id="b">二</h2><p>乙</p></body></html>';
+    check(run(split, css, 'a', 'b').content.startsWith(ReaderImageMarker.PREFIX), '文件第一段带 <body> 背景');
+    equal(run(split, css, 'b').content, '二\n\n乙', '同一文件后面切出的章节不再带 <body> 背景');
+    equal(EpubHtmlConverter.convert('<html><body style="background:url(cover.jpg)"><p>x</p></body></html>', resolve).content,
+      'x', '不给样式上下文时行为不变');
   }
 
   console.log('original layout');

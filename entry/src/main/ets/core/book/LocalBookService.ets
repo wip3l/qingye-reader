@@ -137,8 +137,8 @@ export class LocalBookService {
   static readonly EPUB_IMAGE_MARKER_SUFFIX: string = ReaderImageMarker.SUFFIX;
 
   private static readonly TXT_PARSER_VERSION: string = '10';
-  // 10 / 2：注释编号换成可点的注释标记。11：音频的封面图、视频的海报当插图显示。12 / 3：书内链接换成可点的跳转标记。
-  private static readonly EPUB_PARSER_VERSION: string = '12';
+  // 10 / 2：注释编号换成可点的注释标记。11：音频的封面图、视频的海报当插图显示。12 / 3：书内链接换成可点的跳转标记。13：卷首页、人物卡等页面的 CSS 背景图当插图显示。
+  private static readonly EPUB_PARSER_VERSION: string = '13';
   private static readonly MOBI_PARSER_VERSION: string = '3';
   private static readonly CBZ_PARSER_VERSION: string = '1';
   /** 导入时同时预读的正文文件数。 */
@@ -1635,9 +1635,10 @@ export class LocalBookService {
           const body = EpubHtmlConverter.bodyOf(chapterHtml);
           const documentTitle = EpubHtmlConverter.titleOf(chapterHtml);
           const fallbackTitle = documentTitle && documentTitle !== result.title ? documentTitle : '';
+          const pageStyle = await LocalChapterContentLoader.pageStyle(chapterHtml, chapterPath, extractRoot);
           for (const cut of EpubChapterPlanner.planFileCuts(body, entries)) {
             const converted = await LocalChapterContentLoader.convertBody(body, chapterPath, extractRoot,
-              cut.startId, cut.endId);
+              cut.startId, cut.endId, pageStyle);
             planner.addPiece(chapterPath, cut.startId, cut.endId, cut.title, converted, fallbackTitle);
             await yieldIfBusy();
           }
