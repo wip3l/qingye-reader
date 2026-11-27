@@ -222,7 +222,8 @@ struct ReaderReplaceRulesPage {
         .fontSize(16)
         .fontColor([this.subTextColor()])
     }
-    .width('100%')
+    // 左右外边距不会缩小百分比宽度，宽度要扣掉两侧边距，才能和搜索框、规则卡片对齐。
+    .width(`calc(100% - ${AppSpacing.XL * 2}vp)`)
     .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.MD, bottom: AppSpacing.MD })
     .constraintSize({ minHeight: 48 })
     .backgroundColor(this.cardColor())
