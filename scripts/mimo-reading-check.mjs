@@ -29,6 +29,17 @@ for (const text of [
 }
 const dialogue = MimoPolicy.split('沈砚说：“走吧。”林晚答：“好。”');
 assert.deepEqual(Array.from(dialogue, u => u.text), ['沈砚说：', '“走吧。”', '林晚答：', '“好。”']);
+// 多段引语每段只有开引号：引号状态不能带过换行，否则后面几段都按 100 字硬切到句子中间。
+const multiParagraph = MimoPolicy.split('他说：“我们从混乱中站起来，一路杀到现在。\n　　所有人都在看我，都在问我，什么时候开战？\n' +
+  '　　这样不好，至少在没有战争的时候。\n　　过刚易折啊，战争只是手段，战争的真正目的是通过掠夺资源。”');
+assert.deepEqual(Array.from(multiParagraph, u => u.text), ['他说：', '“我们从混乱中站起来，一路杀到现在。\n',
+  '　　所有人都在看我，都在问我，什么时候开战？\n', '　　这样不好，至少在没有战争的时候。\n',
+  '　　过刚易折啊，战争只是手段，战争的真正目的是通过掠夺资源。”']);
+// 引号里的长句超过上限时退到最近的句末标点或逗号，不切在词中间。
+const longQuote = MimoPolicy.split('“' + '甲乙丙丁戊己庚辛壬癸，'.repeat(12) + '完了。”');
+assert.ok(longQuote.length > 1);
+for (const unit of longQuote.slice(0, -1)) assert.ok(/[，。]$/.test(unit.text), `cut at punctuation: ${unit.text}`);
+assert.ok(longQuote.every(u => u.text.length <= 100));
 const valid = { roles: [], assignments: dialogue.map(u => ({ unitId:u.id,roleId:'narrator',emotion:'平静',confidence:1 })) };
 assert.doesNotThrow(() => MimoPolicy.validate(valid, dialogue));
 for (const assignments of [valid.assignments.slice(1), [...valid.assignments.slice(1), valid.assignments[1]],

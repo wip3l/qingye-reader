@@ -73,15 +73,37 @@ export class MimoPolicy {
       units.push(unit);
       start = end;
     };
+    // 超长时往回找断点：先找句末标点，再找逗号一类，都不在后三分之二里才按字数硬切，免得切在词中间。
+    // 断点后紧跟的标点（“……”“！？”）一并留在前一句。
+    const softCut = (end: number): number => {
+      const floor = start + Math.floor(limit / 3);
+      for (const mark of [/[。！？!?…]/, /[，,、；;：:—]/]) {
+        for (let k = end - 1; k >= floor; k--) {
+          if (!mark.test(text[k])) continue;
+          let cut = k + 1;
+          while (cut < end && /[。！？!?…—，,、；;：:]/.test(text[cut])) cut++;
+          return cut;
+        }
+      }
+      return end;
+    };
     for (let i = 0; i < text.length; i++) {
       const ch = text[i];
       const opening = ch === '“' || ch === '「' || ch === '『' || (ch === '"' && !quoted);
       const closing = ch === '”' || ch === '」' || ch === '』' || (ch === '"' && quoted);
       if (opening) { append(i); quoted = true; }
       if (closing) { quoted = false; append(i + 1); }
-      else if ((!quoted && /[。！？!?\n]/.test(ch)) || i - start + 1 >= limit) {
+      else if (ch === '\n') {
+        // 一段引语跨好几段时，中文习惯每段只有开引号、最后一段才收引号；引号状态带过换行会让后面几段
+        // 都不按句号断，只能按字数硬切到句子中间。引语以段为界。
+        quoted = false;
+        append(i + 1);
+      } else if (!quoted && /[。！？!?]/.test(ch)) {
+        append(i + 1);
+      } else if (i - start + 1 >= limit) {
+        const cut = softCut(i + 1);
         const code = text.charCodeAt(i);
-        if (code < 0xD800 || code > 0xDBFF) append(i + 1);
+        if (cut <= i || code < 0xD800 || code > 0xDBFF) append(cut);
       }
     }
     append(text.length);
