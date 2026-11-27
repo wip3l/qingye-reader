@@ -182,6 +182,10 @@ assert.deepEqual(analysisNotices,[1000,2000], 'analysis retries notify independe
   assert.equal(MimoPolicy.resolveRoleId(merged,'k3'),'k2','stored analysis with an old id still finds the character');
   assert.equal(MimoPolicy.resolveRoleId(merged,'w'),'w');
   assert.equal(MimoPolicy.dedupeRoles(merged,[]),null,'nothing left to merge');
+  // 用户手动定的性别在合并时优先，并保留手动标记。
+  const manualDup=[new MimoRole(),role('a','维尔',{gender:'male',lead:true}),role('b','维尔',{gender:'female',genderManual:true})];
+  const keptManual=MimoPolicy.dedupeRoles(manualDup,[]);
+  assert.equal(keptManual.length,2);assert.equal(keptManual[1].gender,'female');assert.equal(keptManual[1].genderManual,true);
 }
 // 本机性别线索：一句只有一个人物时，紧挨名字的称谓和下一分句开头的他/她。
 {

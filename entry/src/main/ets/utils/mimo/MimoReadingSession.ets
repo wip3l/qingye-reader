@@ -364,7 +364,7 @@ export class MimoReadingSession {
     const learned: string[] = [];
     // 只补还不明的性别；改了性别的人物按新性别重新配 MiMo 声音（锁定、手动选过的不动）。
     const learnGender = (role: MimoRole, gender: string, how: string): void => {
-      if (MimoPolicy.knownGender(role.gender) || !MimoPolicy.knownGender(gender)) return;
+      if (role.genderManual || MimoPolicy.knownGender(role.gender) || !MimoPolicy.knownGender(gender)) return;
       role.gender = gender;
       if (!role.locked && !role.manual) MimoStore.assign(role, latest, library);
       learned.push(`${role.id}=${gender}/${how}`);

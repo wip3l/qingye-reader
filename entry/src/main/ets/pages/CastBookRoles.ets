@@ -6,7 +6,7 @@ import { CastAvatar, CastPill, CastVoicePicker } from '../components/CastVoiceVi
 import { BookNameStyleSection } from '../components/BookNameStyleSection';
 import { CastScheme, CastVoicePolicy, CastVoiceRef } from '../core/mimo/CastVoicePolicy';
 import { MimoVoicePolicy } from '../core/mimo/MimoVoicePolicy';
-import { MimoRole } from '../core/mimo/MimoPolicy';
+import { MimoPolicy, MimoRole } from '../core/mimo/MimoPolicy';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
@@ -29,6 +29,9 @@ class CastRoleView {
   lead: boolean = false;
   manual: boolean = false;
   sub: string = '';
+  /** 列表行上性别后面的部分（年龄、配角位置）；性别单独画成可点的胶囊。 */
+  rest: string = '';
+  genderManual: boolean = false;
   voice: string = '';
   source: string = '';
   ref: CastVoiceRef = new CastVoiceRef();
@@ -52,6 +55,11 @@ struct CastBookRolesPage {
   @State previewing: string = '';
   @State showPicker: boolean = false;
   @State pickRole: string = '';
+  /** 正在改哪个人物的性别（行上性别胶囊弹出的小菜单）。 */
+  @State genderMenuRole: string = '';
+  /** “性别不明”筛选：打开时记下当时不明的人，改好的人留在列表里，看得到改成了什么。 */
+  @State onlyUnknown: boolean = false;
+  @State filterIds: string[] = [];
   /** 简单的单选面板（选方案、选说话人）：系统操作菜单最多 6 项，人物和方案可能更多。 */
   @State showOptions: boolean = false;
   @State optionTitle: string = '';
@@ -104,16 +112,17 @@ struct CastBookRolesPage {
         view.id = role.id; view.name = role.name; view.gender = role.gender || 'unknown';
         view.lead = role.lead === true; view.manual = match.slot === '已指定';
         const parts: string[] = [];
-        if (role.id !== 'narrator') {
-          parts.push(view.gender === 'male' ? '男' : (view.gender === 'female' ? '女' : '性别不明'));
-          if (role.age && role.age !== 'unknown') parts.push(MimoVoicePolicy.ageLabel(role.age));
-        }
+        if (role.age && role.age !== 'unknown' && role.id !== 'narrator') parts.push(MimoVoicePolicy.ageLabel(role.age));
         if (match.slot !== '已指定' && match.slot !== '性别不明') parts.push(role.id === 'narrator' ? '方案里的旁白' : match.slot);
-        view.sub = parts.join(' · ');
+        view.rest = parts.join(' · ');
+        view.genderManual = role.genderManual === true && MimoPolicy.knownGender(view.gender);
+        view.sub = role.id === 'narrator' ? view.rest :
+          [view.gender === 'male' ? '男' : (view.gender === 'female' ? '女' : '性别不明')].concat(parts).join(' · ');
         view.ref = match.ref;
         view.voice = match.ref.name || '没有可用音色';
         view.source = CastVoicePolicy.sourceLabel(match.ref.kind);
-        view.signature = [view.id, view.name, view.gender, view.sub, view.voice, view.source, view.lead ? 'L' : '', view.manual ? 'M' : ''].join('|');
+        view.signature = [view.id, view.name, view.gender, view.sub, view.voice, view.source, view.lead ? 'L' : '',
+          view.manual ? 'M' : '', view.genderManual ? 'G' : ''].join('|');
         views.push(view);
       }
       // 配角第一次显示时就把取到的音色记进档案，列表里看到的和朗读时用的才是同一个。
@@ -173,6 +182,43 @@ struct CastBookRolesPage {
       // 主角跟方案走，不留手动指定的音色。
       if (lead) { role.castVoice = undefined; role.castManual = false; }
     }, lead ? '已设为主角，用方案里的主角音色' : '已取消主角');
+  }
+  /**
+   * 手动定性别。男/女记为手动，自动识别不再改；“不明”清掉手动标记交回自动识别。旧的计票清零重数；
+   * 自动分到的配角音色是按原来的性别取的，重新取（手动指定的音色不动）；MiMo 声音按新性别重配。
+   */
+  private setGender(id: string, gender: string): void {
+    this.genderMenuRole = '';
+    const cast = MimoStore.cast(this.book);
+    const role = cast.roles.find((item: MimoRole): boolean => item.id === id);
+    if (!role || role.id === 'narrator') return;
+    const known = MimoPolicy.knownGender(gender);
+    if (role.gender === gender && (role.genderManual === true) === known) return;
+    role.gender = gender;
+    role.genderManual = known ? true : undefined;
+    role.genderVotes = undefined;
+    if (!known) role.lead = false;
+    if (!role.castManual) role.castVoice = undefined;
+    if (!role.locked && !role.manual) MimoStore.assign(role, cast);
+    MimoStore.saveCast(this.book, cast, this.bookName);
+    this.refresh();
+    HdsFeedback.showToast(known ? `已改为${gender === 'male' ? '男' : '女'}，自动识别不再改它` : '已交回自动识别');
+  }
+  private unknownIds(): string[] {
+    return this.roles.filter((view: CastRoleView): boolean => view.id !== 'narrator' && !MimoPolicy.knownGender(view.gender))
+      .map((view: CastRoleView): string => view.id);
+  }
+  private shownRoles(): CastRoleView[] {
+    if (!this.onlyUnknown) return this.roles;
+    return this.roles.filter((view: CastRoleView): boolean => this.filterIds.includes(view.id));
+  }
+  private genderHue(gender: string): ResourceColor {
+    if (gender === 'male') return ThemeRuntime.accentColor(this.dark);
+    if (gender === 'female') return this.dark ? '#E39AB8' : '#A8456B';
+    return ThemeRuntime.subTextColor(this.dark);
+  }
+  private menuGender(): string {
+    return this.roles.find((view: CastRoleView): boolean => view.id === this.genderMenuRole)?.gender || 'unknown';
   }
   private usage(keys: boolean): string[] {
     const result: string[] = [];
@@ -339,7 +385,16 @@ struct CastBookRolesPage {
             }
             if (view.manual) { CastPill({ text: '已指定', tone: 'accent' }) }
           }.width('100%')
-          if (view.sub) {
+          if (view.id !== 'narrator') {
+            Row({ space: AppSpacing.XS }) {
+              this.genderChip(view)
+              if (view.genderManual) { CastPill({ text: '手动', tone: 'accent' }) }
+              if (view.rest) {
+                Text('· ' + view.rest).fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.subTextColor(this.dark))
+                  .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
+              }
+            }.width('100%')
+          } else if (view.sub) {
             Text(view.sub).fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.subTextColor(this.dark))
               .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
           }
@@ -361,6 +416,82 @@ struct CastBookRolesPage {
         Divider().strokeWidth(0.5).color(ThemeRuntime.dividerColor(this.dark)).margin({ left: 66 })
       }
     }.width('100%')
+  }
+
+  /** 行上的性别：不明时是虚线小胶囊，已知时是普通文字；点它弹出男 / 女 / 不明，不打开选音色面板。 */
+  @Builder
+  genderChip(view: CastRoleView) {
+    Row({ space: 2 }) {
+      Text(view.gender === 'male' ? '男' : (view.gender === 'female' ? '女' : '性别不明'))
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.genderMenuRole === view.id ? ThemeRuntime.accentColor(this.dark) : ThemeRuntime.subTextColor(this.dark))
+      if (!MimoPolicy.knownGender(view.gender)) {
+        SymbolGlyph($r('sys.symbol.chevron_down')).fontSize(10)
+          .fontColor([this.genderMenuRole === view.id ? ThemeRuntime.accentColor(this.dark) : ThemeRuntime.subTextColor(this.dark)])
+      }
+    }
+    .padding(MimoPolicy.knownGender(view.gender) ? { top: 1, bottom: 1 } : { left: 7, right: 5, top: 1, bottom: 1 })
+    .borderRadius(8)
+    .border(MimoPolicy.knownGender(view.gender) ? { width: 0 } : {
+      width: 1, style: this.genderMenuRole === view.id ? BorderStyle.Solid : BorderStyle.Dashed,
+      color: this.genderMenuRole === view.id ? ThemeRuntime.accentColor(this.dark) : ThemeRuntime.subTextColor(this.dark)
+    })
+    .backgroundColor(this.genderMenuRole === view.id && !MimoPolicy.knownGender(view.gender) ?
+      ThemeRuntime.accentSurfaceColor(this.dark) : Color.Transparent)
+    .responseRegion({ x: -8, y: -8, width: '140%', height: '180%' })
+    .accessibilityText('性别：' + (view.gender === 'male' ? '男' : (view.gender === 'female' ? '女' : '不明')) + '，点按修改')
+    .bindPopup(this.genderMenuRole === view.id, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel,
+      (): void => { this.genderPopup() }, Placement.BottomLeft, this.dark, ThemeRuntime.accentColor(this.dark), () => {
+        if (this.genderMenuRole === view.id) this.genderMenuRole = '';
+      }))
+    .onClick(() => { this.stopPreview(); this.genderMenuRole = view.id; })
+  }
+
+  @Builder
+  genderPopup() {
+    Column({ space: AppSpacing.XXS }) {
+      this.genderItem('男', 'male')
+      this.genderItem('女', 'female')
+      this.genderItem('不明', 'unknown')
+      Divider().strokeWidth(0.5).color(ThemeRuntime.dividerColor(this.dark))
+        .margin({ top: AppSpacing.XS, bottom: AppSpacing.XS, left: 12, right: 12 })
+      Text('选男或女后，自动识别不再改它；选“不明”交回自动识别。')
+        .fontSize(AppFontSize.MICRO).fontColor(ThemeRuntime.subTextColor(this.dark)).width('100%')
+        .padding({ left: 12, right: 12, bottom: AppSpacing.XS })
+    }
+    .width(200)
+    .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+  }
+
+  @Builder
+  genderItem(label: string, gender: string) {
+    Row({ space: 10 }) {
+      Row().width(9).height(9).borderRadius(4.5).backgroundColor(this.genderHue(gender))
+      Text(label).fontSize(AppFontSize.BODY_LARGE)
+        .fontWeight(this.menuGender() === gender ? FontWeight.Medium : FontWeight.Regular)
+        .fontColor(ThemeRuntime.primaryTextColor(this.dark)).layoutWeight(1)
+      if (this.menuGender() === gender) {
+        SymbolGlyph($r('sys.symbol.checkmark')).fontSize(14).fontColor([ThemeRuntime.accentColor(this.dark)])
+      }
+    }
+    .width('100%').height(44).padding({ left: 12, right: 12 })
+    .borderRadius(ImmersiveMaterialRuntime.POPUP_MENU_RADIUS - ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+    .backgroundColor(this.menuGender() === gender ? ThemeRuntime.softFillColor(this.dark) : Color.Transparent)
+    .onClick(() => { this.setGender(this.genderMenuRole, gender); })
+  }
+
+  // 按值传进 @Builder 的参数不会随状态刷新，选中态和人数在这里直接读 this。
+  @Builder
+  filterChip(value: boolean) {
+    Text(value ? `性别不明 ${this.unknownIds().length}` : '全部').fontSize(AppFontSize.BODY)
+      .fontColor(this.onlyUnknown === value ? ThemeRuntime.cardColor(this.dark) : ThemeRuntime.subTextColor(this.dark))
+      .backgroundColor(this.onlyUnknown === value ? ThemeRuntime.primaryTextColor(this.dark) : ThemeRuntime.cardColor(this.dark))
+      .height(30).padding({ left: AppSpacing.LG, right: AppSpacing.LG }).borderRadius(15)
+      .onClick(() => {
+        if (value === this.onlyUnknown) return;
+        if (value) this.filterIds = this.unknownIds();
+        this.onlyUnknown = value;
+      })
   }
 
   @Builder
@@ -421,15 +552,22 @@ struct CastBookRolesPage {
           Text(`${this.roles.length} 个`).fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.subTextColor(this.dark))
         }.width('100%').padding({ left: AppSpacing.XXS, top: AppSpacing.SM })
 
+        if (this.onlyUnknown || this.unknownIds().length > 0) {
+          Row({ space: AppSpacing.SM }) {
+            this.filterChip(false)
+            this.filterChip(true)
+          }.width('100%')
+        }
+
         Column() {
-          ForEach(this.roles, (view: CastRoleView, index: number) => {
-            this.roleRow(view, index === this.roles.length - 1)
+          ForEach(this.shownRoles(), (view: CastRoleView, index: number) => {
+            this.roleRow(view, index === this.shownRoles().length - 1)
             // 键里带上“是不是最后一行”：人物变多后，原来的最后一行要补上分隔线。
           }, (view: CastRoleView, index: number): string => view.signature + (this.previewing === view.id ? 'p' : '') +
-            (index === this.roles.length - 1 ? 'e' : ''))
+            (index === this.shownRoles().length - 1 ? 'e' : ''))
         }.width('100%').backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
 
-        Text('点人物可以换音色或设为主角。人物声音跨章节固定，修改只影响本书；拿不准是谁说的句子由旁白读，可以在播放器里点“这句不对？”纠正。')
+        Text('点人物可以换音色或设为主角，点性别可以手动改。人物声音跨章节固定，修改只影响本书；拿不准是谁说的句子由旁白读，可以在播放器里点“这句不对？”纠正。')
           .fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.subTextColor(this.dark)).width('100%')
           .padding({ left: AppSpacing.XS, right: AppSpacing.XS })
         Button('清除本书人物档案').fontSize(AppFontSize.BODY).fontColor(ThemeRuntime.dangerColor(this.dark))

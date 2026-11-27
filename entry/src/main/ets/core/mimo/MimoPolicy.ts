@@ -31,6 +31,8 @@ export class MimoRole {
   mergedIds?: string[];
   /** 本机从原文里数到的性别线索（代词、称谓）：[男, 女]。 */
   genderVotes?: number[];
+  /** 性别是用户在“本书人物”里定的：自动识别不再改它。改回“不明”时清掉。 */
+  genderManual?: boolean;
 }
 
 /** A stored correction or anything else that points at a character by id. */
@@ -301,7 +303,11 @@ export class MimoPolicy {
       if (id !== target.id && !ids.includes(id)) ids.push(id);
     }
     target.mergedIds = ids;
-    if (!MimoPolicy.knownGender(target.gender) && MimoPolicy.knownGender(other.gender)) target.gender = other.gender;
+    if (other.genderManual && !target.genderManual && MimoPolicy.knownGender(other.gender)) {
+      target.gender = other.gender; target.genderManual = true;
+    } else if (!MimoPolicy.knownGender(target.gender) && MimoPolicy.knownGender(other.gender)) {
+      target.gender = other.gender;
+    }
     if ((!target.age || target.age === 'unknown') && other.age && other.age !== 'unknown') {
       target.age = other.age; target.ageEvidence = other.ageEvidence;
     }
@@ -326,7 +332,7 @@ export class MimoPolicy {
       if (group) group.push(role); else groups.set(key, [role]);
     }
     const score = (role: MimoRole): number => (role.lead ? 8 : 0) + (role.castManual ? 4 : 0) +
-      (role.manual || role.locked ? 2 : 0) + (MimoPolicy.knownGender(role.gender) ? 1 : 0);
+      (role.manual || role.locked || role.genderManual ? 2 : 0) + (MimoPolicy.knownGender(role.gender) ? 1 : 0);
     const removed: Map<string, string> = new Map<string, string>();
     groups.forEach((group: MimoRole[]): void => {
       if (group.length < 2) return;
