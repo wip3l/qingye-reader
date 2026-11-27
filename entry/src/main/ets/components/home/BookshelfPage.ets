@@ -469,6 +469,12 @@ export struct BookshelfPage {
   @State tileGroupPageOpacity: number = 1;
   @State shelfReorderCurtain: image.PixelMap | undefined = undefined;
   @State shelfReorderCurtainOpacity: number = 1;
+  /**
+   * 挪位幕布的兜底撤除：幕布不拦触摸，万一中途卡住（动画结束回调没来、读书架迟迟不返回），
+   * 用户只会看到一张静止的旧书架图，怎么滑都不动，只能杀进程。到点不管挪位走到哪一步都撤掉。
+   */
+  private shelfReorderCurtainWatchdog: number = -1;
+  private static readonly SHELF_REORDER_CURTAIN_MAX: number = 2500;
   /** 关书回到书架到挪位动画结束；期间不在 loadBooks 里放掉按住的阅读时间。 */
   private shelfReturnMotionActive: boolean = false;
   /**
@@ -5151,9 +5157,11 @@ export struct BookshelfPage {
     post();
   }
 
-  async snapshotTileGroupElement(id: string): Promise<image.PixelMap | undefined> {
+  async snapshotTileGroupElement(id: string, waitRender: boolean = false): Promise<image.PixelMap | undefined> {
     try {
-      return await this.getUIContext().getComponentSnapshot().get(id);
+      return waitRender ?
+        await this.getUIContext().getComponentSnapshot().get(id, { scale: 1, waitUntilRenderFinished: true }) :
+        await this.getUIContext().getComponentSnapshot().get(id);
     } catch (error) {
       return undefined;
     }
@@ -8326,7 +8334,8 @@ export struct BookshelfPage {
     }
     BookshelfSortHelper.releaseReadTimes();
     const moved = !!fresh && held !== undefined && BookshelfSortHelper.getBookReadTime(fresh) > held;
-    const curtain = moved ? await this.snapshotTileGroupElement('bookshelf_motion_root') : undefined;
+    // 等书架画完再截：刚从阅读页退回、还没画出书时截到的只有背景，盖上去就是一整屏空书架。
+    const curtain = moved ? await this.snapshotTileGroupElement('bookshelf_motion_root', true) : undefined;
     if (!moved || !curtain || !book || !from || !this.shelfComponentActive) {
       this.releaseTileGroupShot(curtain);
       await this.loadBooks(true);
@@ -8336,6 +8345,7 @@ export struct BookshelfPage {
     }
     this.shelfReorderCurtain = curtain;
     this.shelfReorderCurtainOpacity = 1;
+    this.armShelfReorderCurtainWatchdog(curtain);
     this.tileGroupHiddenCovers = [bookUrl];
     await this.waitShelfFrames(1);
     await this.loadBooks(true);
@@ -8386,9 +8396,11 @@ export struct BookshelfPage {
           this.shelfReorderCurtainOpacity = 0;
         });
       await new Promise<void>((resolve: () => void): void => {
+        // 结束回调没来（切后台等）也不能一直等着，按时长兜底。
+        const fallback = setTimeout(resolve, BookshelfPage.SHELF_REORDER_DURATION + 300);
         this.getUIContext().animateTo({ duration: BookshelfPage.SHELF_REORDER_DURATION,
           curve: curves.cubicBezierCurve(0.2, 0, 0, 1), expectedFrameRateRange: SHELF_GROUP_FRAME_RATE,
-          onFinish: (): void => resolve() }, (): void => {
+          onFinish: (): void => { clearTimeout(fallback); resolve(); } }, (): void => {
           this.tileGroupFlyProgress = 1;
         });
         if (hardcover) {
@@ -8405,8 +8417,9 @@ export struct BookshelfPage {
       });
     } else {
       await new Promise<void>((resolve: () => void): void => {
+        const fallback = setTimeout(resolve, BookshelfPage.SHELF_REORDER_CURTAIN_FADE + 300);
         this.getUIContext().animateTo({ duration: BookshelfPage.SHELF_REORDER_CURTAIN_FADE, curve: Curve.EaseOut,
-          onFinish: (): void => resolve() }, (): void => {
+          onFinish: (): void => { clearTimeout(fallback); resolve(); } }, (): void => {
           this.shelfReorderCurtainOpacity = 0;
         });
       });
@@ -8418,7 +8431,22 @@ export struct BookshelfPage {
     this.clearShelfReorderLayers();
   }
 
+  armShelfReorderCurtainWatchdog(curtain: image.PixelMap): void {
+    if (this.shelfReorderCurtainWatchdog >= 0) clearTimeout(this.shelfReorderCurtainWatchdog);
+    this.shelfReorderCurtainWatchdog = setTimeout((): void => {
+      this.shelfReorderCurtainWatchdog = -1;
+      // 后来又盖了新的幕布就归新的那一轮管。
+      if (this.shelfReorderCurtain !== curtain) return;
+      console.warn('关书挪位超时，撤掉书架幕布');
+      this.clearShelfReorderLayers();
+    }, BookshelfPage.SHELF_REORDER_CURTAIN_MAX);
+  }
+
   clearShelfReorderLayers(): void {
+    if (this.shelfReorderCurtainWatchdog >= 0) {
+      clearTimeout(this.shelfReorderCurtainWatchdog);
+      this.shelfReorderCurtainWatchdog = -1;
+    }
     this.tileGroupHiddenCovers = [];
     this.tileGroupHiddenBooks = [];
     this.tileGroupFlyers = [];
