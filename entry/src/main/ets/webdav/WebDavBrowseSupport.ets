@@ -70,7 +70,8 @@ export class WebDavBrowseSupport {
   static formatColor(format: string): string {
     if (format === 'epub') return '#2F7F6F';
     if (format === 'pdf') return '#A8472F';
-    if (format === 'mobi') return '#93600F';
+    if (format === 'mobi' || format === 'azw3' || format === 'azw') return '#93600F';
+    if (format === 'fb2' || format === 'fbz') return '#3F5F8F';
     return '#5F5F66';
   }
 }

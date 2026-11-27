@@ -181,7 +181,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
   <main id="main">
     <section id="top">
       <h1>开源轻页使用说明书</h1>
-      <p class="lead">一款 HarmonyOS 原生阅读应用：导入自己的 TXT、EPUB、MOBI 和 PDF，在手机、平板和电脑上读小说、看漫画、听朗读。</p>
+      <p class="lead">一款 HarmonyOS 原生阅读应用：导入自己的 TXT、EPUB、MOBI、AZW3、FB2 和 PDF，在手机、平板和电脑上读小说、看漫画、听朗读。</p>
       <p class="meta"><span>当前版本 <b>4.6.046</b></span><span>文档更新 <b>2026-11-17</b></span><span>系统要求 <b>HarmonyOS 6.0.0 及以上</b></span><span>设备 <b>手机 / 平板 / 2in1 电脑</b></span></p>
       <div class="shots">
         <img src="shots/01-companion-v6.webp" alt="陪伴书架：立体书本、分组与继续阅读；把每日阅读，变成温柔的陪伴" width="1080" height="1920">
@@ -203,7 +203,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
       <h2>快速上手</h2>
       <p>第一次打开时书架是空的。按下面的顺序走一遍，就能读到第一本书。</p>
       <ol class="steps">
-        <li><div><strong>导入本地书</strong><span class="d">打开 <span class="p">我的 › 书籍导入</span>，点“本地导入”，在系统文件选择器里选 TXT、EPUB、MOBI、PDF、CBZ 漫画或装着它们的 ZIP，一次可以选多个。</span></div></li>
+        <li><div><strong>导入本地书</strong><span class="d">打开 <span class="p">我的 › 书籍导入</span>，点“本地导入”，在系统文件选择器里选 TXT、EPUB、MOBI、AZW3、FB2、PDF、CBZ 漫画或装着它们的 ZIP，一次可以选多个。</span></div></li>
         <li><div><strong>在书架找到它</strong><span class="d">导入完成后书会出现在书架上。书多了可以建分组、加标签，或用筛选和“搜索书架”快速找到。</span></div></li>
         <li><div><strong>开始阅读</strong><span class="d">点书籍封面打开。阅读时点屏幕中央呼出菜单，可以看目录、加书签、朗读和切换日夜模式。</span></div></li>
         <li><div><strong>调成顺眼的样子</strong><span class="d">菜单里点“Aa”调字号、行距、翻页方式、背景和字体；TXT 章节分得不对时在“更多操作 › 目录规则”里换一种分章方式。</span></div></li>
@@ -258,7 +258,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
     <!-- ───────────── 书籍导入 ───────────── -->
     <section id="import">
       <h2>书籍导入</h2>
-      <p><span class="p">我的 › 书籍导入</span> 支持 TXT、EPUB、未加密的 MOBI6 和 PDF，可从本地文件、OPDS 书库或 WebDAV 导入。</p>
+      <p><span class="p">我的 › 书籍导入</span> 支持 TXT、EPUB、未加密的 MOBI 与 AZW3、FB2（含压缩成 .fbz / .fb2.zip 的）和 PDF，可从本地文件、OPDS 书库或 WebDAV 导入。</p>
       <div class="sub">
         <h3>本地导入</h3>
         <ol>
@@ -268,7 +268,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
         </ol>
         <ul>
           <li>文件会复制到应用内部，之后移动或删除原文件都不影响阅读。</li>
-          <li>也可以直接选 ZIP 压缩包，包里的 TXT、EPUB、MOBI、PDF 会逐本导入，其他文件忽略。包里只有图片时整包当一本漫画导入：一个文件夹算一章，按文件名顺序排列，名为 cover 或“封面”的图片当封面，没有就用第一张。加密的压缩包和 RAR、7Z 不支持。再导入同一个包会更新已有的书，不会重复添加。</li>
+          <li>也可以直接选 ZIP 压缩包，包里的 TXT、EPUB、MOBI、AZW3、FB2、PDF 会逐本导入，其他文件忽略。包里只有图片时整包当一本漫画导入：一个文件夹算一章，按文件名顺序排列，名为 cover 或“封面”的图片当封面，没有就用第一张。加密的压缩包和 RAR、7Z 不支持。再导入同一个包会更新已有的书，不会重复添加。</li>
           <li>应用只读取你选中的文件，不会扫描公共目录。</li>
           <li>想把文件拿回来，在书架长按书籍选“保存源文件”。</li>
         </ul>
@@ -376,7 +376,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
           <tr><td>自定义标签</td><td>给书加上自己的标签，可加多个，点“×”删除。</td></tr>
           <tr><td>移动分组</td><td>把书放进某个分组，没有合适的分组时可以当场新增。</td></tr>
           <tr><td>标记为隐私 / 取消隐私</td><td>移入或移出隐私书架。</td></tr>
-          <tr><td>保存源文件</td><td>把导入的 TXT、EPUB、MOBI、PDF 原文件另存到你选的位置。</td></tr>
+          <tr><td>保存源文件</td><td>把导入的 TXT、EPUB、MOBI、AZW3、FB2、PDF 原文件另存到你选的位置。</td></tr>
           <tr><td>多选</td><td>进入批量模式。</td></tr>
           <tr><td>移出书架</td><td>删除这本书，会先弹出确认。</td></tr>
         </table></div>
@@ -543,7 +543,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
         <ul>
           <li>输入文字后点“查找”，从第一章起逐章查找，结果边查边列出，每条显示所在章节和前后文；查找中可以点“停止”。不区分大小写，查的是经过替换净化后的正文，与屏幕上看到的一致。</li>
           <li>结果按章分组。点一条结果跳到原文所在的页，命中的文字以黄色高亮。页底出现查找胶囊：上下箭头切换上一处、下一处（可以跨章），点中间的“第几处”重新打开结果列表，旁边的“×”结束查找。想回到开始查找前读到的地方，点结果列表上方的“回到原位置”。</li>
-          <li>TXT、EPUB、MOBI 都查全书。</li>
+          <li>TXT、EPUB、MOBI、AZW3、FB2 都查全书。</li>
           <li>结果超过 1000 处时只列出前 1000 处，可以换更精确的关键字。关闭面板后结果仍保留，再次打开可以接着看。</li>
           <li>漫画不支持正文查找；PDF 在自己的阅读菜单里查找；EPUB 使用文件排版时暂不支持正文查找。</li>
         </ul>
@@ -628,12 +628,12 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
       </div>
       <div class="sub">
         <h3>本地书：EPUB、MOBI 与 TXT</h3>
-        <h4>EPUB 与 MOBI</h4>
+        <h4>EPUB、MOBI、AZW3 与 FB2</h4>
         <ul>
           <li><b>应用排版</b>（默认）：按你的字号、行距、背景和字体重新排版。图文混排，小图跟随文字显示，大图单独占一页（页码显示为“图片页”）；插图解码后复用，减少翻页和跨章时的闪白。</li>
           <li><b>文件排版</b>：EPUB 在“更多操作 › 使用文件排版”里切换，按书里原本的样式、字体和版面显示，适合排版讲究的书。可以翻页或滚动，支持目录、书签、划线和朗读；在它的“更多操作 › 使用应用排版”改回来。两种排版共用阅读进度。</li>
           <li><b>注释</b>：书里的注释链接点一下会弹出注释内容，不用跳走。</li>
-          <li><b>MOBI</b>：支持未加密的 MOBI6，按 EPUB 的方式阅读。</li>
+          <li><b>MOBI、AZW3 与 FB2</b>：支持未加密的 MOBI6、AZW3（KF8，含后缀为 .azw 的）和 FB2，导入后按 EPUB 的方式阅读，带目录、插图和注释链接。</li>
         </ul>
         <h4>TXT</h4>
         <ul>
@@ -1043,7 +1043,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
         </ol>
         <div class="tw"><table>
           <tr><th>可备份的内容</th><th>包含什么</th></tr>
-          <tr><td>本地图书</td><td>TXT/EPUB/MOBI/PDF 原文件及书籍信息。书多时备份文件会比较大。</td></tr>
+          <tr><td>本地图书</td><td>TXT/EPUB/MOBI/AZW3/FB2/PDF 原文件及书籍信息。书多时备份文件会比较大。</td></tr>
           <tr><td>书架</td><td>书架分组、标签和单书配置。</td></tr>
           <tr><td>阅读进度</td><td>当前章节、页码、阅读时间及单书状态。</td></tr>
           <tr><td>书签与笔记</td><td>书签、划线和笔记。</td></tr>
@@ -1298,7 +1298,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
     <!-- ───────────── 常见问题 ───────────── -->
     <section id="faq">
       <h2>常见问题</h2>
-      <details><summary>导入失败或提示格式不支持</summary><p>支持 TXT、EPUB、未加密的 MOBI6、PDF 和 CBZ 漫画，以及装着这些文件或纯图片的 ZIP。带 DRM 的电子书、需要打开密码的 PDF、新版 Kindle 格式（AZW3/KF8）、加密的压缩包以及 RAR、7Z 都打不开。可以先在电脑上转成 EPUB 再导入。</p></details>
+      <details><summary>导入失败或提示格式不支持</summary><p>支持 TXT、EPUB、未加密的 MOBI 与 AZW3、FB2、PDF 和 CBZ 漫画，以及装着这些文件或纯图片的 ZIP。带 DRM 的电子书（含从 Kindle 设备直接拷出的书）、需要打开密码的 PDF、KFX 格式、加密的压缩包以及 RAR、7Z 都打不开。可以先在电脑上转成 EPUB 再导入。</p></details>
       <details><summary>TXT 打开是乱码</summary><p>阅读菜单“更多操作 › 字符编码”，把自动识别改成对应的编码。中文旧文件通常选简体中文或繁体中文。</p></details>
       <details><summary>TXT 章节分得不对</summary><p>阅读菜单“更多操作 › 目录规则”，或目录页的尺子按钮，换一种规则，换之前可以预览分章结果。都不合适时，在 <span class="p">我的 › 阅读与收听 › 小说 › TXT 目录规则</span> 里写一条自己的规则；书里根本没有章节标题，就选按字数分章。</p></details>
       <details><summary>导入后把原文件删了还能读吗</summary><p>能。导入时文件已经复制进应用，原文件移动或删除都不影响。想把文件拿回来，在书架长按书籍选“保存源文件”。</p></details>

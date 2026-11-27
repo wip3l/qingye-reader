@@ -19,6 +19,9 @@ export function opdsFormatOfType(type: string): string {
   if (value === 'application/pdf') return 'pdf';
   if (value === 'application/x-mobipocket-ebook') return 'mobi';
   if (value === 'application/vnd.amazon.mobi8-ebook' || value === 'application/azw3') return 'azw3';
+  if (value === 'application/x-fictionbook+xml' || value === 'application/x-fictionbook' ||
+    value === 'text/fb2+xml') return 'fb2';
+  if (value === 'application/fb2+zip' || value === 'application/x-zip-compressed-fb2') return 'fbz';
   if (value === 'application/x-cbz' || value === 'application/vnd.comicbook+zip') return 'cbz';
   if (value === 'application/x-cbr' || value === 'application/vnd.comicbook-rar') return 'cbr';
   return '';

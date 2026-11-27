@@ -230,7 +230,7 @@ export class MobiBookParser {
     return value;
   }
 
-  private static readExth(header: Uint8Array, start: number, encoding: string, decode: MobiTextDecoder,
+  static readExth(header: Uint8Array, start: number, encoding: string, decode: MobiTextDecoder,
     book: MobiBook): void {
     if (start + 12 > header.length || MobiBookParser.ascii(header, start, 4) !== 'EXTH') return;
     const count = MobiBookParser.u32(header, start + 8);
@@ -351,7 +351,7 @@ export class MobiBookParser {
     return `${`${image.recIndex}`.padStart(5, '0')}.${image.ext}`;
   }
 
-  private static imageExtension(bytes: Uint8Array): string {
+  static imageExtension(bytes: Uint8Array): string {
     if (bytes.length < 8) return '';
     if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) return 'jpg';
     if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) return 'png';

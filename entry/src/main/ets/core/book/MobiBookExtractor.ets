@@ -1,6 +1,8 @@
 import fs from '@ohos.file.fs';
 import util from '@ohos.util';
 import { MobiBook, MobiBookParser } from './MobiBookParser';
+import { Kf8BookParser } from './Kf8BookParser';
+import { Fb2BookParser } from './Fb2BookParser';
 
 export class MobiExtractedTocItem {
   part: number = 0;
@@ -18,17 +20,22 @@ export class MobiExtractSummary {
 }
 
 /**
- * 读 MOBI、解析，再把正文段和图片写进 extractRoot 下的 text/、images/。
+ * 读 MOBI / AZW3 / FB2、解析，再把正文段和图片写进 extractRoot 下的 text/、images/。
+ * MOBI 与 AZW3 按文件内容分（MOBI 头版本 8 是 KF8，后缀写成 .mobi 的也一样）；FB2 按格式。
  * 全程同步，供 TaskPool 在后台线程调用；解析成功后才清空旧的解压目录，解析失败不动已有内容。
  */
-export function extractMobiBook(mobiPath: string, extractRoot: string): MobiExtractSummary {
-  const mobi = MobiBookParser.parse(readFileBytes(mobiPath), (value: Uint8Array, encoding: string): string => {
+export function extractMobiBook(mobiPath: string, extractRoot: string, format: string = 'mobi'): MobiExtractSummary {
+  const bytes = readFileBytes(mobiPath);
+  const decode = (value: Uint8Array, encoding: string): string => {
     try {
       return util.TextDecoder.create(encoding).decodeWithStream(value, { stream: false });
     } catch (_) {
       return util.TextDecoder.create('utf-8').decodeWithStream(value, { stream: false });
     }
-  }, '../images');
+  };
+  const mobi = format === 'fb2' ? Fb2BookParser.parse(bytes, decode, '../images') :
+    (Kf8BookParser.isKf8(bytes) ? Kf8BookParser.parse(bytes, decode, '../images') :
+      MobiBookParser.parse(bytes, decode, '../images'));
   if (fs.accessSync(extractRoot)) fs.rmdirSync(extractRoot);
   fs.mkdirSync(`${extractRoot}/text`, true);
   fs.mkdirSync(`${extractRoot}/images`, true);

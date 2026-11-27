@@ -141,17 +141,21 @@ export class LocalBookService {
   private static readonly EPUB_PARSER_VERSION: string = '13';
   private static readonly MOBI_PARSER_VERSION: string = '3';
   private static readonly CBZ_PARSER_VERSION: string = '1';
+  private static readonly FB2_PARSER_VERSION: string = '1';
   /** 导入时同时预读的正文文件数。 */
   private static readonly IMPORT_READ_AHEAD: number = 4;
   /** 导入转换连续占用主线程的时长上限，超过后让出一次。 */
   private static readonly IMPORT_SLICE_MS: number = 32;
 
   /**
-   * 可导入的本地书格式。MOBI、CBZ 解析后与 EPUB 一样按解压目录阅读，书籍类型同为 TYPE_EPUB。
+   * 可导入的本地书格式。MOBI、AZW3（KF8）、FB2、CBZ 解析后与 EPUB 一样按解压目录阅读，书籍类型同为 TYPE_EPUB。
+   * AZW 是 MOBI 或 AZW3 的旧后缀，按内容分；FBZ 是压成 ZIP 的 FB2。
    * CBZ 即纯图片 ZIP；包里没有书只有图片的 .zip 也按 CBZ 导入。
    */
-  static readonly SUPPORTED_FORMATS: string[] = ['txt', 'epub', 'mobi', 'pdf', 'cbz'];
-  static readonly UNSUPPORTED_FORMAT_MESSAGE: string = '仅支持 TXT、EPUB、MOBI、PDF 和 CBZ 文件';
+  static readonly SUPPORTED_FORMATS: string[] = ['txt', 'epub', 'mobi', 'azw3', 'azw', 'fb2', 'fbz', 'pdf', 'cbz'];
+  static readonly UNSUPPORTED_FORMAT_MESSAGE: string = '仅支持 TXT、EPUB、MOBI、AZW3、FB2、PDF 和 CBZ 文件';
+  /** 走 MOBI 解析流程（拆成 HTML 段再按 EPUB 分章）的格式。 */
+  private static readonly MOBI_LIKE_FORMATS: string[] = ['mobi', 'azw3', 'azw', 'fb2', 'fbz'];
   private static readonly TXT_READ_CHUNK_BYTES: number = 256 * 1024;
   private static readonly TXT_MAX_CHAPTER_CHARS: number = 32 * 1024;
   private static readonly TXT_DB_BATCH_SIZE: number = 16;
@@ -172,8 +176,8 @@ export class LocalBookService {
   static bookTypeForFormat(format: string): number {
     const value = (format || '').toLowerCase();
     if (value === 'pdf') return LocalBookService.TYPE_PDF;
-    return value === 'epub' || value === 'mobi' || value === 'cbz' ? LocalBookService.TYPE_EPUB :
-      LocalBookService.TYPE_TXT;
+    return value === 'epub' || value === 'cbz' || LocalBookService.MOBI_LIKE_FORMATS.includes(value) ?
+      LocalBookService.TYPE_EPUB : LocalBookService.TYPE_TXT;
   }
 
   /** 本地书的格式；早期导入没有记录 localFormat 时按书籍类型推断。 */
@@ -210,7 +214,8 @@ export class LocalBookService {
   private static parserVersionFor(format: string): string {
     if (format === 'pdf') return PdfBookService.PARSER_VERSION;
     if (format === 'epub') return LocalBookService.EPUB_PARSER_VERSION;
-    if (format === 'mobi') return LocalBookService.MOBI_PARSER_VERSION;
+    if (format === 'mobi' || format === 'azw3' || format === 'azw') return LocalBookService.MOBI_PARSER_VERSION;
+    if (format === 'fb2' || format === 'fbz') return LocalBookService.FB2_PARSER_VERSION;
     if (format === 'cbz') return LocalBookService.CBZ_PARSER_VERSION;
     return LocalBookService.TXT_PARSER_VERSION;
   }
@@ -443,7 +448,7 @@ export class LocalBookService {
     const options = new picker.DocumentSelectOptions();
     options.selectMode = picker.DocumentSelectMode.FILE;
     options.maxSelectNumber = 500;
-    options.fileSuffixFilters = ['电子书|.txt,.epub,.mobi,.pdf,.cbz,.zip'];
+    options.fileSuffixFilters = ['电子书|.txt,.epub,.mobi,.azw3,.azw,.fb2,.fbz,.pdf,.cbz,.zip'];
     const result = await selectDocuments(context, options);
     const paths: LocalBookFile[] = [];
     for (const uri of result) {
@@ -1428,7 +1433,10 @@ export class LocalBookService {
 
   private static async parsePackage(context: Context, format: string, path: string,
     id: string): Promise<EpubPackageData> {
-    if (format === 'mobi') return await LocalBookService.parseMobi(context, path, id);
+    if (format === 'fbz') return await LocalBookService.parseFbz(context, path, id);
+    if (LocalBookService.MOBI_LIKE_FORMATS.includes(format)) {
+      return await LocalBookService.parseMobi(context, path, id, format === 'fb2' ? 'fb2' : 'mobi');
+    }
     if (format === 'cbz') return await LocalBookService.parseComicArchive(context, path, id);
     return await LocalBookService.parseEpub(context, path, id);
   }
@@ -1562,10 +1570,11 @@ export class LocalBookService {
    * MOBI 先拆成若干 HTML 文件和图片写进解压目录，之后与 EPUB 走同一套分章、转换和阅读时重建正文的流程。
    * 目录锚点是 filepos 位置插入的 id="fileposN"。解析和写文件在 TaskPool 里做，主线程只等结果。
    */
-  private static async parseMobi(context: Context, mobiPath: string, id: string): Promise<EpubPackageData> {
+  private static async parseMobi(context: Context, mobiPath: string, id: string, kind: string = 'mobi',
+    contentPath: string = ''): Promise<EpubPackageData> {
     const stat = await fs.stat(mobiPath);
     const extractRoot = `${context.filesDir}/local_books/${id}_${stat.mtime}`;
-    const mobi = await MobiImportTask.extract(mobiPath, extractRoot);
+    const mobi = await MobiImportTask.extract(contentPath || mobiPath, extractRoot, kind);
     const result = new EpubPackageData();
     result.extractRoot = extractRoot;
     result.title = mobi.title;
@@ -1588,6 +1597,28 @@ export class LocalBookService {
     }
     await LocalBookService.planSpineChapters(files, tocEntries, extractRoot, result);
     return result;
+  }
+
+  /**
+   * FBZ（压成 ZIP 的 FB2）：先解到缓存目录，取包里的第一个 .fb2 按 FB2 解析，用完删掉临时目录。
+   */
+  private static async parseFbz(context: Context, fbzPath: string, id: string): Promise<EpubPackageData> {
+    const workDir = `${context.cacheDir}/fbz_import_${id}_${Date.now()}`;
+    LocalBookService.ensureDir(workDir);
+    try {
+      await zlib.decompressFile(fbzPath, workDir);
+      const entries = fs.listFileSync(workDir, { recursion: true });
+      const entry = entries.find((name: string): boolean => name.toLowerCase().endsWith('.fb2'));
+      if (!entry) throw new Error('压缩包里没有 FB2 文件');
+      const path = `${workDir}/${entry.replace(/^\/+/, '')}`;
+      return await LocalBookService.parseMobi(context, fbzPath, id, 'fb2', path);
+    } finally {
+      try {
+        if (fs.accessSync(workDir)) fs.rmdirSync(workDir);
+      } catch (error) {
+        console.warn('[LocalBook] fbz cleanup failed:', error);
+      }
+    }
   }
 
   /**

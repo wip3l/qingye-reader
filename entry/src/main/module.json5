@@ -145,6 +145,26 @@
               },
               {
                 "scheme": "file",
+                "type": "com.amazon.azw3",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "com.amazon.azw",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "io.legado.read.fb2",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "io.legado.read.fbz",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
                 "type": "io.legado.read.qytheme",
                 "linkFeature": "FileOpen"
               },

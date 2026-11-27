@@ -20,6 +20,9 @@ export class OpdsBookService {
     const href = (link.href || '').split('?')[0].split('#')[0].toLowerCase();
     if (href.endsWith('.epub')) return 'epub';
     if (href.endsWith('.mobi')) return 'mobi';
+    if (href.endsWith('.azw3')) return 'azw3';
+    if (href.endsWith('.fb2')) return 'fb2';
+    if (href.endsWith('.fbz') || href.endsWith('.fb2.zip')) return 'fbz';
     if (href.endsWith('.pdf')) return 'pdf';
     if (href.endsWith('.txt')) return 'txt';
     return '';
@@ -41,7 +44,7 @@ export class OpdsBookService {
     handleSink?: (handle: OpdsDownloadHandle) => void): Promise<Book> {
     const format = OpdsBookService.formatOfLink(link);
     if (!OpdsBookService.isDownloadableFormat(format)) {
-      throw new OpdsError('unknown', '仅支持下载 EPUB、TXT 和 MOBI');
+      throw new OpdsError('unknown', '仅支持下载 EPUB、TXT、MOBI、AZW3 和 FB2');
     }
     await appDb.initWithContext(context);
     const tempRoot = `${context.tempDir}/opds_book_${Date.now()}`;

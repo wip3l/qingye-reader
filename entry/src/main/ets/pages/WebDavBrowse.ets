@@ -1462,7 +1462,7 @@ struct WebDavBrowsePage {
       return;
     }
     if (!entry.readableBook()) {
-      HdsFeedback.showToast('当前仅支持 TXT、EPUB、MOBI 和 PDF');
+      HdsFeedback.showToast('当前仅支持 TXT、EPUB、MOBI、AZW3、FB2 和 PDF');
       return;
     }
     this.searchInputController.stopEditing();
@@ -1475,7 +1475,7 @@ struct WebDavBrowsePage {
       return;
     }
     if (!entry.readableBook()) {
-      HdsFeedback.showToast('当前仅支持 TXT、EPUB、MOBI 和 PDF');
+      HdsFeedback.showToast('当前仅支持 TXT、EPUB、MOBI、AZW3、FB2 和 PDF');
       return;
     }
     this.openFileDetail(entry);

@@ -527,7 +527,7 @@ struct CloudFilesPage {
     if (kind !== 'BOOK' && kind !== 'FONT') return;
     try {
       const options = new picker.DocumentSelectOptions(); options.maxSelectNumber = 1;
-      options.fileSuffixFilters = kind === 'BOOK' ? ['书籍|.txt,.epub,.mobi,.pdf,.cbz'] : ['字体|.ttf,.otf,.ttc'];
+      options.fileSuffixFilters = kind === 'BOOK' ? ['书籍|.txt,.epub,.mobi,.azw3,.azw,.fb2,.fbz,.pdf,.cbz'] : ['字体|.ttf,.otf,.ttc'];
       const picked = await selectDocuments(this.context, options);
       if (!picked.length) return;
       const name = decodeURIComponent(picked[0].split('/').pop() || '云文件').replace(/[\\/\x00-\x1f]/g, '_');

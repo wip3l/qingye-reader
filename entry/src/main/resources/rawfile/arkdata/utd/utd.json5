@@ -15,6 +15,22 @@
       "MIMETypes": ["application/vnd.legado.qybook"],
       "Description": "Shared book with reading progress",
       "ReferenceURL": ""
+    },
+    {
+      "TypeId": "io.legado.read.fb2",
+      "BelongingToTypes": ["general.ebook"],
+      "FilenameExtensions": [".fb2"],
+      "MIMETypes": ["application/x-fictionbook+xml"],
+      "Description": "FictionBook e-book",
+      "ReferenceURL": ""
+    },
+    {
+      "TypeId": "io.legado.read.fbz",
+      "BelongingToTypes": ["general.ebook"],
+      "FilenameExtensions": [".fbz"],
+      "MIMETypes": ["application/x-zip-compressed-fb2"],
+      "Description": "Zipped FictionBook e-book",
+      "ReferenceURL": ""
     }
   ]
 }

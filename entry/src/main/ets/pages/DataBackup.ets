@@ -283,7 +283,7 @@ struct DataBackupPage {
       if (!this.androidImport) {
         this.selectionRow('书签与笔记', '书签、正文划线和笔记', exporting,
           AppDataBackupService.CATEGORY_BOOKMARKS)
-        this.selectionRow('本地图书', 'TXT/EPUB/MOBI/PDF 原文件及本地书籍信息', exporting,
+        this.selectionRow('本地图书', 'TXT/EPUB/MOBI/AZW3/FB2/PDF 原文件及本地书籍信息', exporting,
           AppDataBackupService.CATEGORY_LOCAL_BOOKS)
       }
       this.selectionRow(this.androidImport ? 'TTS 与替换规则' : '自定义设置与资源', this.androidImport ?

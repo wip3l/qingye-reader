@@ -805,7 +805,9 @@ export default class EntryAbility extends UIAbility {
       AppStorage.setOrCreate('pendingBookSourceImportNonce', nonce + 1);
       return 'bookSource';
     }
-    if (externalUri && (externalFormat === 'txt' || externalFormat === 'epub' || externalFormat === 'mobi' || externalFormat === 'pdf')) {
+    if (externalUri && (externalFormat === 'txt' || externalFormat === 'epub' || externalFormat === 'mobi' ||
+      externalFormat === 'azw3' || externalFormat === 'azw' || externalFormat === 'fb2' || externalFormat === 'fbz' ||
+      externalFormat === 'pdf')) {
       AppStorage.setOrCreate('pendingLocalBookImportUri', externalUri);
       AppStorage.setOrCreate('pendingLocalBookImportFormat', externalFormat);
       AppStorage.setOrCreate('pendingLocalBookImportName', externalName);
@@ -849,6 +851,12 @@ export default class EntryAbility extends UIAbility {
     if (type === 'general.epub' || type === 'application/epub+zip' ||
       type === 'application/x-epub+zip') return 'epub';
     if (type === 'com.amazon.mobi' || type === 'application/x-mobipocket-ebook') return 'mobi';
+    if (type === 'com.amazon.azw3' || type === 'application/vnd.amazon.mobi8-ebook' ||
+      type === 'application/azw3') return 'azw3';
+    if (type === 'com.amazon.azw') return 'azw';
+    if (type === 'io.legado.read.fb2' || type === 'application/x-fictionbook+xml' ||
+      type === 'application/x-fictionbook' || type === 'text/fb2+xml') return 'fb2';
+    if (type === 'io.legado.read.fbz' || type === 'application/x-zip-compressed-fb2') return 'fbz';
     if (type === 'com.adobe.pdf' || type === 'application/pdf') return 'pdf';
     const sniffed = this.sniffExternalFileFormat(uri);
     if (sniffed) return sniffed;
@@ -967,6 +975,7 @@ export default class EntryAbility extends UIAbility {
         const text = util.TextDecoder.create('utf-8').decodeWithStream(bytes, { stream: false })
           .replace(/^\uFEFF/, '').trim();
         if (text.startsWith('{') || text.startsWith('[')) return 'json';
+        if (text.startsWith('<') && /<FictionBook[\s>]/.test(text)) return 'fb2';
         return 'txt';
       }
     } catch (e) {
@@ -983,7 +992,8 @@ export default class EntryAbility extends UIAbility {
   }
 
   private isSupportedExternalExtension(extension: string): boolean {
-    return extension === 'json' || extension === 'txt' || extension === 'epub' || extension === 'mobi' || extension === 'pdf' ||
+    return extension === 'json' || extension === 'txt' || extension === 'epub' || extension === 'mobi' ||
+      extension === 'azw3' || extension === 'azw' || extension === 'fb2' || extension === 'fbz' || extension === 'pdf' ||
       extension === 'qytheme' || extension === 'qybook';
   }
 
