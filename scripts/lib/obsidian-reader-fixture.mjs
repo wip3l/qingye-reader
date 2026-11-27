@@ -49,7 +49,7 @@ export function loadObsidianReader(pathkit = null) {
     'theme/share/ThemePackageFormat.ts','theme/ThemePackRegistry.ets','theme/BuiltinThemeRegistry.ets',
     'theme/ThemeRuntime.ets','theme/ThemeAssetRegistry.ets','account/ThemeAccessPolicy.ets',
     'utils/ReaderThemeHelper.ets','utils/ReaderCustomThemeHelper.ets','utils/ReaderThemeRenderCache.ets',
-    'core/reader/ReaderFontWeight.ts','core/reader/ReaderCommentBubbleSize.ts','model/reader/ReaderRegexFontRule.ets',
+    'core/reader/ReaderFontWeight.ts','core/reader/ReaderCommentBubbleSize.ts','core/reader/ReaderDialogueMatcher.ts','core/reader/ReaderRegexRuleHits.ts','model/reader/ReaderRegexFontRule.ets',
     'core/reader/ReaderTitleSplit.ts','model/reader/ReaderTitleStyle.ets',
     'core/reader/ReaderV2Style.ets','core/reader/ReaderCommentBubble.ets'];
   const reader=read('pages/ReadBook.ets');

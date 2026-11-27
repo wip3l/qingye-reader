@@ -160,6 +160,7 @@ import { ReaderAnnotationLayer, ReaderAnnotationLayerMode } from '../components/
 import { ReaderAnnotationShare } from '../utils/ReaderAnnotationShare';
 import { ReaderV2PaginationSession, ReaderV2Paginator } from '../core/reader/ReaderV2Paginator';
 import { ReaderV2BubbleFrame, ReaderV2Color, ReaderV2SpanStyleRange } from '../core/reader/ReaderV2Style';
+import { ReaderRegexRuleHits, ReaderRuleHit, ReaderRuleMatchSpec } from '../core/reader/ReaderRegexRuleHits';
 import { ReaderCommentBubbleStyle, ReaderCommentBubbleStyles } from '../core/reader/ReaderCommentBubble';
 import { ReaderCommentBubbleSize } from '../core/reader/ReaderCommentBubbleSize';
 import { ReaderV2PageNodeController } from '../core/reader/ReaderV2RenderNode';
@@ -961,6 +962,8 @@ struct ReadBookPage {
   private readerPaginationBottomFitTimerId: number = -1;
   private cachedRegexRulesKey: string = '';
   private cachedRegexRules: ReaderRegexFontRule[] = [];
+  private cachedRegexMatchSpecs: ReaderRuleMatchSpec[] = [];
+  private cachedRegexMatchSpecsRules: ReaderRegexFontRule[] | null = null;
   private regexIndentMatcher: ReaderParagraphIndentMatcher | null = null;
   private regexIndentMatcherRules: ReaderRegexFontRule[] | null = null;
   private adjacentPaginationPreloadSerial: number = 0;
@@ -20655,130 +20658,39 @@ ${leading}` : leading;
     return style;
   }
 
-  getRegexTextSlices(text: string, titleRanges: number[][] = []): ReadTextSlice[] {
-    const displayText = text || '';
+  /** 和 getRegexRules 一一对应的匹配参数，规则不变时复用。 */
+  getRegexMatchSpecs(): ReaderRuleMatchSpec[] {
     const rules = this.getRegexRules();
-    if (!this.readerRegexFontEnabled || rules.length === 0) {
-      return [{
-        text: displayText,
-        start: 0,
-        end: displayText.length,
-        highlighted: false,
-        ruleIndex: -1,
-        key: `plain_regex_${this.buildTextSliceKey(displayText)}`
-      }];
+    if (this.cachedRegexMatchSpecsRules !== rules) {
+      this.cachedRegexMatchSpecs = ReaderRegexFontCodec.matchSpecs(rules);
+      this.cachedRegexMatchSpecsRules = rules;
     }
-    try {
-      const matched: ReadTextSlice[] = [];
-      for (let ruleIndex = 0; ruleIndex < rules.length; ruleIndex++) {
-        const rule = rules[ruleIndex];
-        if (!rule.pattern.trim()) {
-          continue;
-        }
-        let regex: RegExp;
-        try {
-          regex = new RegExp(rule.pattern, 'g');
-        } catch (e) {
-          continue;
-        }
-        let match = regex.exec(displayText);
-        while (match && match.index >= 0) {
-          const start = Math.max(0, match.index);
-          const end = Math.max(start, Math.min(displayText.length, match.index + (match[0] || '').length));
-          if (end <= start) {
-            if (start >= displayText.length || regex.lastIndex >= displayText.length) {
-              break;
-            }
-            regex.lastIndex = Math.max(regex.lastIndex + 1, start + 1);
-            match = regex.exec(displayText);
-            continue;
-          }
-          // 范围外的命中不占位，后面的规则还能用这段文字。
-          if (ReaderRegexScope.accepts(rule.scope, start, end, titleRanges) &&
-            !this.hasOverlappedRegexSlice(matched, start, end)) {
-            const matchText = displayText.substring(start, end);
-            matched.push({
-              text: matchText,
-              start: start,
-              end: end,
-              highlighted: true,
-              ruleIndex: ruleIndex,
-              key: `regex_hit_${ruleIndex}_${start}_${end}_${this.buildTextSliceKey(matchText)}`
-            });
-          }
-          regex.lastIndex = Math.max(regex.lastIndex, end);
-          match = regex.exec(displayText);
-        }
-      }
-      if (matched.length === 0) {
-        return [{
-          text: displayText,
-          start: 0,
-          end: displayText.length,
-          highlighted: false,
-          ruleIndex: -1,
-          key: `plain_regex_${this.buildTextSliceKey(displayText)}`
-        }];
-      }
-      matched.sort((a: ReadTextSlice, b: ReadTextSlice) => a.start - b.start);
-      const slices: ReadTextSlice[] = [];
-      let cursor = 0;
-      for (const item of matched) {
-        const start = Math.max(cursor, item.start);
-        const end = Math.max(start, item.end);
-        if (start > cursor) {
-          const beforeText = displayText.substring(cursor, start);
-          slices.push({
-            text: beforeText,
-            start: cursor,
-            end: start,
-            highlighted: false,
-            ruleIndex: -1,
-            key: `regex_plain_${cursor}_${start}_${this.buildTextSliceKey(beforeText)}`
-          });
-        }
-        const matchText = displayText.substring(start, end);
-        slices.push({
-          text: matchText,
-          start: start,
-          end: end,
-          highlighted: true,
-          ruleIndex: item.ruleIndex,
-          key: `regex_hit_${item.ruleIndex}_${start}_${end}_${this.buildTextSliceKey(matchText)}`
-        });
-        cursor = end;
-      }
-      if (cursor < displayText.length) {
-        const afterText = displayText.substring(cursor);
-        slices.push({
-          text: afterText,
-          start: cursor,
-          end: displayText.length,
-          highlighted: false,
-          ruleIndex: -1,
-          key: `regex_plain_${cursor}_${displayText.length}_${this.buildTextSliceKey(afterText)}`
-        });
-      }
-      return slices;
-    } catch (e) {
-      return [{
-        text: displayText,
-        start: 0,
-        end: displayText.length,
-        highlighted: false,
-        ruleIndex: -1,
-        key: `plain_regex_error_${this.buildTextSliceKey(displayText)}`
-      }];
-    }
+    return this.cachedRegexMatchSpecs;
   }
 
-  hasOverlappedRegexSlice(slices: ReadTextSlice[], start: number, end: number): boolean {
-    for (const slice of slices) {
-      if (start < slice.end && end > slice.start) {
-        return true;
-      }
+  /**
+   * 正则字体（含智能对话）在显示文本里的命中，按起点排好；判定见 ReaderRegexRuleHits.collect。
+   * overlay 的命中落在一条“命中里显示其他规则”的命中之内，只换文字颜色和粗细。
+   */
+  getRegexTextSlices(text: string, titleRanges: number[][] = []): ReadTextSlice[] {
+    const displayText = text || '';
+    if (!this.readerRegexFontEnabled || this.getRegexRules().length === 0) return [];
+    try {
+      return ReaderRegexRuleHits.collect(this.getRegexMatchSpecs(), displayText, titleRanges)
+        .map((hit: ReaderRuleHit): ReadTextSlice => {
+          return {
+            text: displayText.substring(hit.start, hit.end),
+            start: hit.start,
+            end: hit.end,
+            highlighted: true,
+            ruleIndex: hit.ruleIndex,
+            overlay: hit.overlay,
+            key: `regex_hit_${hit.ruleIndex}_${hit.start}_${hit.end}${hit.overlay ? '_o' : ''}`
+          };
+        });
+    } catch (e) {
+      return [];
     }
-    return false;
   }
 
   getRegexRuleBySlice(slice: ReadTextSlice): ReaderRegexFontRule | null {
@@ -21020,6 +20932,13 @@ ${leading}` : leading;
       }
       // Explicit title emphasis wins inside the title; regex rules continue on either side.
       const ranges = this.readerV2RangesOutsideTitle(slice.start, slice.end, titleStyles);
+      if (slice.overlay) {
+        const weight = this.getRegexRuleBySlice(slice)?.fontWeight ?? 0;
+        for (const bounds of ranges) {
+          result.push(ReaderV2SpanStyleRange.overlayOf(template, weight, bounds[0], bounds[1]));
+        }
+        continue;
+      }
       for (const bounds of ranges) {
         const style = new ReaderV2SpanStyleRange(bounds[0], bounds[1]);
         style.fontSizePx = template.fontSizePx;

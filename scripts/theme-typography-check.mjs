@@ -45,6 +45,8 @@ function harness() {
     compile(read('core/reader/ReaderQuickJumpModel.ts')) + '\n' +
     compile(read('core/reader/ReaderNightImage.ts')) + '\n' +
     compile(read('core/reader/ReaderTitleSplit.ts')) + '\n' +
+    compile(read('core/reader/ReaderDialogueMatcher.ts')) + '\n' +
+    compile(read('core/reader/ReaderRegexRuleHits.ts')) + '\n' +
     compile(read('model/reader/ReaderRegexFontRule.ets')) + '\n' +
     compile(read('model/reader/ReaderTitleStyle.ets')) + '\n' +
     compile(read('utils/ReaderSettingsStore.ets')) + '\n' +

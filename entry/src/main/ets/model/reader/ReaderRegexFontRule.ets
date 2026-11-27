@@ -4,11 +4,22 @@ import { ReaderParagraphIndentOverride } from '../../core/reader/ReaderParagraph
 import { HexColor } from '../../utils/HexColor';
 import { isPackThemeId, TITLE_BUBBLE_SAME_AS_EMPHASIS } from '../../theme/share/ThemePackageFormat';
 import { ThemeTitleEmphasisTokens } from '../../theme/ThemeModels';
+import { ReaderDialogueMatcher } from '../../core/reader/ReaderDialogueMatcher';
+import { ReaderRegexRuleHits, ReaderRuleMatchSpec } from '../../core/reader/ReaderRegexRuleHits';
 
 export class ReaderRegexFontRule {
   id: string = '';
   name: string = '';
+  /** 正则表达式。智能对话规则也存一条（ReaderDialogueMatcher.FALLBACK_PATTERN），给读不懂 matcher 的旧版本用。 */
   pattern: string = '';
+  /** 匹配方式：空为正则表达式，dialogue 为智能对话（见 ReaderDialogueMatcher）。 */
+  matcher: string = '';
+  /** 智能对话的三个开关：跨段对话、纠正写反的引号、短引号不算对话。 */
+  dialogueCrossParagraph: boolean = true;
+  dialogueFixQuotes: boolean = true;
+  dialogueSkipShort: boolean = false;
+  /** 命中范围里允许其他规则再上色（如对话里的人名），里层只换文字颜色和粗细；没有这个字段的旧规则按关。 */
+  nestOthers: boolean = false;
   /** 停用的规则保留位置和设置，但阅读页与各处预览都跳过它、不占位置；没有这个字段的旧规则按启用。 */
   enabled: boolean = true;
   fontMode: string = 'global';
@@ -73,17 +84,7 @@ export class ReaderRegexScope {
 
   /** titles 是各标题块在显示文本里的 [起, 止) 区间。仅标题要求命中整个落在一个标题里，仅正文要求不碰标题。 */
   static accepts(scope: string, start: number, end: number, titles: number[][]): boolean {
-    const value = ReaderRegexScope.normalize(scope);
-    if (value === ReaderRegexScope.ALL) return true;
-    let inside = false;
-    let touches = false;
-    for (const title of titles) {
-      if (start < title[1] && end > title[0]) {
-        touches = true;
-        if (start >= title[0] && end <= title[1]) inside = true;
-      }
-    }
-    return value === ReaderRegexScope.TITLE ? inside : !touches;
+    return ReaderRegexRuleHits.scopeAccepts(ReaderRegexScope.normalize(scope), start, end, titles);
   }
 }
 
@@ -103,6 +104,42 @@ export class ReaderRegexLegacySettings {
 
 export class ReaderRegexFontCodec {
   static readonly SCHEMA_VERSION: number = 3;
+  /** 以前“新建 › 对话”填的正则。 */
+  static readonly LEGACY_DIALOGUE_PATTERN: string = '“[^”\\n]*”|「[^」\\n]*」|『[^』\\n]*』|"[^"\\n]*"';
+
+  /** 改成智能对话：开关取默认，正则换成兜底正则，对话里显示其他规则。 */
+  static makeDialogue(rule: ReaderRegexFontRule): void {
+    rule.matcher = ReaderRegexRuleHits.DIALOGUE;
+    rule.pattern = ReaderDialogueMatcher.FALLBACK_PATTERN;
+    rule.dialogueCrossParagraph = true;
+    rule.dialogueFixQuotes = true;
+    rule.dialogueSkipShort = false;
+    rule.nestOthers = true;
+  }
+
+  static isDialogue(rule: ReaderRegexFontRule): boolean {
+    return ReaderRegexRuleHits.isDialogue(rule.matcher);
+  }
+
+  /** 规则能不能找命中：智能对话总能，正则要填了才算。 */
+  static isMatchable(rule: ReaderRegexFontRule): boolean {
+    return ReaderRegexFontCodec.isDialogue(rule) || !!(rule.pattern || '').trim();
+  }
+
+  /** 拷出找命中要用的部分，交给 ReaderRegexRuleHits.collect；下标和 rules 一一对应。 */
+  static matchSpecs(rules: ReaderRegexFontRule[]): ReaderRuleMatchSpec[] {
+    return rules.map((rule: ReaderRegexFontRule): ReaderRuleMatchSpec => {
+      const spec = new ReaderRuleMatchSpec();
+      spec.pattern = rule.pattern;
+      spec.matcher = rule.matcher;
+      spec.scope = ReaderRegexScope.normalize(rule.scope);
+      spec.nestOthers = rule.nestOthers;
+      spec.dialogue.crossParagraph = rule.dialogueCrossParagraph;
+      spec.dialogue.fixQuotes = rule.dialogueFixQuotes;
+      spec.dialogue.skipShort = rule.dialogueSkipShort;
+      return spec;
+    });
+  }
 
   static decode(raw: string, legacy: ReaderRegexLegacySettings | null = null): ReaderRegexFontRule[] {
     const text = (raw || '').trim();
@@ -158,6 +195,15 @@ export class ReaderRegexFontCodec {
       rule.id = item.id || ReaderRegexFontCodec.newRuleId();
       rule.name = (item.name || '正则规则').trim();
       rule.pattern = (item.pattern || '').trim();
+      rule.matcher = ReaderRegexRuleHits.isDialogue(item.matcher) ? ReaderRegexRuleHits.DIALOGUE : '';
+      rule.dialogueCrossParagraph = item.dialogueCrossParagraph !== false;
+      rule.dialogueFixQuotes = item.dialogueFixQuotes !== false;
+      rule.dialogueSkipShort = item.dialogueSkipShort === true;
+      rule.nestOthers = item.nestOthers === true;
+      // 以前“新建 › 对话”建的正则一字没改过的，换成智能对话：只多处理几种写法，原来能上色的照样上色。
+      if (!rule.matcher && item.matcher === undefined && rule.pattern === ReaderRegexFontCodec.LEGACY_DIALOGUE_PATTERN) {
+        ReaderRegexFontCodec.makeDialogue(rule);
+      }
       rule.enabled = item.enabled !== false;
       rule.fontMode = ReaderRegexFontCodec.normalizeFontMode(item.fontMode);
       rule.fontFamily = item.fontFamily || '';
@@ -283,10 +329,11 @@ export class ReaderRegexFontCodec {
   static indentOverrides(rules: ReaderRegexFontRule[]): ReaderParagraphIndentOverride[] {
     const result: ReaderParagraphIndentOverride[] = [];
     for (const rule of rules) {
-      if (rule.enabled === false || rule.paragraphIndent < 0 || !rule.pattern.trim() ||
+      if (rule.enabled === false || rule.paragraphIndent < 0 || !ReaderRegexFontCodec.isMatchable(rule) ||
         !ReaderRegexScope.includesBody(rule.scope)) continue;
       const item = new ReaderParagraphIndentOverride();
-      item.pattern = rule.pattern;
+      // 智能对话：段落以引号开头就算。
+      item.pattern = ReaderRegexFontCodec.isDialogue(rule) ? ReaderDialogueMatcher.LEADING_PATTERN : rule.pattern;
       item.indent = rule.paragraphIndent;
       result.push(item);
     }

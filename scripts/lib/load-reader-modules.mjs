@@ -36,6 +36,8 @@ const MODULES = [
   'core/reader/ReaderPageTurnQueue.ts',
   'core/reader/ReaderInfoBarModel.ts',
   'core/reader/ReaderContentSearchMatcher.ts',
+  'core/reader/ReaderDialogueMatcher.ts',
+  'core/reader/ReaderRegexRuleHits.ts',
   'core/lan/LanReaderActions.ts',
 ];
 

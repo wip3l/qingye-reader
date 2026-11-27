@@ -39,6 +39,7 @@ const names = ['cancelReaderContinuousMetricsTimers', 'refreshReaderContinuousPa
   'getReaderPageColumnWidth', 'readerViewportFitsSpread'];
 vm.runInContext(stripTypeScriptTypes(
   ['core/reader/ReaderFontWeight.ts', 'core/reader/ReaderTitleSplit.ts',
+    'core/reader/ReaderDialogueMatcher.ts', 'core/reader/ReaderRegexRuleHits.ts',
     'model/reader/ReaderRegexFontRule.ets', 'model/reader/ReaderTitleStyle.ets']
     .map(file => readEtsModule(file).replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '')).join('\n') + '\n' +
   readEtsModule('core/reader/ReaderPageOffsets.ts').replace(/^export /gm, '') + '\n' +

@@ -48,6 +48,7 @@ import {
   ReaderRegexLegacySettings,
   ReaderResolvedRegexEmphasis
 } from '../model/reader/ReaderRegexFontRule';
+import { ReaderRegexRuleHits } from '../core/reader/ReaderRegexRuleHits';
 
 class ThemeTypographyFontItem {
   familyName: string = '';
@@ -1213,7 +1214,7 @@ struct ThemeTypographySettingsPage {
     legacy.fontSize = this.draft.regexFontSize;
     legacy.shadowColor = this.draft.regexShadowColor;
     return ReaderRegexFontCodec.decode(this.draft.regexFontRulesRaw, legacy)
-      .filter((rule: ReaderRegexFontRule): boolean => rule.enabled && !!(rule.pattern || '').trim());
+      .filter((rule: ReaderRegexFontRule): boolean => rule.enabled && ReaderRegexFontCodec.isMatchable(rule));
   }
 
   ruleAt(index: number): ReaderRegexFontRule {
@@ -1221,38 +1222,15 @@ struct ThemeTypographySettingsPage {
   }
 
   /**
-   * 与阅读页同一种判定：按规则顺序认领命中，后面的命中只要碰到已认领的字就整段放弃，
-   * 不会只拿走剩下的半截。
+   * 与阅读页同一种判定（ReaderRegexRuleHits.collect）。示例是一段段的短文，这里只画底层命中，
+   * 对话里叠加的人名等不另画（每段是分开的文字片，叠加会把气泡切开）。
    */
   paragraphSlices(index: number): TypographyPreviewSlice[] {
     const text = this.paragraphText(index);
     const owners: number[] = new Array<number>(text.length).fill(-1);
-    for (let ruleIndex = 0; ruleIndex < this.previewRules.length; ruleIndex++) {
-      try {
-        const regex = new RegExp(this.previewRules[ruleIndex].pattern, 'g');
-        let match = regex.exec(text);
-        let guard = 0;
-        while (match && guard < 200) {
-          guard++;
-          const start = match.index;
-          const end = Math.min(text.length, start + (match[0] || '').length);
-          if (end <= start) {
-            regex.lastIndex = start + 1;
-          } else {
-            let claimed = false;
-            for (let position = start; position < end && !claimed; position++) {
-              if (owners[position] >= 0) claimed = true;
-            }
-            if (!claimed) {
-              for (let position = start; position < end; position++) owners[position] = ruleIndex;
-            }
-          }
-          if (regex.lastIndex >= text.length) break;
-          match = regex.exec(text);
-        }
-      } catch (_) {
-        // 无效的表达式在阅读页同样不生效。
-      }
+    for (const hit of ReaderRegexRuleHits.collect(ReaderRegexFontCodec.matchSpecs(this.previewRules), text, [])) {
+      if (hit.overlay) continue;
+      for (let position = hit.start; position < hit.end; position++) owners[position] = hit.ruleIndex;
     }
     const slices: TypographyPreviewSlice[] = [];
     let start = 0;

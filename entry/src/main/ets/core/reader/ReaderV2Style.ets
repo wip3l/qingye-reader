@@ -44,9 +44,26 @@ export class ReaderV2SpanStyleRange {
   /** Tint the frame with backgroundColor. */
   frameTint: boolean = false;
 
+  /**
+   * 叠加层：落在另一条规则的命中里（如对话里的人名），只换文字颜色和粗细；字号、字体、背景、气泡仍由底下那条决定，
+   * 底下的气泡不会被切成几段。排版时先按非叠加的样式排，再叠上它。
+   */
+  overlay: boolean = false;
+
   constructor(start: number = 0, end: number = 0) {
     this.start = start;
     this.end = end;
+  }
+
+  /** 由一条规则的完整样式做出叠加层：颜色照搬，粗细只在规则改过粗细时才换。 */
+  static overlayOf(style: ReaderV2SpanStyleRange, ruleFontWeight: number, start: number,
+    end: number): ReaderV2SpanStyleRange {
+    const overlay = new ReaderV2SpanStyleRange(start, end);
+    overlay.overlay = true;
+    overlay.colorEnabled = style.colorEnabled;
+    overlay.color = style.color;
+    overlay.fontWeight = ruleFontWeight > 0 && ruleFontWeight !== 400 ? ruleFontWeight : 0;
+    return overlay;
   }
 }
 

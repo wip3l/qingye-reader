@@ -1532,7 +1532,7 @@ export class ReaderV2Paginator {
     }
     const numberLead = block.titleLead && snapshot.chapterHead.numberColor !== 0;
     for (const style of regexStyles) {
-      if (absoluteOffset < style.start || absoluteOffset >= style.end) continue;
+      if (style.overlay || absoluteOffset < style.start || absoluteOffset >= style.end) continue;
       if (style.fontSizePx > 0) base.fontSize = style.fontSizePx;
       if (style.fontFamily) base.fontFamilies = [style.fontFamily];
       // 主题的序号行颜色优先于标题强调和正则规则的文字色（与主题预览一致），背景、阴影等仍照常。
@@ -1555,6 +1555,7 @@ export class ReaderV2Paginator {
           blurRadius: style.shadowRadiusPx
         }];
       }
+      ReaderV2Paginator.applyOverlayColor(base, absoluteOffset, regexStyles, numberLead);
       // Keep decorated text in the native paragraph. The decoration is painted as a background layer by
       // ReadBook, while this paragraph remains the single source of truth for glyph metrics and baselines.
       // Repainting the text in an ArkUI Text containing ImageSpans gives that copy a different line box and
@@ -1563,6 +1564,7 @@ export class ReaderV2Paginator {
         ReaderV2Paginator.resolveWeight(base,
           ReaderV2Paginator.requestedWeightAt(document, block, absoluteOffset, snapshot, regexStyles)));
     }
+    ReaderV2Paginator.applyOverlayColor(base, absoluteOffset, regexStyles, numberLead);
     return ReaderV2Paginator.squeezePunctuation(block, absoluteOffset, decorationReservation,
       ReaderV2Paginator.resolveWeight(base,
         ReaderV2Paginator.requestedWeightAt(document, block, absoluteOffset, snapshot, regexStyles)));
@@ -1636,10 +1638,29 @@ export class ReaderV2Paginator {
     const actionIndex = ReaderV2Paginator.firstActionWhoseEndExceeds(document.actions, offset);
     if (actionIndex < document.actions.length && offset >= document.actions[actionIndex].displayStart &&
       offset < document.actions[actionIndex].displayEnd) return fallback;
+    let weight = fallback;
+    let based = false;
     for (const style of regexStyles) {
-      if (offset >= style.start && offset < style.end) return style.fontWeight > 0 ? style.fontWeight : fallback;
+      if (offset < style.start || offset >= style.end) continue;
+      if (style.overlay) {
+        if (style.fontWeight > 0) return style.fontWeight;
+      } else if (!based) {
+        based = true;
+        if (style.fontWeight > 0) weight = style.fontWeight;
+      }
     }
-    return fallback;
+    return weight;
+  }
+
+  /** 叠加层（对话里的人名等）的文字色盖在底下那条样式上；主题的序号行颜色仍然优先。 */
+  private static applyOverlayColor(base: graphicsText.TextStyle, offset: number,
+    regexStyles: ReaderV2SpanStyleRange[], numberLead: boolean): void {
+    if (numberLead) return;
+    for (const style of regexStyles) {
+      if (!style.overlay || offset < style.start || offset >= style.end) continue;
+      if (style.colorEnabled || style.color !== 0) base.color = ReaderV2Paginator.graphicsColor(style.color);
+      return;
+    }
   }
 
   private static decorationReservationAfter(absoluteOffset: number, block: ReaderV2Block,

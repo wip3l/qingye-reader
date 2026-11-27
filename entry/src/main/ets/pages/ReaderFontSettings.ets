@@ -40,6 +40,8 @@ import {
   ReaderTitleEmphasis,
   ReaderTitleEmphasisPlan
 } from '../model/reader/ReaderRegexFontRule';
+import { ReaderRegexRuleHits, ReaderRuleMatchSpec } from '../core/reader/ReaderRegexRuleHits';
+import { ReaderDialogueMatcher } from '../core/reader/ReaderDialogueMatcher';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ListDissolve } from '../utils/ListDissolve';
@@ -566,7 +568,7 @@ export struct ReaderFontSettingsEditor {
                 edgeEffect: SwipeEdgeEffect.Spring
               })
               // 键里带启用状态：切换后条目重建，左滑出来的按钮随之收回。
-            }, (rule: ReaderRegexFontRule) => `${rule.id}|${rule.name}|${rule.pattern}|${rule.scope}|${rule.enabled}`)
+            }, (rule: ReaderRegexFontRule) => `${rule.id}|${rule.name}|${rule.pattern}|${rule.scope}|${rule.enabled}|${rule.matcher}|${this.dialogueRuleSummary(rule)}`)
               .onMove((from: number, to: number) => this.moveRegexRuleDuringDrag(from, to), {
                 onDragStart: (index: number) => {
                   this.draggingRegexRuleId = index >= 0 && index < this.regexRules.length ? this.regexRules[index].id : '';
@@ -787,12 +789,18 @@ export struct ReaderFontSettingsEditor {
     return ReaderRegexFontCodec.newRuleId();
   }
 
+  /** “新建 › 对话”：智能对话规则。 */
+  addDialogueRule(): void {
+    this.addRegexRule('对话', '', true);
+  }
+
   /** 模板按钮直接进新建页，保存后才加入列表。 */
-  addRegexRule(name: string, pattern: string): void {
+  addRegexRule(name: string, pattern: string, dialogue: boolean = false): void {
     const rule = new ReaderRegexFontRule();
     rule.id = this.newRuleId();
     rule.name = name;
     rule.pattern = pattern;
+    if (dialogue) ReaderRegexFontCodec.makeDialogue(rule);
     rule.fontMode = 'global';
     rule.fontSize = this.readerRegexFontSize || this.readerFontSize;
     rule.emphasisMode = 'inherit';
@@ -1523,9 +1531,7 @@ export struct ReaderFontSettingsEditor {
       .alignItems(VerticalAlign.Center)
       .accessibilityText('新建规则')
       .bindMenu([
-        { value: '对话', action: () => {
-          this.addRegexRule('对话', '“[^”\\n]*”|「[^」\\n]*」|『[^』\\n]*』|"[^"\\n]*"');
-        } },
+        { value: '对话', action: () => { this.addDialogueRule(); } },
         { value: '关键字匹配', action: () => { this.addRegexRule('关键字匹配', '关键词'); } },
         { value: '空白规则', action: () => { this.addRegexRule('正则规则', ''); } }
       ])
@@ -1593,10 +1599,12 @@ export struct ReaderFontSettingsEditor {
             }
           }
           .width('100%')
-          // 正则用等宽字体，读起来像表达式，不像说明文字。
-          Text(rule.pattern || '未设置正则表达式')
+          // 正则用等宽字体，读起来像表达式，不像说明文字；智能对话写开关摘要。
+          Text(ReaderRegexFontCodec.isDialogue(rule) ? this.dialogueRuleSummary(rule) :
+            (rule.pattern || '未设置正则表达式'))
             .fontSize(AppFontSize.CAPTION)
-            .fontFamily(rule.pattern ? 'monospace' : this.applicationFontFamily)
+            .fontFamily(rule.pattern && !ReaderRegexFontCodec.isDialogue(rule) ? 'monospace' :
+              this.applicationFontFamily)
             .fontColor(this.subTextColor())
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1668,6 +1676,71 @@ export struct ReaderFontSettingsEditor {
       .margin({ right: AppSpacing.XL })
   }
 
+  /** 规则编辑里的开关行：cross/fix/short 是智能对话的三项，nest 是“命中里显示其他规则”。值直接读编辑中的规则。 */
+  @Builder
+  regexDialogueSwitch(kind: string) {
+    Row({ space: AppSpacing.MD }) {
+      Column({ space: 2 }) {
+        Text(this.regexSwitchTitle(kind))
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontColor(this.primaryTextColor())
+        Text(this.regexSwitchDescription(kind))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      AdaptiveSwitch({
+        isOn: this.regexSwitchValue(kind),
+        accessibilityLabel: this.regexSwitchTitle(kind),
+        onChange: (isOn: boolean) => {
+          this.updateRegexRule(EDITING_REGEX_RULE_INDEX, (target: ReaderRegexFontRule) => {
+            if (kind === 'cross') target.dialogueCrossParagraph = isOn;
+            else if (kind === 'fix') target.dialogueFixQuotes = isOn;
+            else if (kind === 'short') target.dialogueSkipShort = isOn;
+            else target.nestOthers = isOn;
+          });
+        }
+      })
+    }
+    .width('100%')
+    .constraintSize({ minHeight: 56 })
+    .padding({ top: AppSpacing.SM, bottom: AppSpacing.SM })
+    .alignItems(VerticalAlign.Center)
+  }
+
+  regexSwitchTitle(kind: string): string {
+    if (kind === 'cross') return '跨段对话';
+    if (kind === 'fix') return '纠正写反的引号';
+    if (kind === 'short') return '短引号不算对话';
+    return ReaderRegexFontCodec.isDialogue(this.editingRegexRule) ? '对话里显示其他规则' : '命中里显示其他规则';
+  }
+
+  regexSwitchDescription(kind: string): string {
+    if (kind === 'cross') return '段末没收引号、下一段又以引号开头时，接着算对话';
+    if (kind === 'fix') return '如“你好“、”快走！”这类写反方向的引号';
+    if (kind === 'short') return '引号里字少又没有句末标点时按普通文字显示，如招式名、称号；偶尔会漏掉很短的对话';
+    return '人名等规则落在这里也上色，只换文字颜色和粗细，字号与气泡不变';
+  }
+
+  /** 规则列表里智能对话的副标题：开着的几项。 */
+  dialogueRuleSummary(rule: ReaderRegexFontRule): string {
+    const parts: string[] = ['智能对话'];
+    if (rule.dialogueCrossParagraph) parts.push('跨段');
+    if (rule.dialogueFixQuotes) parts.push('纠正引号');
+    if (rule.dialogueSkipShort) parts.push('短引号不算');
+    if (rule.nestOthers) parts.push('显示其他规则');
+    return parts.join(' · ');
+  }
+
+  regexSwitchValue(kind: string): boolean {
+    const rule = this.editingRegexRule;
+    if (kind === 'cross') return rule.dialogueCrossParagraph;
+    if (kind === 'fix') return rule.dialogueFixQuotes;
+    if (kind === 'short') return rule.dialogueSkipShort;
+    return rule.nestOthers;
+  }
+
   @Builder
   regexRuleEditorContent(refreshKey: number) {
     Column() {
@@ -1690,23 +1763,58 @@ export struct ReaderFontSettingsEditor {
             });
           })
 
-        TextInput({ text: this.editingRegexRule.pattern, placeholder: '正则表达式' })
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.primaryTextColor())
-          .placeholderColor(this.subTextColor())
-          .backgroundColor(this.inputColor())
-          .borderRadius(ThemeRuntime.mediumRadius())
-          .onEditChange((isEditing: boolean) => {
-            this.setRegexInputEditing(this.editingRegexRule.id, 'pattern', isEditing);
-          })
-          .onChange((value: string) => {
-            if (!this.isRegexInputEditing(this.editingRegexRule.id, 'pattern')) {
-              return;
+        Column({ space: AppSpacing.SM }) {
+          Text('匹配方式')
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.subTextColor())
+            .width('100%')
+          SettingSegment({
+            labels: ['智能对话', '正则表达式'],
+            selected: ReaderRegexFontCodec.isDialogue(this.editingRegexRule) ? 0 : 1,
+            inset: false,
+            onSelect: (selected: number) => {
+              this.updateRegexRule(EDITING_REGEX_RULE_INDEX, (target: ReaderRegexFontRule) => {
+                if (selected === 0) {
+                  if (ReaderRegexFontCodec.isDialogue(target)) return;
+                  target.matcher = ReaderRegexRuleHits.DIALOGUE;
+                  // 正则框留给切回时用：没填的填上兜底正则，旧版本应用读到也能大致上色。
+                  if (!target.pattern.trim()) target.pattern = ReaderDialogueMatcher.FALLBACK_PATTERN;
+                  target.nestOthers = true;
+                } else {
+                  target.matcher = '';
+                }
+              });
             }
-            this.updateRegexRule(EDITING_REGEX_RULE_INDEX, (target: ReaderRegexFontRule) => {
-              target.pattern = value;
-            });
           })
+        }
+        .width('100%')
+
+        if (ReaderRegexFontCodec.isDialogue(this.editingRegexRule)) {
+          Column() {
+            this.regexDialogueSwitch('cross')
+            this.regexDialogueSwitch('fix')
+            this.regexDialogueSwitch('short')
+          }
+          .width('100%')
+        } else {
+          TextInput({ text: this.editingRegexRule.pattern, placeholder: '正则表达式' })
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.primaryTextColor())
+            .placeholderColor(this.subTextColor())
+            .backgroundColor(this.inputColor())
+            .borderRadius(ThemeRuntime.mediumRadius())
+            .onEditChange((isEditing: boolean) => {
+              this.setRegexInputEditing(this.editingRegexRule.id, 'pattern', isEditing);
+            })
+            .onChange((value: string) => {
+              if (!this.isRegexInputEditing(this.editingRegexRule.id, 'pattern')) {
+                return;
+              }
+              this.updateRegexRule(EDITING_REGEX_RULE_INDEX, (target: ReaderRegexFontRule) => {
+                target.pattern = value;
+              });
+            })
+        }
 
         Column({ space: AppSpacing.SM }) {
           Text('作用范围')
@@ -1755,6 +1863,8 @@ export struct ReaderFontSettingsEditor {
           }
           .width('100%')
         }
+
+        this.regexDialogueSwitch('nest')
 
         this.compactFontModeItem('字体类型', this.editingRegexRule.fontMode, this.editingRegexRule.fontFamily,
           (mode: string, family: string) => {
@@ -2254,46 +2364,35 @@ export struct ReaderFontSettingsEditor {
 
   typographyPreviewRegexStyles(config: ReaderTypographyPreviewConfig): void {
     if (!this.readerRegexFontEnabled) return;
-    const matches: ReaderV2SpanStyleRange[] = [];
     const titleStyles = config.styles.slice();
     const content = config.document.displayText;
     const titleRanges = this.previewTitleRanges(config);
-    for (const rule of this.regexRules) {
-      if (!rule.enabled || !rule.pattern.trim()) continue;
-      let regex: RegExp;
-      try { regex = new RegExp(rule.pattern, 'g'); } catch (_) { continue; }
-      let match = regex.exec(content);
-      while (match) {
-        const start = match.index;
-        const end = start + match[0].length;
-        if (end > start && ReaderRegexScope.accepts(rule.scope, start, end, titleRanges) && !matches.some((item: ReaderV2SpanStyleRange): boolean => start < item.end && end > item.start)) {
-          matches.push(new ReaderV2SpanStyleRange(start, end));
-          // Explicit title emphasis takes precedence; regex fonts still apply outside its ranges.
-          let ranges: number[][] = [[start, end]];
-          for (const title of titleStyles) {
-            const next: number[][] = [];
-            for (const range of ranges) {
-              if (range[1] <= title.start || range[0] >= title.end) next.push(range);
-              else {
-                if (range[0] < title.start) next.push([range[0], title.start]);
-                if (range[1] > title.end) next.push([title.end, range[1]]);
-              }
-            }
-            ranges = next;
-          }
-          for (const range of ranges) {
-            const style = this.typographyPreviewEmphasis(rule, rule.fontSize,
-              this.previewFontFamily(rule.fontMode, rule.fontFamily), rule.fontWeight);
-            style.start = range[0];
-            style.end = range[1];
-            config.styles.push(style);
+    const rules = ReaderRegexFontCodec.activeRules(this.regexRules);
+    for (const hit of ReaderRegexRuleHits.collect(ReaderRegexFontCodec.matchSpecs(rules), content, titleRanges)) {
+      const rule = rules[hit.ruleIndex];
+      // Explicit title emphasis takes precedence; regex fonts still apply outside its ranges.
+      let ranges: number[][] = [[hit.start, hit.end]];
+      for (const title of titleStyles) {
+        const next: number[][] = [];
+        for (const range of ranges) {
+          if (range[1] <= title.start || range[0] >= title.end) next.push(range);
+          else {
+            if (range[0] < title.start) next.push([range[0], title.start]);
+            if (range[1] > title.end) next.push([title.end, range[1]]);
           }
         }
-        if (end <= start) {
-          if (start >= content.length) break;
-          regex.lastIndex = Math.max(regex.lastIndex + 1, start + 1);
+        ranges = next;
+      }
+      for (const range of ranges) {
+        const style = this.typographyPreviewEmphasis(rule, rule.fontSize,
+          this.previewFontFamily(rule.fontMode, rule.fontFamily), rule.fontWeight);
+        if (hit.overlay) {
+          config.styles.push(ReaderV2SpanStyleRange.overlayOf(style, rule.fontWeight, range[0], range[1]));
+          continue;
         }
-        match = regex.exec(content);
+        style.start = range[0];
+        style.end = range[1];
+        config.styles.push(style);
       }
     }
   }
@@ -2488,6 +2587,12 @@ export struct ReaderFontSettingsEditor {
    */
   regexPreviewBodies(rule: ReaderRegexFontRule): string[] {
     const bodies: string[] = [];
+    if (ReaderRegexFontCodec.isDialogue(rule)) {
+      // 依次露出跨段对话、写反的引号；开了“短引号不算对话”再加一句招式名。
+      bodies.push('他说：“你好。”她点头说：「走吧。」\n“那年冬天特别冷，河面冻得能跑马。\n“开春冰就化了。”\n' +
+        '“你别过来“他喊道，“我数到三。”\n”快走！”她拉起他就跑。' + (rule.dialogueSkipShort ? '\n他一招“回风拂柳”使出，剑尖停在半空。' : ''));
+      return bodies;
+    }
     if (rule.name === '对话') {
       bodies.push('他说：“你好。”她点头说：「走吧。」\n“这就来。”她应了一声。');
     } else if (rule.name === '关键字匹配') {
@@ -2515,7 +2620,7 @@ export struct ReaderFontSettingsEditor {
 
   /** 规则预览里的标题样例，让“仅标题/仅正文”看得出差别。 */
   regexPreviewTitle(rule: ReaderRegexFontRule): string {
-    if (rule.name === '对话') {
+    if (rule.name === '对话' || ReaderRegexFontCodec.isDialogue(rule)) {
       return '第三章 “重逢”';
     }
     if (rule.name === '关键字匹配') {
@@ -2611,19 +2716,25 @@ export struct ReaderFontSettingsEditor {
    */
   regexRulePreviewConfig(index: number, refreshKey: number): ReaderTypographyPreviewConfig {
     const rule = this.regexRuleAt(index);
+    const dialogue = ReaderRegexFontCodec.isDialogue(rule);
     const pattern = rule.pattern.trim();
-    let regex: RegExp | null = null;
-    if (pattern) {
-      try { regex = new RegExp(rule.pattern, 'g'); } catch (_) { regex = null; }
-    }
-    if (regex && refreshKey >= -1) {
-      for (const body of this.regexPreviewBodies(rule)) {
-        const preview = this.regexRulePreviewBase(rule, body, false);
-        if (this.applyRegexPreviewMatches(preview, rule, regex) > 0) return preview.config;
+    let valid = dialogue;
+    if (!dialogue && pattern) {
+      try {
+        valid = new RegExp(rule.pattern, 'g') !== null;
+      } catch (_) {
+        valid = false;
       }
     }
-    const note = !pattern ? '还没填正则，强调效果：' :
-      (regex ? '示例正文没有命中这条规则，强调效果：' : '正则写法有误，强调效果：');
+    if (valid && refreshKey >= -1) {
+      const spec = ReaderRegexFontCodec.matchSpecs([rule])[0];
+      for (const body of this.regexPreviewBodies(rule)) {
+        const preview = this.regexRulePreviewBase(rule, body, false);
+        if (this.applyRegexPreviewMatches(preview, rule, spec) > 0) return preview.config;
+      }
+    }
+    const note = !dialogue && !pattern ? '还没填正则，强调效果：' :
+      (valid ? '示例正文没有命中这条规则，强调效果：' : '正则写法有误，强调效果：');
     const preview = this.regexRulePreviewBase(rule,
       `${ReaderRegexSample.LEAD_LINE}\n${ReaderRegexSample.TAIL_LINE}\n${note}${REGEX_PREVIEW_FALLBACK_SAMPLE}`, true);
     const config = preview.config;
@@ -2646,21 +2757,16 @@ export struct ReaderFontSettingsEditor {
   }
 
   /** 规则在预览正文里的命中逐个画上强调，返回画了几处；范围外、和标题强调重叠的不算。 */
-  applyRegexPreviewMatches(preview: RegexRulePreview, rule: ReaderRegexFontRule, regex: RegExp): number {
+  applyRegexPreviewMatches(preview: RegexRulePreview, rule: ReaderRegexFontRule, spec: ReaderRuleMatchSpec): number {
     const config = preview.config;
     const emphasisContext = this.regexEmphasisContext();
     const content = config.document.displayText;
     const titleRanges = this.previewTitleRanges(config);
     let count = 0;
-    regex.lastIndex = 0;
-    let match = regex.exec(content);
-    while (match) {
-      const start = match.index;
-      const end = start + match[0].length;
-      if (end <= start) {
-        if (start >= content.length) break;
-        regex.lastIndex = Math.max(regex.lastIndex + 1, start + 1);
-      } else if (ReaderRegexScope.accepts(rule.scope, start, end, titleRanges) &&
+    for (const range of ReaderRegexRuleHits.ranges(spec, content)) {
+      const start = range[0];
+      const end = range[1];
+      if (ReaderRegexScope.accepts(rule.scope, start, end, titleRanges) &&
         !preview.titleStyles.some((item: ReaderV2SpanStyleRange): boolean => start < item.end && end > item.start)) {
         const style = this.typographyPreviewEmphasis(rule, rule.fontSize,
           this.previewFontFamily(rule.fontMode, rule.fontFamily), rule.fontWeight, emphasisContext);
@@ -2669,7 +2775,6 @@ export struct ReaderFontSettingsEditor {
         config.styles.push(style);
         count++;
       }
-      match = regex.exec(content);
     }
     return count;
   }

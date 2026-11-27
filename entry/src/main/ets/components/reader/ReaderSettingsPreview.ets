@@ -6,6 +6,7 @@ import { ImmersiveMaterialSurface } from '../ImmersiveMaterialSurface';
 import { ReaderTypographyPreview, ReaderTypographyPreviewConfig } from './ReaderTypographyPreview';
 import { ReaderV2DocumentParser } from '../../core/reader/ReaderV2Document';
 import { ReaderV2BubbleFrame, ReaderV2Color, ReaderV2SpanStyleRange } from '../../core/reader/ReaderV2Style';
+import { ReaderRegexRuleHits, ReaderRuleMatchSpec } from '../../core/reader/ReaderRegexRuleHits';
 import { ReaderCommentBubbleStyles } from '../../core/reader/ReaderCommentBubble';
 import { ReaderInfoBarRow } from './ReaderInfoBar';
 import { ReaderInfoBarConfig, ReaderInfoBarContext, ReaderInfoBarText, ReaderInfoProgressBar } from '../../core/reader/ReaderInfoBarModel';
@@ -253,29 +254,22 @@ export struct ReaderSettingsPreview {
     const rules = this.settings.regexFontEnabled ? ReaderRegexFontCodec.decode(this.settings.regexFontRulesRaw, legacy) : [];
     const content = config.document.displayText;
     const titleStyles = config.styles.slice();
-    const matched: ReaderV2SpanStyleRange[] = [];
-    for (const rule of rules) {
-      if (!rule.enabled || !rule.pattern.trim()) continue;
-      let expression: RegExp;
-      try { expression = new RegExp(rule.pattern, 'g'); } catch (_) { continue; }
-      let match = expression.exec(content);
-      while (match) {
-        const start = match.index;
-        const end = start + match[0].length;
-        if (end > start && !matched.some((existing: ReaderV2SpanStyleRange): boolean =>
-          start < existing.end && end > existing.start)) {
-          matched.push(new ReaderV2SpanStyleRange(start, end));
-          // 先按规则顺序确定命中，再只裁去标题占用的部分，保留跨标题命中的正文样式。
-          for (const bounds of this.rangesOutsideTitle(start, end, titleStyles)) {
-            const style = this.spanStyle(rule, rule.fontSize,
-              this.fontFamily(rule.fontMode, rule.fontFamily), rule.fontWeight);
-            style.start = bounds[0];
-            style.end = bounds[1];
-            config.styles.push(style);
-          }
+    const active = ReaderRegexFontCodec.activeRules(rules);
+    // 和阅读页同一种判定（ReaderRegexRuleHits.collect）；这里没传标题区间，原来也不按作用范围过滤。
+    for (const hit of ReaderRegexRuleHits.collect(ReaderRegexFontCodec.matchSpecs(active).map(
+      (spec: ReaderRuleMatchSpec): ReaderRuleMatchSpec => { spec.scope = 'all'; return spec; }), content, [])) {
+      const rule = active[hit.ruleIndex];
+      // 先按规则顺序确定命中，再只裁去标题占用的部分，保留跨标题命中的正文样式。
+      for (const bounds of this.rangesOutsideTitle(hit.start, hit.end, titleStyles)) {
+        const style = this.spanStyle(rule, rule.fontSize,
+          this.fontFamily(rule.fontMode, rule.fontFamily), rule.fontWeight);
+        if (hit.overlay) {
+          config.styles.push(ReaderV2SpanStyleRange.overlayOf(style, rule.fontWeight, bounds[0], bounds[1]));
+          continue;
         }
-        if (end <= start) expression.lastIndex = Math.max(expression.lastIndex + 1, start + 1);
-        match = expression.exec(content);
+        style.start = bounds[0];
+        style.end = bounds[1];
+        config.styles.push(style);
       }
     }
     config.styles = titleStyles.concat(config.styles.slice(titleStyles.length)

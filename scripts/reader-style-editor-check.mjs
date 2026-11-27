@@ -213,7 +213,7 @@ class ActualStyleHarness extends ReaderHarness {
   getBackgroundColor() { return '#FFF8E8'; }
   getTextColor() { return '#332211'; }
   toMeasurePx(n) { return n * 2; } toMeasureFontPx(n) { return n * 2.4; }
-  ${['getRegexTextSlices', 'hasOverlappedRegexSlice', 'getRegexRuleBySlice', 'getRegexSliceFontSize',
+  ${['getRegexMatchSpecs', 'getRegexTextSlices', 'getRegexRuleBySlice', 'getRegexSliceFontSize',
     'getRegexSliceFontFamily', 'buildReaderV2RegexStyles'].map(name => method(name, readerSource)).join('\n')}
 }
 globalThis.styleAPI = { PreviewStyleHarness, ActualStyleHarness, ReaderRegexFontCodec,

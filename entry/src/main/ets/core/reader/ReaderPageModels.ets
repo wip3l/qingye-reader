@@ -19,7 +19,7 @@ export interface ReaderInlineActionBoundsTask {
 export interface ReaderMergedActionBoundsTask {
   paragraphs: ReaderTextParagraph[]; selectableKey: string; left: number; top: number; pageIdentity: string; attempts: number;
 }
-export interface ReadTextSlice { text: string; start: number; end: number; highlighted: boolean; ruleIndex: number; ttsHighlighted?: boolean; key: string; }
+export interface ReadTextSlice { text: string; start: number; end: number; highlighted: boolean; ruleIndex: number; ttsHighlighted?: boolean; overlay?: boolean; key: string; }
 export interface ReaderPaginationResult extends ReaderPaginationIndexState {
   v2Session?: ReaderV2PaginationSession;
   persistenceScheduled?: boolean;

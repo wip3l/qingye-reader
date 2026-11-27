@@ -341,12 +341,13 @@ assert(reader.includes('ReaderRegexFontCodec.decode'), 'Reader page must use the
 // The TTS focus is painted from paragraph geometry as its own layer above the text and regex bubbles.
 assert(reader.includes('readerV2TtsHighlightRects(') && reader.includes('this.readerCurrentV2TtsOverlay('),
   'TTS highlight overlay is missing');
-assert(reader.includes('start >= displayText.length || regex.lastIndex >= displayText.length'),
-  'Reader zero-length regex guard is missing');
-// 预览改用正文同一套排版后，零长度命中的写法是先判断到头再推进 lastIndex。
-assert(regexSettings.includes('if (start >= content.length) break;') &&
-  regexSettings.includes('regex.lastIndex = Math.max(regex.lastIndex + 1, start + 1)'),
-  'Preview zero-length regex guard is missing');
+// 阅读页和各处预览的命中都走 ReaderRegexRuleHits；零长度命中先判断到头再推进 lastIndex。
+const ruleHits = read('entry/src/main/ets/core/reader/ReaderRegexRuleHits.ts');
+assert(reader.includes('ReaderRegexRuleHits.collect(') && regexSettings.includes('ReaderRegexRuleHits.collect(') &&
+  regexSettings.includes('ReaderRegexRuleHits.ranges('), 'Regex rule hits must use the shared ReaderRegexRuleHits');
+assert(ruleHits.includes('if (start >= text.length) break;') &&
+  ruleHits.includes('regex.lastIndex = Math.max(regex.lastIndex + 1, start + 1)'),
+  'Zero-length regex guard is missing');
 
 assert(readerThemes.includes('APP_THEME_INDEX: number = 4'), 'Reader app-theme compatibility index is missing');
 assert(runtime.includes("KEY_THEME_REVISION"), 'Theme runtime revision broadcast is missing');
