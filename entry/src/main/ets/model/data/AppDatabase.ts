@@ -101,6 +101,11 @@ class ReaderPaginationCacheWrite {
   }
 }
 
+class ChapterContentBuckets {
+  chapters: relationalStore.ValuesBucket[] = [];
+  contents: relationalStore.ValuesBucket[] = [];
+}
+
 class BookLifecycleMigrationRecord {
   bookUrl: string = '';
   identityKey: string = '';
@@ -2750,6 +2755,53 @@ export class AppDatabase implements BookSourceRuntimePersistence {
 
   async insertBookChaptersWithContents(bookUrl: string, chapters: BookChapter[], contents: string[]): Promise<void> {
     if (!this.store || !bookUrl || chapters.length === 0 || chapters.length !== contents.length) return;
+    const buckets = this.chapterContentBuckets(bookUrl, chapters, contents);
+    const transaction = await this.store.createTransaction();
+    try {
+      await this.batchInsertChapterBuckets(transaction, buckets);
+      await transaction.commit();
+    } catch (e) {
+      await transaction.rollback();
+      throw e;
+    }
+  }
+
+  /**
+   * 整本换掉章节与正文缓存：删旧和写新在同一个事务里，写入失败或进程中途被杀时旧目录原样保留，
+   * 不会留下“书还在、目录是空的”状态。本地书重新解析时用。
+   */
+  async replaceBookChaptersWithContents(bookUrl: string, chapters: BookChapter[], contents: string[]): Promise<void> {
+    if (!this.store || !bookUrl || chapters.length === 0 || chapters.length !== contents.length) {
+      throw new Error('章节数据不完整，未替换目录');
+    }
+    const buckets = this.chapterContentBuckets(bookUrl, chapters, contents);
+    await ReaderCacheCoordinator.run(async (): Promise<void> => {
+      if (!this.store) throw new Error('数据库未就绪');
+      const transaction = await this.store.createTransaction();
+      try {
+        for (const table of ['book_chapters', 'book_contents', 'reader_image_refs', 'reader_pagination_cache']) {
+          await transaction.execute('DELETE FROM ' + table + ' WHERE bookUrl=?', [bookUrl]);
+        }
+        await this.batchInsertChapterBuckets(transaction, buckets);
+        await transaction.commit();
+      } catch (e) {
+        await transaction.rollback();
+        throw e;
+      }
+    });
+  }
+
+  private async batchInsertChapterBuckets(transaction: relationalStore.Transaction,
+    buckets: ChapterContentBuckets): Promise<void> {
+    for (let offset = 0; offset < buckets.chapters.length; offset += AppDatabase.BATCH_INSERT_CHUNK_SIZE) {
+      await transaction.batchInsert('book_chapters',
+        buckets.chapters.slice(offset, offset + AppDatabase.BATCH_INSERT_CHUNK_SIZE));
+      await transaction.batchInsert('book_contents',
+        buckets.contents.slice(offset, offset + AppDatabase.BATCH_INSERT_CHUNK_SIZE));
+    }
+  }
+
+  private chapterContentBuckets(bookUrl: string, chapters: BookChapter[], contents: string[]): ChapterContentBuckets {
     const cacheDate = Date.now();
     const chapterBuckets: relationalStore.ValuesBucket[] = [];
     const contentBuckets: relationalStore.ValuesBucket[] = [];
@@ -2779,19 +2831,10 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       });
       chapter.cacheDate = cacheDate;
     }
-    const transaction = await this.store.createTransaction();
-    try {
-      for (let offset = 0; offset < chapterBuckets.length; offset += AppDatabase.BATCH_INSERT_CHUNK_SIZE) {
-        await transaction.batchInsert('book_chapters',
-          chapterBuckets.slice(offset, offset + AppDatabase.BATCH_INSERT_CHUNK_SIZE));
-        await transaction.batchInsert('book_contents',
-          contentBuckets.slice(offset, offset + AppDatabase.BATCH_INSERT_CHUNK_SIZE));
-      }
-      await transaction.commit();
-    } catch (e) {
-      await transaction.rollback();
-      throw e;
-    }
+    const buckets = new ChapterContentBuckets();
+    buckets.chapters = chapterBuckets;
+    buckets.contents = contentBuckets;
+    return buckets;
   }
 
   async deleteBookChapters(bookUrl: string): Promise<void> {

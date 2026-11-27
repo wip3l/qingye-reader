@@ -881,11 +881,9 @@ export class LocalBookService {
     book.author = hasCustomMetadata ? book.getVariable('localCustomAuthor') : (epub.author || fileMetadata.author);
     book.coverUrl = epub.coverPath ? fileUri.getUriFromPath(epub.coverPath) : '';
     const oldExtractRoot = book.getVariable('localExtractRoot');
-    if (oldExtractRoot && oldExtractRoot !== epub.extractRoot) {
-      LocalBookService.deleteLocalPath(context, oldExtractRoot);
-    }
     book.putVariable('localExtractRoot', epub.extractRoot);
-    book.putVariable('localParserVersion', LocalBookService.parserVersionFor(extension));
+    // 解析版本等目录写好后再记，见下方。
+    book.putVariable('localParserVersion', 'importing');
     book.putVariable('readerComicAutoDetected', epub.isComic ? '1' : '0');
     book.putVariable('readerComicMode', epub.isComic ? '1' : '0');
     chapters = epub.chapters;
@@ -909,6 +907,11 @@ export class LocalBookService {
       await appDb.insertBook(book);
     }
     await LocalBookService.persistEpubChapters(bookUrl, chapters);
+    book.putVariable('localParserVersion', LocalBookService.parserVersionFor(extension));
+    await appDb.updateBook(book);
+    if (oldExtractRoot && oldExtractRoot !== epub.extractRoot) {
+      LocalBookService.deleteLocalPath(context, oldExtractRoot);
+    }
     return book;
   }
 
@@ -928,8 +931,31 @@ export class LocalBookService {
     return true;
   }
 
-  static async ensureLocalParserCurrent(context: Context, book: Book): Promise<boolean> {
-    if (!LocalBookService.isLocalBook(book)) return false;
+  /**
+   * 解析版本过期，或目录在库里是空的（旧版重建中途失败留下的），就按原文件重新解析；返回是否重建过。
+   * 同一本书同时只重建一次：重建没完时退出再打开，后来的调用等同一个结果，不会两路交错写目录。
+   */
+  static ensureLocalParserCurrent(context: Context, book: Book): Promise<boolean> {
+    if (!LocalBookService.isLocalBook(book)) return Promise.resolve(false);
+    const running = LocalBookService.parserRebuilds.get(book.bookUrl);
+    if (running) return running;
+    const task = LocalBookService.ensureLocalParserCurrentOnce(context, book).finally((): void => {
+      LocalBookService.parserRebuilds.delete(book.bookUrl);
+    });
+    LocalBookService.parserRebuilds.set(book.bookUrl, task);
+    return task;
+  }
+
+  private static parserRebuilds: Map<string, Promise<boolean>> = new Map();
+
+  /** 书记录说有章节、库里却一条目录都没有。 */
+  private static async lostChapters(context: Context, book: Book): Promise<boolean> {
+    if (book.totalChapterNum <= 0) return false;
+    await appDb.initWithContext(context);
+    return await appDb.getBookChapterCount(book.bookUrl) === 0;
+  }
+
+  private static async ensureLocalParserCurrentOnce(context: Context, book: Book): Promise<boolean> {
     if (LocalBookService.isPdfBook(book)) {
       const path = book.getVariable('localFilePath');
       if (!path || !LocalBookService.exists(path)) return false;
@@ -942,12 +968,13 @@ export class LocalBookService {
     if (book.type === LocalBookService.TYPE_TXT) {
       return await LocalBookService.ensureTxtParserCurrent(context, book);
     }
-    if (book.type !== LocalBookService.TYPE_EPUB ||
-      book.getVariable('localParserVersion') === LocalBookService.parserVersionFor(LocalBookService.formatOf(book))) {
-      return false;
-    }
+    if (book.type !== LocalBookService.TYPE_EPUB) return false;
     const localPath = book.getVariable('localFilePath');
     if (!localPath || !LocalBookService.exists(localPath)) return false;
+    if (book.getVariable('localParserVersion') === LocalBookService.parserVersionFor(LocalBookService.formatOf(book)) &&
+      !await LocalBookService.lostChapters(context, book)) {
+      return false;
+    }
     await appDb.initWithContext(context);
     book.putVariable('localParserVersion', 'importing');
     await appDb.updateBook(book);
@@ -988,11 +1015,7 @@ export class LocalBookService {
     }
     book.coverUrl = epub.coverPath ? fileUri.getUriFromPath(epub.coverPath) : book.coverUrl;
     const oldExtractRoot = book.getVariable('localExtractRoot');
-    if (oldExtractRoot && oldExtractRoot !== epub.extractRoot) {
-      LocalBookService.deleteLocalPath(context, oldExtractRoot);
-    }
     book.putVariable('localExtractRoot', epub.extractRoot);
-    book.putVariable('localParserVersion', LocalBookService.parserVersionFor(format));
     book.putVariable('readerComicAutoDetected', epub.isComic ? '1' : '0');
     book.putVariable('readerComicMode', epub.isComic ? '1' : '0');
 
@@ -1008,15 +1031,19 @@ export class LocalBookService {
     book.latestChapterTitle = chapters[chapters.length - 1].title;
     book.latestChapterTime = Date.now();
     LocalBookService.migrateEpubProgress(book, oldChapterPath, oldChapterContent, epub);
-    await appDb.updateBook(book);
+    // 先换目录、后记解析版本：中途失败时库里仍是“importing”，下次打开会重来，不会停在空目录上。
     await LocalBookService.persistEpubChapters(book.bookUrl, chapters);
+    book.putVariable('localParserVersion', LocalBookService.parserVersionFor(format));
+    await appDb.updateBook(book);
     ReadBookEngine.discardSession(book.bookUrl);
+    if (oldExtractRoot && oldExtractRoot !== epub.extractRoot) {
+      LocalBookService.deleteLocalPath(context, oldExtractRoot);
+    }
   }
 
-  // 章节与正文在一个事务里写入：导入时已经转换过的正文直接进缓存，打开章节时不必再转换一遍。
+  // 删旧章节和写新章节、正文在同一个事务里：导入时已经转换过的正文直接进缓存，打开章节时不必再转换一遍；
+  // 写入失败或进程中途被杀时旧目录原样保留。
   private static async persistEpubChapters(bookUrl: string, chapters: LocalChapterData[]): Promise<void> {
-    await appDb.deleteBookChapters(bookUrl);
-    await appDb.deleteBookCachedContent(bookUrl);
     const dbChapters: BookChapter[] = [];
     const contents: string[] = [];
     for (let i = 0; i < chapters.length; i++) {
@@ -1031,7 +1058,7 @@ export class LocalBookService {
       dbChapters.push(chapter);
       contents.push(data.content || chapter.title);
     }
-    await appDb.insertBookChaptersWithContents(bookUrl, dbChapters, contents);
+    await appDb.replaceBookChaptersWithContents(bookUrl, dbChapters, contents);
   }
 
   /** 重新解析前，当前阅读章节对应的 spine 文件路径。 */
