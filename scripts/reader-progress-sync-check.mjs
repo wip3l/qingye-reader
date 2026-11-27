@@ -66,6 +66,7 @@ function fixture(current = 0) {
     readerTypographyRestoreOffset: -1,
     commitReaderContinuousChapter: (chapter, page) => calls.push([chapter, page]),
     scheduleReaderComicProgressSave() { saves.push([this.currentChapterIndex, this.currentPageIndex]); },
+    readingRulerScheduleMeasure() {},
     getPageStartOffset: i => i * 100, readerContinuousV2ViewportPx: () => [0, 100],
     readerContinuousV2ItemId(i) { return `${this.currentChapterIndex}:${i}`; },
     getUIContext: () => ({ getComponentUtils: () => ({ getRectangleById: id => {

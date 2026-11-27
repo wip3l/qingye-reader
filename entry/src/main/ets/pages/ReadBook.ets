@@ -6,6 +6,10 @@ import { ReaderSpreadSpine, READER_SPREAD_SPINE_WIDTH } from '../components/read
 import { ReaderBrightnessSession } from '../utils/ReaderBrightnessSession';
 import { ReaderEyeCareFilter } from '../components/reader/ReaderEyeCareFilter';
 import { ReaderEyeCare } from '../utils/ReaderEyeCare';
+import { ReaderReadingRuler } from '../utils/ReaderReadingRuler';
+import { HexColor } from '../utils/HexColor';
+import { ReaderReadingRulerSteps, ReaderRulerGeometry, ReaderRulerRow, ReaderRulerStep } from '../core/reader/ReaderReadingRulerSteps';
+import { ReaderReadingRulerRows } from '../core/reader/ReaderReadingRulerRows';
 import { ReaderQuickJumpContent } from '../components/reader/ReaderQuickJumpContent';
 import { READER_QUICK_JUMP_CAPSULE_HEIGHT, ReaderQuickJumpCapsule } from '../components/reader/ReaderQuickJumpCapsule';
 import {
@@ -333,6 +337,10 @@ const READER_PAGINATION_BUSY_RETRY_DELAY_MS = 48;
 const READER_IDLE_PAGINATION_BURST_MS = 10;
 const READER_IDLE_PAGINATION_GAP_MS = 16;
 const READER_DOUBLE_PAGE_DIVIDER_WIDTH = 1;
+const READER_RULER_LAYER_ID = 'reader_reading_ruler_layer';
+const READER_RULER_HANDLE_WIDTH = 18;
+const READER_RULER_HANDLE_HEIGHT = 44;
+const READER_RULER_HANDLE_TOUCH_SLOP = 16;
 // 眼动翻页提示：无页脚时提示文字的字号、设置面板上沿小胶囊的高度。
 const READER_EYE_TURN_CUE_HINT_SIZE = 12;
 const READER_EYE_TURN_SETTINGS_PILL_HEIGHT = 26;
@@ -1037,6 +1045,27 @@ struct ReadBookPage {
   @State bookmarkPullReady: boolean = false;
   @State pageSlideDirection: number = 0;
   @State pageTurnAnimating: boolean = false;
+  // 阅读尺：设置从 AppStorage 订阅；位置是“这一页的第几行”（翻页阅读）或“屏幕上的哪个高度”（滚动阅读）。
+  @StorageProp('readerRulerOn') readerRulerOn: boolean = false;
+  @StorageProp('readerRulerStyle') readerRulerStyle: string = ReaderReadingRulerSteps.STYLE_MASK;
+  @StorageProp('readerRulerLines') readerRulerLines: number = ReaderReadingRulerSteps.DEFAULT_LINES;
+  @StorageProp('readerRulerStrength') readerRulerStrength: number = ReaderReadingRulerSteps.DEFAULT_STRENGTH;
+  @State readerRulerPageKey: string = '';
+  @State readerRulerIndex: number = 0;
+  /** 滚动阅读：尺上边在根层里的位置（vp），-1 表示还没定，按视口上方约三分之一处放。 */
+  @State readerRulerScrollSlot: number = -1;
+  /** 滚动阅读：量好的尺上下边（根层 vp）；滚动停下、尺移动后重新量。 */
+  @State readerRulerScrollBand: number[] = [];
+  @State readerRulerDragging: boolean = false;
+  @State readerRulerLayerWidth: number = 0;
+  private readerRulerDragStartY: number = 0;
+  /** 拖动中尺中心的位置（根层 vp），-1 为没在拖。 */
+  @State readerRulerDragCenter: number = -1;
+  private readerRulerDragBase: ReaderRulerGeometry | null = null;
+  private readerRulerMeasureTimer: number = -1;
+  private readerRulerRowsKey: string = '';
+  private readerRulerRowsCache: ReaderRulerRow[] = [];
+  private readerRulerGeometryCache: ReaderRulerGeometry = new ReaderRulerGeometry();
   @State pageTurnIncomingText: string = '';
   @State pageTurnIncomingSecondaryText: string = '';
   @State pageTurnIncomingX: number = 0;
@@ -1514,6 +1543,7 @@ struct ReadBookPage {
 
   async aboutToAppear() {
     ReaderInputScopes.load(getContext(this));
+    ReaderReadingRuler.load(getContext(this));
     this.readerEntryAlive = true;
     ReaderEmojiImages.bind(getContext(this).cacheDir, (): void => this.scheduleReaderEmojiRepaint());
     // Fixed-layout documents must not acquire text/TTS sessions or warm chapter content.
@@ -3048,6 +3078,7 @@ struct ReadBookPage {
         this.captureReaderContinuousAnchor();
         if (this.isReaderNovelContinuousScrollModeActive()) this.checkReaderContinuousTtsDetach();
         if (!this.readerComicScrollRestoring && this.readerPageVisible) this.scheduleReaderComicProgressSave();
+        this.readingRulerScheduleMeasure(60);
       })
       .onReachEnd(() => {
         this.onReaderContinuousReachEnd();
@@ -4464,6 +4495,11 @@ struct ReadBookPage {
       if (!this.isReaderContinuousScrollSurfaceActive() && !this.showMenu && !this.showToc && !this.showSettings &&
         !this.shouldBlockReaderInteraction()) {
         this.readerTapLayer()
+      }
+
+      // 阅读尺在点击层上面：自身不接收触摸，点按照常落到点击层，只有右缘把手可以拖。
+      if (this.readerRulerOn && this.shouldRenderPrimaryReaderContent()) {
+        this.readingRulerLayer()
       }
 
       if (this.readerComicPaginationParsing) {
@@ -7424,8 +7460,8 @@ struct ReadBookPage {
       return;
     }
     if (action === 1) this.showMenu = true;
-    else if (action === 2) this.turnNext();
-    else if (action === 3) this.turnPrev();
+    else if (action === 2) this.readerTapTurn(1);
+    else if (action === 3) this.readerTapTurn(-1);
   }
 
   setReaderAutoScrollSpeed(speed: number): void {
@@ -9803,6 +9839,7 @@ struct ReadBookPage {
   }
 
   onReaderComicScrollIndexChanged(start: number, end: number): void {
+    this.readingRulerScheduleMeasure(200);
     // ArkUI can publish one final List index while the route is being detached. That callback describes the
     // shrinking/unmounted viewport, not a user scroll, and must not replace the page captured by exit/background.
     if (this.quickJumpBusy || !this.readerPageVisible) return;
@@ -12532,7 +12569,7 @@ struct ReadBookPage {
     this.readerKeyboard.consume(event.keyCode, event.deviceId);
     if (!first || this.shouldBlockReaderInteraction() || this.chapters.length === 0) return true;
     this.refreshReaderScreenTimeout();
-    const turning = direction > 0 ? this.turnNext() : this.turnPrev();
+    const turning = this.readerTapTurn(direction > 0 ? 1 : -1);
     turning.catch((error: Error): void => { console.warn('键盘翻页失败:', error); });
     return true;
   }
@@ -12771,13 +12808,13 @@ struct ReadBookPage {
       return;
     }
     if (this.isReaderContinuousScrollSurfaceActive()) {
-      this.scrollReaderComicByPage(direction);
+      if (!this.readingRulerStep(direction)) this.scrollReaderComicByPage(direction);
       return;
     }
     if (direction > 0) {
-      this.turnNext();
+      this.readerTapTurn(1);
     } else {
-      this.turnPrev();
+      this.readerTapTurn(-1);
     }
   }
 
@@ -14278,19 +14315,19 @@ struct ReadBookPage {
       return this.commitReaderTapZone(this.getTapZoneIndex(x, y, width, height));
     }
     if (y < height * 0.3) {
-      this.turnPrev();
+      this.readerTapTurn(-1);
       return true;
     }
     if (y > height * 0.7) {
-      this.turnNext();
+      this.readerTapTurn(1);
       return true;
     }
     if (x < width / 3) {
-      this.turnPrev();
+      this.readerTapTurn(-1);
       return true;
     }
     if (x > width * 2 / 3) {
-      this.turnNext();
+      this.readerTapTurn(1);
       return true;
     }
     this.updateReaderMenuAnchorByPoint(x);
@@ -14322,10 +14359,10 @@ struct ReadBookPage {
         this.showMenu = true;
         return true;
       case 2:
-        this.turnNext();
+        this.readerTapTurn(1);
         return true;
       case 3:
-        this.turnPrev();
+        this.readerTapTurn(-1);
         return true;
       case 0:
       default:
@@ -14694,6 +14731,67 @@ struct ReadBookPage {
 
     ReaderSettingGroup({ title: '段评', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
       this.readerTypographyField(ReaderTypographyField.COMMENT_BUBBLE_SIZE, false, false, '正文里段评气泡的大小')
+    }
+  }
+
+  /** 阅读方式 › 阅读尺。只存本机、所有书共用（ReaderReadingRuler）。 */
+  @Builder
+  readingRulerSettingsGroup() {
+    ReaderSettingGroup({ title: '阅读尺', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
+      this.readerSwitchSettingItem('阅读尺', '突出正在读的几行；点翻页区域、按音量键先移动尺，到页底再翻页，右缘把手可以拖',
+        this.readerRulerOn, (checked: boolean) => {
+          ReaderReadingRuler.setOn(checked);
+          this.readerRulerPageKey = '';
+          this.readerRulerScrollSlot = -1;
+          this.readingRulerScheduleMeasure(160);
+        })
+
+      if (this.readerRulerOn) {
+        ReaderSettingSegmentRow({
+          title: '样式',
+          labels: ReaderReadingRulerSteps.STYLE_LABELS,
+          selected: Math.max(0, ReaderReadingRulerSteps.STYLES.indexOf(this.readerRulerStyle)),
+          dark: this.isReaderThemeDark(),
+          textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor(),
+          onSelect: (index: number): void => {
+            ReaderReadingRuler.setStyle(ReaderReadingRulerSteps.STYLES[index] ?? ReaderReadingRulerSteps.STYLE_MASK);
+          }
+        })
+        ReaderSettingSegmentRow({
+          title: '聚焦行数',
+          labels: ['1 行', '2 行', '3 行'],
+          selected: this.readingRulerLines() - 1,
+          dark: this.isReaderThemeDark(),
+          textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor(),
+          onSelect: (index: number): void => {
+            ReaderReadingRuler.setLines(index + 1);
+            this.readingRulerScheduleMeasure(60);
+          }
+        })
+        Row({ space: 14 }) {
+          ReaderSettingStepperItem({
+            title: '浓度（%）',
+            cell: true,
+            value: ReaderReadingRulerSteps.normalizeStrength(this.readerRulerStrength),
+            minValue: ReaderReadingRulerSteps.MIN_STRENGTH,
+            maxValue: ReaderReadingRulerSteps.MAX_STRENGTH,
+            stepValue: 5,
+            dark: this.isReaderThemeDark(),
+            textColor: this.readerPanelTextColor(),
+            subTextColor: this.readerPanelSubTextColor(),
+            inputColor: this.readerSolidPanelColor(),
+            onChange: (value: number): void => ReaderReadingRuler.setStrength(value)
+          })
+            .layoutWeight(1)
+        }
+        .width('100%')
+        Text('朗读、自动滚动时尺自动隐藏，停下后回来；滚动阅读时尺停在屏幕上，正文从它下面滚过。')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.readerPanelSubTextColor())
+          .width('100%')
+      }
     }
   }
 
@@ -15170,6 +15268,8 @@ struct ReadBookPage {
           this.setReaderChapterEndEnabled(checked);
         })
     }
+
+    this.readingRulerSettingsGroup()
 
     ReaderSettingGroup({ title: '屏幕', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
       this.readerSwitchSettingItem('使用双翻页', '横屏、折叠屏展开等宽屏下并排显示两页',
@@ -19997,9 +20097,9 @@ ${leading}` : leading;
       !this.showMenu && !this.showToc && !this.showSettings) {
       const action = this.continuousReaderTapAction(globalX, globalY);
       if (action === 2) {
-        this.turnNext();
+        this.readerTapTurn(1);
       } else if (action === 3) {
-        this.turnPrev();
+        this.readerTapTurn(-1);
       } else if (action === 1) {
         this.showMenu = true;
       }
@@ -20008,10 +20108,11 @@ ${leading}` : leading;
 
   /**
    * 滚动阅读短按正文对应的动作（0 无、1 菜单、2 下一屏、3 上一屏）。
-   * 只有打开“点击翻屏”才按九宫格走；自动滚动和朗读中保持点击呼出菜单，免得和它们自己的滚动抢位置。
+   * 只有打开“点击翻屏”（或开着阅读尺）才按九宫格走；自动滚动和朗读中保持点击呼出菜单，免得和它们自己的滚动抢位置。
    */
   continuousReaderTapAction(globalX: number, globalY: number): number {
-    if (!this.readerScrollTapTurn || this.readerPageTurnMode !== 3 || this.readerAutoScrollActive ||
+    if (!(this.readerScrollTapTurn || this.isReadingRulerShown()) || this.readerPageTurnMode !== 3 ||
+      this.readerAutoScrollActive ||
       this.isTtsSpeaking) {
       return 1;
     }
@@ -22500,6 +22601,454 @@ ${leading}` : leading;
     .width(halfWidth ? this.getReaderPageColumnWidth() : '100%')
     .height('100%')
     .hitTestBehavior(HitTestMode.None)
+  }
+
+  // ---------- 阅读尺 ----------
+
+  /** 阅读尺这会儿该不该出现：只画在正文（V2 排版）上；朗读、自动滚动、菜单、选字和翻页动画时让开。 */
+  isReadingRulerShown(): boolean {
+    if (!this.readerRulerOn || !this.readerInitialPageReady || !this.shouldRenderPrimaryReaderContent()) return false;
+    if (this.isReaderComicModeActive() || this.isReaderComicPagedMode()) return false;
+    if (this.isTtsSpeaking || this.isTtsPaused || this.readerAutoScrollActive) return false;
+    if (this.showMenu || this.showToc || this.pageTurnAnimating || this.hasReaderTextSelection()) return false;
+    if (this.isReaderContinuousScrollSurfaceActive()) return this.usesReaderContinuousV2();
+    return this.shouldUseReaderLayoutV2(this.pagedContentText);
+  }
+
+  readingRulerLines(): number {
+    return ReaderReadingRulerSteps.normalizeLines(this.readerRulerLines);
+  }
+
+  /** 翻页阅读：当前这一页（双页为这一对）的标识，尺的位置只对同一页算数。 */
+  readingRulerPagedKey(): string {
+    const page = this.readerV2Page(this.currentChapterIndex, this.currentPageIndex, this.pagedContentText);
+    return page ? `${this.currentChapterIndex}:${this.currentPageIndex}:${page.identity}:` +
+      `${this.isLandscapeDoublePageActive() ? 2 : 1}` : '';
+  }
+
+  readingRulerPagedRows(): ReaderRulerRow[] {
+    const key = this.readingRulerPagedKey();
+    if (!key) return [];
+    if (key === this.readerRulerRowsKey) return this.readerRulerRowsCache;
+    const rows: ReaderRulerRow[] = [];
+    const columns = this.isLandscapeDoublePageActive() ? 2 : 1;
+    for (let column = 0; column < columns; column++) {
+      const page = this.readerV2Page(this.currentChapterIndex, this.currentPageIndex + column, this.pagedContentText);
+      if (!page) continue;
+      for (const row of ReaderReadingRulerRows.collect(page, column)) rows.push(row);
+    }
+    this.readerRulerRowsCache = ReaderReadingRulerSteps.mergeRows(rows);
+    this.readerRulerRowsKey = key;
+    return this.readerRulerRowsCache;
+  }
+
+  /** 尺在本页的首行；换了页（不是尺自己翻过去的）就从页首开始。 */
+  readingRulerPagedIndex(rows: ReaderRulerRow[]): number {
+    return this.readerRulerPageKey === this.readingRulerPagedKey() ?
+      ReaderReadingRulerSteps.clampIndex(rows, this.readerRulerIndex) : 0;
+  }
+
+  /** 点击、音量键、键盘的翻页先交给阅读尺：尺还能移动就只移尺，否则照常翻页。滑动翻页不经过这里。 */
+  readingRulerStep(direction: number): boolean {
+    if (direction === 0 || !this.isReadingRulerShown()) return false;
+    if (this.isReaderContinuousScrollSurfaceActive()) return this.readingRulerScrollStep(direction);
+    const rows = this.readingRulerPagedRows();
+    if (rows.length === 0) return false;
+    const current = this.readingRulerPagedIndex(rows);
+    const step: ReaderRulerStep = direction > 0 ? ReaderReadingRulerSteps.next(rows, current, this.readingRulerLines()) :
+      ReaderReadingRulerSteps.previous(rows, current, this.readingRulerLines());
+    if (step.turn) return false;
+    this.readerRulerPageKey = this.readingRulerPagedKey();
+    this.readerRulerIndex = step.index;
+    return true;
+  }
+
+  async readerTapTurn(direction: number): Promise<void> {
+    if (this.readingRulerStep(direction)) return;
+    const pagedRuler = this.isReadingRulerShown() && !this.isReaderContinuousScrollSurfaceActive();
+    const before = pagedRuler ? this.readingRulerPagedKey() : '';
+    if (direction > 0) {
+      await this.turnNext();
+      return;
+    }
+    await this.turnPrev();
+    // 尺在页首时往回翻：上一页的尺停在最后几行，接着往上读。
+    if (!pagedRuler) return;
+    const key = this.readingRulerPagedKey();
+    if (!key || key === before) return;
+    this.readerRulerPageKey = key;
+    this.readerRulerIndex = ReaderReadingRulerSteps.lastIndex(this.readingRulerPagedRows(), this.readingRulerLines());
+  }
+
+  /** 滚动阅读：尺附近的行，坐标为窗口像素。只看屏幕上和前后各一块，够尺往上下走一步。 */
+  readingRulerScrollRows(): ReaderRulerRow[] {
+    const rows: ReaderRulerRow[] = [];
+    const from = Math.max(0, this.readerContinuousVisibleStart - 1);
+    const to = Math.min(this.contentPages.length - 1, this.readerContinuousVisibleEnd + 1);
+    for (let index = from; index <= to; index++) {
+      try {
+        const rect = this.getUIContext().getComponentUtils().getRectangleById(this.readerContinuousV2ItemId(index));
+        if (rect.size.height <= 0) continue;
+        const layout = this.readerContinuousV2Layout(index, this.contentPages[index] || '');
+        if (!layout) continue;
+        for (const row of ReaderReadingRulerRows.collect(layout, 0)) {
+          rows.push(new ReaderRulerRow(row.top + rect.windowOffset.y, row.bottom + rect.windowOffset.y, 0));
+        }
+      } catch (_) {
+        // 列表项可能刚被回收，这一块跳过。
+      }
+    }
+    return ReaderReadingRulerSteps.mergeRows(rows);
+  }
+
+  readingRulerLayerTopPx(): number {
+    try {
+      return this.getUIContext().getComponentUtils().getRectangleById(READER_RULER_LAYER_ID).windowOffset.y;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /** 滚动阅读：尺在屏幕上的位置不随正文滚动；滚动停下、尺移动后量一次，把尺边对齐到行缝。 */
+  readingRulerMeasureScroll(): void {
+    if (!this.isReadingRulerShown() || !this.isReaderContinuousScrollSurfaceActive()) return;
+    const viewport = this.readerContinuousV2ViewportPx();
+    if (viewport.length < 2) return;
+    const layerTop = this.readingRulerLayerTopPx();
+    const rows = this.readingRulerScrollRows();
+    const viewTop = px2vp(viewport[0] - layerTop);
+    const viewBottom = px2vp(viewport[1] - layerTop);
+    const slot = this.readerRulerScrollSlot >= 0 ?
+      Math.max(viewTop, Math.min(viewBottom, this.readerRulerScrollSlot)) : viewTop + (viewBottom - viewTop) * 0.3;
+    const first = this.readingRulerScrollFirstRow(rows, vp2px(slot) + layerTop, viewport[1]);
+    if (first < 0) {
+      this.readerRulerScrollBand = [];
+      return;
+    }
+    const edges = ReaderReadingRulerSteps.bandEdges(rows,
+      ReaderReadingRulerSteps.span(rows, first, this.readingRulerLines()));
+    this.readerRulerScrollSlot = px2vp(rows[first].top - layerTop);
+    this.readerRulerScrollBand = [Math.max(viewTop, px2vp(edges[0] - layerTop)),
+      Math.min(viewBottom, px2vp(edges[1] - layerTop)), viewTop, viewBottom];
+  }
+
+  /** 尺的首行：上边落在 slotPx 处或之后的第一行（只算视口里的）。 */
+  readingRulerScrollFirstRow(rows: ReaderRulerRow[], slotPx: number, viewportBottomPx: number): number {
+    for (let index = 0; index < rows.length; index++) {
+      if (rows[index].bottom > slotPx + 1) return rows[index].top < viewportBottomPx ? index : -1;
+    }
+    return -1;
+  }
+
+  /** 滚动阅读的一步：把下一组（上一组）行滚到尺的位置；行还没排出来时交回去照常翻一屏。 */
+  readingRulerScrollStep(direction: number): boolean {
+    const viewport = this.readerContinuousV2ViewportPx();
+    if (viewport.length < 2) return false;
+    const layerTop = this.readingRulerLayerTopPx();
+    const rows = this.readingRulerScrollRows();
+    const slot = this.readerRulerScrollSlot;
+    if (slot < 0 || this.readerRulerScrollBand.length < 4) {
+      this.readingRulerMeasureScroll();
+      return this.readerRulerScrollBand.length >= 4;
+    }
+    const first = this.readingRulerScrollFirstRow(rows, vp2px(slot) + layerTop - 2, viewport[1]);
+    if (first < 0) return false;
+    const span = ReaderReadingRulerSteps.span(rows, first, this.readingRulerLines());
+    const target = direction > 0 ? span[1] + 1 : Math.max(0, first - this.readingRulerLines());
+    if (target >= rows.length || target === first) return false;
+    const distance = px2vp(rows[target].top - rows[first].top);
+    if (Math.abs(distance) < 1) return false;
+    this.startReaderComicScreenScroll(distance);
+    this.readingRulerScheduleMeasure(420);
+    return true;
+  }
+
+  readingRulerScheduleMeasure(delay: number = 80): void {
+    if (!this.readerRulerOn || !this.isReaderContinuousScrollSurfaceActive()) return;
+    if (this.readerRulerMeasureTimer >= 0) clearTimeout(this.readerRulerMeasureTimer);
+    this.readerRulerMeasureTimer = setTimeout(() => {
+      this.readerRulerMeasureTimer = -1;
+      this.readingRulerMeasureScroll();
+    }, delay);
+  }
+
+  /** 画尺用的位置（根层 vp）。依赖的状态不变时复用上次的结果，一帧里各属性反复取不会重算。 */
+  readingRulerGeometry(): ReaderRulerGeometry {
+    const dragBase = this.readerRulerDragBase;
+    if (this.readerRulerDragCenter >= 0 && dragBase) return this.readingRulerDragGeometry(dragBase);
+    const scroll = this.isReaderContinuousScrollSurfaceActive();
+    const key = scroll ? `s|${this.readerRulerScrollBand.join(',')}|${this.readerRulerLayerWidth}` :
+      `p|${this.readingRulerPagedKey()}|${this.readerRulerPageKey}|${this.readerRulerIndex}|` +
+      `${this.readerRulerLines}|${this.getReaderTopSafePadding()}|${this.getReaderPageContentTopPadding()}|` +
+      `${this.readerRulerLayerWidth}`;
+    if (key === this.readerRulerGeometryCache.key) return this.readerRulerGeometryCache;
+    const geometry = new ReaderRulerGeometry();
+    geometry.key = key;
+    if (scroll) {
+      const band = this.readerRulerScrollBand;
+      if (band.length >= 4 && band[1] > band[0]) {
+        geometry.visible = true;
+        geometry.bandTop = band[0];
+        geometry.bandBottom = band[1];
+        geometry.areaTop = band[2];
+        geometry.areaBottom = band[3];
+      }
+    } else {
+      this.fillReadingRulerPagedGeometry(geometry);
+    }
+    this.readerRulerGeometryCache = geometry;
+    return geometry;
+  }
+
+  fillReadingRulerPagedGeometry(geometry: ReaderRulerGeometry): void {
+    const rows = this.readingRulerPagedRows();
+    if (rows.length === 0) return;
+    const span = ReaderReadingRulerSteps.span(rows, this.readingRulerPagedIndex(rows), this.readingRulerLines());
+    const edges = ReaderReadingRulerSteps.bandEdges(rows, span);
+    const column = rows[span[0]].column;
+    const page = this.readerV2Page(this.currentChapterIndex, this.currentPageIndex + column, this.pagedContentText);
+    if (!page || edges.length < 2) return;
+    let top = page.contentRect.top;
+    let bottom = page.contentRect.bottom;
+    for (const row of rows) {
+      if (row.column !== column) continue;
+      top = Math.min(top, row.top);
+      bottom = Math.max(bottom, row.bottom);
+    }
+    // 和朗读高亮层同一套坐标：正文容器避让状态栏，部分翻页动画的纸张另在页内补状态栏高度。
+    const origin = this.getReaderTopSafePadding() + this.getReaderPageContentTopPadding();
+    geometry.visible = true;
+    geometry.bandTop = origin + px2vp(edges[0]);
+    geometry.bandBottom = origin + px2vp(edges[1]);
+    geometry.areaTop = origin + px2vp(top);
+    geometry.areaBottom = origin + px2vp(bottom);
+    if (this.isLandscapeDoublePageActive()) {
+      const columnWidth = this.getReaderPageColumnWidth();
+      const step = columnWidth + READER_DOUBLE_PAGE_DIVIDER_WIDTH;
+      geometry.left = column * step;
+      geometry.width = columnWidth;
+      geometry.hasOther = true;
+      geometry.otherBefore = column === 1;
+      geometry.otherLeft = (1 - column) * step;
+      geometry.otherWidth = columnWidth;
+    }
+  }
+
+  /**
+   * 拖动中：尺和把手跟着手指连续移动，不逐行跳，也不重新量行（滚动阅读量一次要查好几个列表项）。
+   * 用按下时的位置做底，只把尺上下挪到手指处、限制在正文区里；松手再吸附到最近的行。
+   */
+  readingRulerDragGeometry(base: ReaderRulerGeometry): ReaderRulerGeometry {
+    const key = `d|${this.readerRulerDragCenter}`;
+    if (key === this.readerRulerGeometryCache.key) return this.readerRulerGeometryCache;
+    const half = Math.max(0, base.bandBottom - base.bandTop) / 2;
+    const center = Math.max(base.areaTop + half, Math.min(base.areaBottom - half, this.readerRulerDragCenter));
+    const geometry = new ReaderRulerGeometry();
+    geometry.key = key;
+    geometry.visible = base.visible;
+    geometry.bandTop = center - half;
+    geometry.bandBottom = center + half;
+    geometry.areaTop = base.areaTop;
+    geometry.areaBottom = base.areaBottom;
+    geometry.left = base.left;
+    geometry.width = base.width;
+    geometry.hasOther = base.hasOther;
+    geometry.otherBefore = base.otherBefore;
+    geometry.otherLeft = base.otherLeft;
+    geometry.otherWidth = base.otherWidth;
+    this.readerRulerGeometryCache = geometry;
+    return geometry;
+  }
+
+  readingRulerDragStart(): void {
+    const geometry = this.readingRulerGeometry();
+    this.readerRulerDragBase = geometry;
+    this.readerRulerDragStartY = (geometry.bandTop + geometry.bandBottom) / 2;
+    this.readerRulerDragging = true;
+    this.readerRulerDragCenter = this.readerRulerDragStartY;
+  }
+
+  /** 松手：按尺现在的位置吸附到最近的行；拖动标记先撤掉，吸附那一下带过渡滑过去。 */
+  readingRulerDragFinish(): void {
+    if (!this.readerRulerDragging) return;
+    const geometry = this.readingRulerGeometry();
+    const center = (geometry.bandTop + geometry.bandBottom) / 2;
+    this.readerRulerDragging = false;
+    this.readingRulerDragTo(center);
+    this.readerRulerDragCenter = -1;
+    this.readerRulerDragBase = null;
+  }
+
+  /** 把尺中心放到 center（根层 vp）附近：换算成尺上边该落的那一行。 */
+  readingRulerDragTo(center: number): void {
+    const geometry = this.readingRulerGeometry();
+    const top = center - Math.max(0, geometry.bandBottom - geometry.bandTop) / 2;
+    if (this.isReaderContinuousScrollSurfaceActive()) {
+      this.readerRulerScrollSlot = top;
+      this.readingRulerMeasureScroll();
+      return;
+    }
+    const rows = this.readingRulerPagedRows();
+    if (rows.length === 0) return;
+    const current = this.readingRulerPagedIndex(rows);
+    const origin = this.getReaderTopSafePadding() + this.getReaderPageContentTopPadding();
+    this.readerRulerPageKey = this.readingRulerPagedKey();
+    this.readerRulerIndex = ReaderReadingRulerSteps.rowAt(rows, vp2px(top - origin) + 1, rows[current].column);
+  }
+
+  readingRulerSurface(): string {
+    return HexColor.rgb(this.getBackgroundColor());
+  }
+
+  readingRulerAlpha(): number {
+    return ReaderReadingRulerSteps.normalizeStrength(this.readerRulerStrength) / 100;
+  }
+
+  /** 遮罩一边的渐变：靠尺的一侧留 12vp 羽化，尺边不是一道硬线。 */
+  readingRulerShadeColors(height: number): Array<[ResourceColor, number]> {
+    const solid = HexColor.withOpacity(this.readingRulerSurface(), this.readingRulerAlpha());
+    const clear = HexColor.withOpacity(this.readingRulerSurface(), 0);
+    const stop = height > 0 ? Math.max(0, 1 - 12 / height) : 0;
+    return [[solid, 0], [solid, stop], [clear, 1]];
+  }
+
+  readingRulerBandColors(): Array<[ResourceColor, number]> {
+    const fill = HexColor.withOpacity(this.accentColor(), 0.06 + 0.2 * this.readingRulerAlpha());
+    const clear = HexColor.withOpacity(this.accentColor(), 0);
+    return [[clear, 0], [fill, 0.06], [fill, 0.94], [clear, 1]];
+  }
+
+  readingRulerWidth(geometry: ReaderRulerGeometry): Length {
+    return geometry.width < 0 ? '100%' : geometry.width;
+  }
+
+  readingRulerHandleX(geometry: ReaderRulerGeometry): number {
+    const right = geometry.width < 0 ? this.readerRulerLayerWidth : geometry.left + geometry.width;
+    return Math.max(0, right - READER_RULER_HANDLE_WIDTH);
+  }
+
+  /**
+   * 阅读尺图层：放在点击层上面，自身不接收触摸（点按照常落到下面翻页），只有右缘把手能拖。
+   * 节点常驻、位置随状态变化并带一点过渡，尺移动时是滑过去而不是跳过去。
+   */
+  @Builder
+  readingRulerLayer() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      if (this.isReadingRulerShown()) {
+        Stack({ alignContent: Alignment.TopStart }) {
+          if (this.readingRulerGeometry().visible) {
+            this.readingRulerShapes()
+          }
+        }
+        .width('100%')
+        .height('100%')
+        .hitTestBehavior(HitTestMode.None)
+        .onAppear(() => this.readingRulerScheduleMeasure(120))
+      }
+    }
+    .id(READER_RULER_LAYER_ID)
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.None)
+    .onAreaChange((_oldValue: Area, newValue: Area) => {
+      const width = Number(newValue.width);
+      if (Number.isFinite(width) && width !== this.readerRulerLayerWidth) this.readerRulerLayerWidth = width;
+    })
+  }
+
+  @Builder
+  readingRulerShapes() {
+    if (this.readerRulerStyle === ReaderReadingRulerSteps.STYLE_BAND) {
+      Column()
+        .position({ x: this.readingRulerGeometry().left, y: this.readingRulerGeometry().bandTop })
+        .width(this.readingRulerWidth(this.readingRulerGeometry()))
+        .height(Math.max(0, this.readingRulerGeometry().bandBottom - this.readingRulerGeometry().bandTop))
+        .linearGradient({ direction: GradientDirection.Right, colors: this.readingRulerBandColors() })
+        .border({
+          width: { top: 0.5, bottom: 0.5 },
+          color: HexColor.withOpacity(this.accentColor(), 0.35 * this.readingRulerAlpha())
+        })
+        .animation({ duration: this.readerRulerDragging ? 0 : 180, curve: Curve.EaseOut })
+        .hitTestBehavior(HitTestMode.None)
+    } else {
+      if (this.readerRulerStyle !== ReaderReadingRulerSteps.STYLE_COVER) {
+        Column()
+          .position({ x: this.readingRulerGeometry().left, y: this.readingRulerGeometry().areaTop })
+          .width(this.readingRulerWidth(this.readingRulerGeometry()))
+          .height(Math.max(0, this.readingRulerGeometry().bandTop - this.readingRulerGeometry().areaTop))
+          .linearGradient({
+            direction: GradientDirection.Bottom,
+            colors: this.readingRulerShadeColors(this.readingRulerGeometry().bandTop - this.readingRulerGeometry().areaTop)
+          })
+          .animation({ duration: this.readerRulerDragging ? 0 : 180, curve: Curve.EaseOut })
+          .hitTestBehavior(HitTestMode.None)
+      }
+      // 遮罩和“盖住下文”都盖住尺下面；盖住下文像压一张卡片，上沿一道细线和一点投影。
+      Column() {
+        if (this.readerRulerStyle === ReaderReadingRulerSteps.STYLE_COVER) {
+          Row()
+            .width('100%')
+            .height(1.5)
+            .backgroundColor(HexColor.withOpacity(this.accentColor(), 0.75))
+        }
+      }
+      .position({ x: this.readingRulerGeometry().left, y: this.readingRulerGeometry().bandBottom })
+      .width(this.readingRulerWidth(this.readingRulerGeometry()))
+      .height(Math.max(0, this.readingRulerGeometry().areaBottom - this.readingRulerGeometry().bandBottom))
+      .linearGradient({
+        direction: GradientDirection.Top,
+        colors: this.readerRulerStyle === ReaderReadingRulerSteps.STYLE_COVER ?
+          [[HexColor.withOpacity(this.readingRulerSurface(), this.readingRulerAlpha()), 0],
+            [HexColor.withOpacity(this.readingRulerSurface(), this.readingRulerAlpha()), 1]] :
+          this.readingRulerShadeColors(this.readingRulerGeometry().areaBottom - this.readingRulerGeometry().bandBottom)
+      })
+      .shadow(this.readerRulerStyle === ReaderReadingRulerSteps.STYLE_COVER ?
+        { radius: 10, color: '#22000000', offsetX: 0, offsetY: -2 } : { radius: 0, color: Color.Transparent })
+      .animation({ duration: this.readerRulerDragging ? 0 : 180, curve: Curve.EaseOut })
+      .hitTestBehavior(HitTestMode.None)
+      // 双页时另一栏：遮罩整栏盖住，盖住下文只盖还没读到的后一栏。
+      if (this.readingRulerGeometry().hasOther &&
+        (this.readerRulerStyle !== ReaderReadingRulerSteps.STYLE_COVER || !this.readingRulerGeometry().otherBefore)) {
+        Column()
+          .position({ x: this.readingRulerGeometry().otherLeft, y: this.readingRulerGeometry().areaTop })
+          .width(this.readingRulerGeometry().otherWidth)
+          .height(Math.max(0, this.readingRulerGeometry().areaBottom - this.readingRulerGeometry().areaTop))
+          .backgroundColor(HexColor.withOpacity(this.readingRulerSurface(), this.readingRulerAlpha()))
+          .hitTestBehavior(HitTestMode.None)
+      }
+    }
+    // 右缘把手：上下拖动把尺挪到任意一行。
+    Column({ space: 3 }) {
+      Row().width(8).height(1.5).borderRadius(1).backgroundColor('#D9FFFFFF')
+      Row().width(8).height(1.5).borderRadius(1).backgroundColor('#D9FFFFFF')
+      Row().width(8).height(1.5).borderRadius(1).backgroundColor('#D9FFFFFF')
+    }
+    .justifyContent(FlexAlign.Center)
+    .width(READER_RULER_HANDLE_WIDTH)
+    .height(READER_RULER_HANDLE_HEIGHT)
+    .borderRadius({ topLeft: 9, bottomLeft: 9 })
+    .backgroundColor(HexColor.withOpacity(this.accentColor(), 0.9))
+    .shadow({ radius: 4, color: '#33000000', offsetX: -1, offsetY: 1 })
+    .position({
+      x: this.readingRulerHandleX(this.readingRulerGeometry()),
+      y: (this.readingRulerGeometry().bandTop + this.readingRulerGeometry().bandBottom - READER_RULER_HANDLE_HEIGHT) / 2
+    })
+    .animation({ duration: this.readerRulerDragging ? 0 : 180, curve: Curve.EaseOut })
+    .hitTestBehavior(HitTestMode.Block)
+    // 把手只有 18×44，触控区向左、上下各放宽一些，手指不用对得很准。
+    .responseRegion({
+      x: -READER_RULER_HANDLE_TOUCH_SLOP, y: -READER_RULER_HANDLE_TOUCH_SLOP,
+      width: READER_RULER_HANDLE_WIDTH + READER_RULER_HANDLE_TOUCH_SLOP,
+      height: READER_RULER_HANDLE_HEIGHT + READER_RULER_HANDLE_TOUCH_SLOP * 2
+    })
+    .accessibilityText('阅读尺把手，上下拖动移动阅读尺')
+    .gesture(PanGesture({ direction: PanDirection.Vertical, distance: 1 })
+      .onActionStart(() => this.readingRulerDragStart())
+      .onActionUpdate((event: GestureEvent) => {
+        this.readerRulerDragCenter = this.readerRulerDragStartY + event.offsetY;
+      })
+      .onActionEnd(() => this.readingRulerDragFinish())
+      .onActionCancel(() => this.readingRulerDragFinish()))
   }
 
   readerV2PageFragments(chapterIndex: number, pageIndex: number, source: string): ReaderV2PageFragment[] {

@@ -119,6 +119,7 @@ function fixture() {
     setReaderTextSelectionActive() {}, clearQueuedReaderPageTurns() {}, stopReaderComicScreenScroll() {},
     cancelReaderComicPan() {}, hideReaderPanels() {}, cancelManualPageTurnTtsResume() {},
     applyReaderScreenTimeout() {}, scheduleReaderComicProgressSave() {}, flushReaderAutoScrollSpeed() {},
+    readerTapTurn(direction) { return direction > 0 ? this.turnNext() : this.turnPrev(); },
     updateTtsFloatingSession() {},
     shouldBlockReaderInteraction: () => false, readerSourceActionAtPoint: () => '',
     shortTaps: 0, selections: 0,

@@ -98,6 +98,7 @@ function fixture() {
     contentPages: ['chunk-1', 'chunk-2', 'chunk-3', 'chunk-4'], currentPageIndex: 0,
     isReaderComicModeActive: () => false, isReaderContinuousScrollSurfaceActive: () => true,
     isReaderComicPagedMode: () => false, pauseReaderAutoScroll() {}, readerInputKind: () => 1,
+    readingRulerStep: () => false, readerTapTurn(direction) { return direction > 0 ? this.turnNext() : this.turnPrev(); },
     // A 900vp surface with 50vp top and 100vp bottom reserved leaves 750vp of正文.
     pageViewHeight: 900, getEffectiveReaderMarginTop: () => 50,
     getReaderContinuousScrollBottomPadding: () => 100,

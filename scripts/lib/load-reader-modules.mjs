@@ -38,6 +38,7 @@ const MODULES = [
   'core/reader/ReaderContentSearchMatcher.ts',
   'core/reader/ReaderDialogueMatcher.ts',
   'core/reader/ReaderRegexRuleHits.ts',
+  'core/reader/ReaderReadingRulerSteps.ts',
   'core/lan/LanReaderActions.ts',
 ];
 

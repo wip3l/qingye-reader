@@ -52,6 +52,7 @@ import { ReaderCommentCardSettings } from '../utils/ReaderCommentCardSettings';
 import { ReaderTypographyThemes, TypographyThemeOption } from '../utils/ReaderTypographyThemes';
 import { PlatformInfo } from '../platform/PlatformInfo';
 import { ThemedDialog } from '../utils/ThemedDialog';
+import { ReaderReadingRuler } from '../utils/ReaderReadingRuler';
 class ReaderCustomFontItem {
   familyName: string = '';
   filePath: string = '';
@@ -143,6 +144,7 @@ struct SettingsPage {
   @StorageProp('readerSmartKeyTurnScope') readerSmartKeyTurnScope: number = 0;
   @StorageProp('readerSmartKeyTurnSupported') readerSmartKeyTurnSupported: boolean = false;
   @StorageProp('readerWatchTurnScope') readerWatchTurnScope: number = 0;
+  @StorageProp('readerRulerOn') readerRulerOn: boolean = false;
   @State watchRemoteStatus: WatchRemoteStatus | null = null;
   private watchRemoteStatusSerial: number = 0;
   @StorageProp('audioBookAutoPlay') audioBookAutoPlay: boolean = true;
@@ -200,6 +202,7 @@ struct SettingsPage {
   // 设置和字体只在 onPageShow 里读：首次进入时它紧跟 aboutToAppear 执行，两处都读会把同样的活做两遍。
   aboutToAppear() {
     ReaderInputScopes.load(getContext(this));
+    ReaderReadingRuler.load(getContext(this));
     const params = router.getParams() as Record<string, string> | undefined;
     this.section = params?.['section'] === SettingsPage.SECTION_NOVEL ? SettingsPage.SECTION_NOVEL : '';
     // 设置搜索直接打开小说样式面板的某一组（排版/页眉页脚/阅读字体/阅读背景）。
@@ -871,6 +874,14 @@ struct SettingsPage {
         isOn: this.readerChapterEndEnabled,
         onChange: (value: boolean) => {
           this.setReaderChapterEndEnabled(value);
+        }
+      })
+      SettingSwitchRow({
+        title: '阅读尺',
+        description: '突出正在读的几行，点翻页区域先移动尺、到页底再翻页；样式与行数在阅读页的阅读方式里调',
+        isOn: this.readerRulerOn,
+        onChange: (value: boolean) => {
+          ReaderReadingRuler.setOn(value);
         }
       })
       SettingSwitchRow({
