@@ -530,7 +530,9 @@ const tests = {
     const allowed = ['syncVersion', 'typographyFollowsTheme', 'regexFontEnabled', 'regexFontPattern', 'regexFontMode',
       'regexFontFamily', 'regexFontSize', 'regexShadowColor', 'regexFontRulesRaw',
       'lightThemeIndex', 'darkThemeIndex', 'lightCustomThemeBackgroundColor', 'lightCustomThemeTextColor',
-      'darkCustomThemeBackgroundColor', 'darkCustomThemeTextColor', 'customThemesRaw'];
+      'darkCustomThemeBackgroundColor', 'darkCustomThemeTextColor', 'customThemesRaw',
+      // 替换净化的生效范围借阅读设置同步。
+      'replaceRuleBookKinds'];
     assert.deepEqual(Object.keys(payload).sort(), allowed.sort());
     const altered = JSON.parse(JSON.stringify(local));
     for (const key of Object.keys(altered).filter(key => !allowed.includes(key))) {
