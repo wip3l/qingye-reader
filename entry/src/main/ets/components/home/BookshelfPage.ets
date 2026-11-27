@@ -663,6 +663,8 @@ export struct BookshelfPage {
   @State shelfDissolveBursts: DeleteParticleBurst[] = [];
   /** 正在消散的文件夹（删除分组时）。 */
   @State shelfDissolvingGroupIds: number[] = [];
+  /** 已从书架上拿掉、库里还在逐本删的书；删完前中途重读书架时跳过它们，免得已散掉的书又冒出来。 */
+  private shelfRemovingUrls: Set<string> = new Set();
   @StorageLink('shelfUpdateTime') @Watch('onShelfChanged') shelfUpdateTime: number = 0;
   @StorageLink('bookshelfSortMode') sortMode: string = 'recentRead';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
@@ -1087,7 +1089,9 @@ export struct BookshelfPage {
       await PrivateShelfStore.load(getContext(this));
       if (!this.shelfMarkStatusesLoaded) await this.loadShelfMarkStatuses();
       const storedBooks = await db.getAllBooks();
-      const loadedBooks = SearchExplorePendingBook.filterShelfBooks(storedBooks);
+      const visibleStored = this.shelfRemovingUrls.size === 0 ? storedBooks :
+        storedBooks.filter((book: Book) => !this.shelfRemovingUrls.has(book.bookUrl));
+      const loadedBooks = SearchExplorePendingBook.filterShelfBooks(visibleStored);
       const loadedGroups = await db.getCustomBookGroups();
       // 在书架首次显示前排好“固定”封面序号；暂时隐藏的网页书源书也算在内，免得开关一次就重新编号。
       await ShelfCoverSlots.sync(getContext(this),
@@ -1274,7 +1278,7 @@ export struct BookshelfPage {
       SourceShelfEvents.removed(book);
       // 删库在前：删书前票夹要从本地书文件里留一份封面。
       await db.deleteBook(book.bookUrl, 'bookshelf_user_delete');
-      LocalBookService.deleteLocalBookFiles(getContext(this), book);
+      LocalBookService.deleteLocalBookFiles(getContext(this), book).catch(() => undefined);
       await dissolve;
       this.commitShelfBookRemoval([book.bookUrl]);
       this.deleteBookCoverCache(book);
@@ -5578,25 +5582,36 @@ export struct BookshelfPage {
     const urls = [...this.selectedBookUrls];
     const targets = this.allBooks.filter((book: Book) => urls.includes(book.bookUrl));
     const db = AppDatabase.getInstance();
-    // 先关掉确认框露出书架，选中的书在多选状态下原地消散，播完再退出多选、补位。
+    const context = getContext(this);
+    // 先关掉确认框露出书架，选中的书在多选状态下原地消散，播完就退出多选、补位。
+    // 逐本删库（删前留票夹存根、存统计快照、清章节与缓存）本地书多时要好几秒，不能让书架停在一片空位上等它。
     this.closeBatchDeleteDialog();
-    const dissolve = this.dissolveShelfBooks(targets);
-    try {
-      for (const book of targets) {
-        await CloudAutoSync.onBookRemoved(getContext(this), book).catch(() => undefined);
+    targets.forEach((book: Book) => this.shelfRemovingUrls.add(book.bookUrl));
+    await this.dissolveShelfBooks(targets);
+    this.exitBookMultiSelect();
+    this.commitShelfBookRemoval(urls);
+    const failed: Book[] = [];
+    const deleted: Book[] = [];
+    for (const book of targets) {
+      try {
+        CloudAutoSync.onBookRemoved(context, book).catch(() => undefined);
         SourceShelfEvents.removed(book);
+        // 删库在前：删书前票夹要从本地书文件里留一份封面。
         await db.deleteBook(book.bookUrl, 'bookshelf_batch_delete');
-        LocalBookService.deleteLocalBookFiles(getContext(this), book);
+        LocalBookService.deleteLocalBookFiles(context, book).catch(() => undefined);
+        deleted.push(book);
+      } catch (e) {
+        console.error('批量删除书籍失败:', book.bookUrl, e);
+        failed.push(book);
       }
-    } finally {
-      await dissolve;
-      this.exitBookMultiSelect();
-      this.commitShelfBookRemoval(urls);
-      for (const book of targets) this.deleteBookCoverCache(book);
     }
+    // 封面缓存等删完再清：票夹存根要用它，且此时补位动画早已播完。
+    for (const book of deleted) this.deleteBookCoverCache(book);
+    targets.forEach((book: Book) => this.shelfRemovingUrls.delete(book.bookUrl));
     AppStorage.setOrCreate('shelfUpdateTime', Date.now());
     await this.loadBooks();
-    HdsFeedback.showToast(`已删除 ${targets.length} 本书`);
+    HdsFeedback.showToast(failed.length === 0 ? `已删除 ${deleted.length} 本书` :
+      `已删除 ${deleted.length} 本，${failed.length} 本删除失败`);
   }
 
 

@@ -2042,25 +2042,29 @@ export class LocalBookService {
     if (!LocalBookService.exists(path)) fs.mkdirSync(path, true);
   }
 
-  static deleteLocalBookFiles(context: Context, book: Book): void {
-    if (!LocalBookService.isLocalBook(book)) return;
-    LocalBookService.deleteLocalPath(context, book.getVariable('localFilePath'));
-    LocalBookService.deleteLocalPath(context, book.getVariable('localExtractRoot'));
+  /**
+   * 删掉本地书的源文件和解压目录。走异步文件接口：解压出的 EPUB 目录有成百上千个文件，
+   * 同步逐个删会卡住界面（书架批量删本地书时整页停住）。调用方不必等它，残留由下次删除或清理兜底。
+   */
+  static deleteLocalBookFiles(context: Context, book: Book): Promise<void> {
+    if (!LocalBookService.isLocalBook(book)) return Promise.resolve();
+    return Promise.all([
+      LocalBookService.deleteLocalPath(context, book.getVariable('localFilePath')),
+      LocalBookService.deleteLocalPath(context, book.getVariable('localExtractRoot'))
+    ]).then((): void => undefined);
   }
 
-  private static deleteLocalPath(context: Context, path: string): void {
+  private static async deleteLocalPath(context: Context, path: string): Promise<void> {
     const root = `${context.filesDir}/local_books`;
-    if (!path || !path.startsWith(root) || !LocalBookService.exists(path)) return;
+    if (!path || !path.startsWith(`${root}/`)) return;
     try {
-      const stat = fs.statSync(path);
+      if (!(await fs.access(path))) return;
+      const stat = await fs.stat(path);
+      // fs.rmdir 连同目录里的内容一起删。
       if (stat.isDirectory()) {
-        const names = fs.listFileSync(path);
-        for (const name of names) {
-          LocalBookService.deleteLocalPath(context, `${path}/${name}`);
-        }
-        fs.rmdirSync(path);
+        await fs.rmdir(path);
       } else {
-        fs.unlinkSync(path);
+        await fs.unlink(path);
       }
     } catch (e) {
       console.warn('[LocalBook] cleanup failed:', path, e);
