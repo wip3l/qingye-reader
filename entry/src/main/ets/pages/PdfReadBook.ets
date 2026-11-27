@@ -37,7 +37,8 @@ import { ReaderPdfSettingsStore } from '../core/book/pdf/ReaderPdfSettingsStore'
 import {
   ReaderShelfCoverOpening, SHELF_COVER_OPEN_ANGLE, SHELF_COVER_OPEN_DURATION, SHELF_COVER_OPEN_START_CAP,
   SHELF_COVER_CLOSE_DURATION, SHELF_COVER_FRAME_RATE, SHELF_BOOK_MOTION_UNTIL_KEY, SHELF_BOOK_MOTION_SETTLE,
-  detachedShelfSharedCoverId, shelfCoverCropAspect, shelfCoverLean,
+  detachedShelfSharedCoverId, shelfCoverCropAspect, shelfCoverLean, shelfCoverTurned, SHELF_TURNED_FADE_IN,
+  SHELF_TURNED_FADE_OUT,
   SHELF_OPENING_BACKDROP_KEY, SHELF_OPENING_COVER_KEY, ShelfOpeningCover, ShelfOpeningFrameStarter,
   SHELF_COVER_MOTION_CURVE, SHELF_OPENING_PAGE_SNAPSHOT_KEY
 } from '../components/reader/ReaderShelfCoverOpening';
@@ -208,6 +209,13 @@ struct PdfReadBookPage {
   @State shelfOpenTranslateY: number = 0;
   /** 书架上的书斜靠时，整页缩到封面处的同时以左上角为轴转到同样的角度（度，顺时针为正）。 */
   @State shelfOpenLean: number = 0;
+  /** 侧转的立体书开书时整页由透明变实、关书落地前淡出（见 ShelfOpeningCover.turned），只在垫着书架图时生效。 */
+  @State shelfOpenOpacity: number = 1;
+  /**
+   * 淡入淡出期间整页先合成一层再算透明度。不合成时透明度分别落在每个子节点上，盖在最上面的封面半透明后，底下的浅色
+   * 纸张背景也跟着透出来，封面一片发白（真机录屏）。
+   */
+  @State shelfTurnedBlend: boolean = false;
   private openedWithShelfAnimation: boolean = false;
   private shelfOpeningCover: ShelfOpeningCover | null = null;
   private shelfPendingSharedCoverId: string = '';
@@ -771,6 +779,8 @@ struct PdfReadBookPage {
     this.shelfOpenTranslateX = cover.boundsX;
     this.shelfOpenTranslateY = cover.boundsY;
     this.shelfOpenLean = shelfCoverLean(cover);
+    this.shelfOpenOpacity = shelfCoverTurned(cover) ? 0 : 1;
+    this.shelfTurnedBlend = shelfCoverTurned(cover);
     this.shelfCoverAngle = 0;
     this.shelfCoverScaleX = 1;
     this.shelfCoverShade = 0;
@@ -811,6 +821,16 @@ struct PdfReadBookPage {
       this.shelfCoverScaleX = 0;
       this.shelfCoverShade = 0.5;
     });
+    if (this.shelfOpenOpacity < 1) {
+      this.getUIContext().animateTo({
+        duration: SHELF_TURNED_FADE_IN, curve: Curve.Linear, expectedFrameRateRange: SHELF_COVER_FRAME_RATE,
+        onFinish: (): void => {
+          if (this.shelfOpenOpacity >= 1) this.shelfTurnedBlend = false;
+        }
+      }, (): void => {
+        this.shelfOpenOpacity = 1;
+      });
+    }
   }
 
   private finishShelfOpening(): void {
@@ -824,6 +844,8 @@ struct PdfReadBookPage {
     this.shelfOpenTranslateX = 0;
     this.shelfOpenTranslateY = 0;
     this.shelfOpenLean = 0;
+    this.shelfOpenOpacity = 1;
+    this.shelfTurnedBlend = false;
     if (this.shelfCoverAngle === SHELF_COVER_OPEN_ANGLE) this.shelfCoverVisible = false;
     this.shelfCoverFillImage = false;
     if (this.shelfPendingSharedCoverId) {
@@ -953,6 +975,16 @@ struct PdfReadBookPage {
         this.shelfCoverScaleX = 1;
         this.shelfCoverShade = 0;
       });
+      if (shelfCoverTurned(target) && this.shelfMotionBackdrop) {
+        // 落地前淡出，露出垫在后面书架图里那本侧转的书，不在最后一帧从正面跳成侧转。
+        this.shelfTurnedBlend = true;
+        this.getUIContext().animateTo({
+          duration: SHELF_TURNED_FADE_OUT, delay: SHELF_COVER_OPEN_DURATION - SHELF_TURNED_FADE_OUT,
+          curve: Curve.Linear, expectedFrameRateRange: SHELF_COVER_FRAME_RATE
+        }, (): void => {
+          this.shelfOpenOpacity = 0;
+        });
+      }
     });
   }
 
@@ -1661,6 +1693,8 @@ struct PdfReadBookPage {
       .scale({ x: this.shelfOpenScaleX, y: this.shelfOpenScaleY, centerX: 0, centerY: 0 })
       .translate({ x: this.shelfOpenTranslateX, y: this.shelfOpenTranslateY })
       .rotate({ angle: this.shelfOpenLean, centerX: 0, centerY: 0 })
+      .opacity(this.shelfMotionBackdrop ? this.shelfOpenOpacity : 1)
+      .renderGroup(this.shelfTurnedBlend)
       .sharedTransition(this.shelfSharedCoverId, {
         duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut, type: SharedTransitionEffectType.Exchange
       })

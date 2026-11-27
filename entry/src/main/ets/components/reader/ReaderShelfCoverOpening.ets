@@ -32,6 +32,11 @@ export interface ShelfOpeningCover {
   lean?: number;
   /** 立体书封面侧转前的宽高比：封面图按它裁切后再随 bounds 压窄，与书架上一致。没有时按 bounds 的比例。 */
   coverAspect?: number;
+  /**
+   * 书架上是侧转的立体书（陪伴书架错落摆放）。整页只能按矩形缩放，转不出侧转的透视，所以开书时由透明变实、关书落地前
+   * 淡出，交给垫在后面的书架图里那本立体书，免得侧转角在一帧里消失或出现。
+   */
+  turned?: boolean;
   /** 书架上这枚主题封面没有底色（平铺布局关了“显示书籍边框”）：翻开时不垫底色、不画书脊折痕。 */
   frameless?: boolean;
 }
@@ -40,6 +45,16 @@ export interface ShelfOpeningCover {
 export function shelfCoverLean(cover: ShelfOpeningCover | null): number {
   return cover && cover.lean ? cover.lean : 0;
 }
+
+/** 书架上是侧转的立体书：开书淡入、关书淡出（见 ShelfOpeningCover.turned）。 */
+export function shelfCoverTurned(cover: ShelfOpeningCover | null): boolean {
+  return !!cover && cover.turned === true;
+}
+
+/** 侧转立体书开书时整页由透明变实的时长，在放大的开头。 */
+export const SHELF_TURNED_FADE_IN: number = 90;
+/** 侧转立体书关书时整页淡出的时长，在缩回的末尾。 */
+export const SHELF_TURNED_FADE_OUT: number = 140;
 
 /** 封面图排版用的宽高比：立体书用侧转前的比例，其余用量到的 bounds。 */
 export function shelfCoverBoxAspect(cover: ShelfOpeningCover | null): number {

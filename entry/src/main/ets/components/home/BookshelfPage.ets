@@ -8142,6 +8142,7 @@ export struct BookshelfPage {
     opening.boundsWidth = landing[2];
     opening.boundsHeight = landing[3];
     opening.lean = lean;
+    opening.turned = true;
     const coverWidth = latest ? this.shelfCompanionCoverWidth() : this.shelfTileBookCoverWidth(book);
     const coverHeight = latest ? this.shelfCompanionCoverHeight() : this.shelfTileBookCoverHeight(book);
     opening.coverAspect = coverWidth / coverHeight;
