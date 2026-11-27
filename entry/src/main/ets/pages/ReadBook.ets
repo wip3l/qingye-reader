@@ -341,6 +341,10 @@ const READER_RULER_LAYER_ID = 'reader_reading_ruler_layer';
 const READER_RULER_HANDLE_WIDTH = 18;
 const READER_RULER_HANDLE_HEIGHT = 44;
 const READER_RULER_HANDLE_TOUCH_SLOP = 16;
+// 连点时最多攒几下；发出翻页后最多等多久新页换上来；排队最多等几轮（每轮 16ms）。
+const READER_RULER_MAX_PENDING = 4;
+const READER_RULER_TURN_WAIT_MS = 1500;
+const READER_RULER_DRAIN_MAX_WAITS = 125;
 // 眼动翻页提示：无页脚时提示文字的字号、设置面板上沿小胶囊的高度。
 const READER_EYE_TURN_CUE_HINT_SIZE = 12;
 const READER_EYE_TURN_SETTINGS_PILL_HEIGHT = 26;
@@ -1062,6 +1066,16 @@ struct ReadBookPage {
   /** 拖动中尺中心的位置（根层 vp），-1 为没在拖。 */
   @State readerRulerDragCenter: number = -1;
   private readerRulerDragBase: ReaderRulerGeometry | null = null;
+  /** 尺在页首往回翻时记下出发的那一页（-1 为没有）。 */
+  private readerRulerEnterEndChapter: number = -1;
+  private readerRulerEnterEndPage: number = 0;
+  /** 尺发出翻页时的那一页：新页换上来之前的点击都排队。 */
+  private readerRulerAwaitKey: string = '';
+  private readerRulerAwaitUntil: number = 0;
+  private readerRulerPendingDirection: number = 0;
+  private readerRulerPendingCount: number = 0;
+  private readerRulerDrainTimer: number = -1;
+  private readerRulerDrainWaits: number = 0;
   private readerRulerMeasureTimer: number = -1;
   private readerRulerRowsKey: string = '';
   private readerRulerRowsCache: ReaderRulerRow[] = [];
@@ -12808,7 +12822,7 @@ struct ReadBookPage {
       return;
     }
     if (this.isReaderContinuousScrollSurfaceActive()) {
-      if (!this.readingRulerStep(direction)) this.scrollReaderComicByPage(direction);
+      this.readerTapTurn(direction);
       return;
     }
     if (direction > 0) {
@@ -14741,6 +14755,7 @@ struct ReadBookPage {
       this.readerSwitchSettingItem('阅读尺', '突出正在读的几行；点翻页区域、按音量键先移动尺，到页底再翻页，右缘把手可以拖',
         this.readerRulerOn, (checked: boolean) => {
           ReaderReadingRuler.setOn(checked);
+          this.readingRulerClearQueue();
           this.readerRulerPageKey = '';
           this.readerRulerScrollSlot = -1;
           this.readingRulerScheduleMeasure(160);
@@ -22605,14 +22620,35 @@ ${leading}` : leading;
 
   // ---------- 阅读尺 ----------
 
-  /** 阅读尺这会儿该不该出现：只画在正文（V2 排版）上；朗读、自动滚动、菜单、选字和翻页动画时让开。 */
-  isReadingRulerShown(): boolean {
+  /** 阅读尺在起作用：开着、在正文（V2 排版）上，没在朗读、自动滚动、菜单或选字。翻页动画中也算。 */
+  isReadingRulerActive(): boolean {
     if (!this.readerRulerOn || !this.readerInitialPageReady || !this.shouldRenderPrimaryReaderContent()) return false;
     if (this.isReaderComicModeActive() || this.isReaderComicPagedMode()) return false;
     if (this.isTtsSpeaking || this.isTtsPaused || this.readerAutoScrollActive) return false;
-    if (this.showMenu || this.showToc || this.pageTurnAnimating || this.hasReaderTextSelection()) return false;
+    if (this.showMenu || this.showToc || this.hasReaderTextSelection()) return false;
     if (this.isReaderContinuousScrollSurfaceActive()) return this.usesReaderContinuousV2();
     return this.shouldUseReaderLayoutV2(this.pagedContentText);
+  }
+
+  /** 阅读尺这会儿画不画：翻页动画时先让开，落定后再出现。 */
+  isReadingRulerShown(): boolean {
+    return this.isReadingRulerActive() && !this.pageTurnAnimating;
+  }
+
+  /**
+   * 页面正在动：翻页动画中、刚发出翻页但新页还没换上来（跨章要先加载），或滚动阅读还在滚。
+   * 这时来的点击不能按旧页去算尺，先排队，动完再一步一步走。
+   */
+  readingRulerBusy(): boolean {
+    if (this.isReaderContinuousScrollSurfaceActive()) return this.readerComicScreenScrollMotion.isRunning();
+    if (this.isPageTurning || this.pageTurnAnimating) return true;
+    if (this.readerRulerAwaitKey === '' || Date.now() >= this.readerRulerAwaitUntil) return false;
+    // 跨章时新章还在加载、取不到页，也算没落定。
+    const key = this.readingRulerPagedKey();
+    if (key === '' || key === this.readerRulerAwaitKey) return true;
+    // 新页已经换上来了，之后滑回那一页也不再算等待。
+    this.readerRulerAwaitKey = '';
+    return false;
   }
 
   readingRulerLines(): number {
@@ -22642,15 +22678,23 @@ ${leading}` : leading;
     return this.readerRulerRowsCache;
   }
 
-  /** 尺在本页的首行；换了页（不是尺自己翻过去的）就从页首开始。 */
+  /**
+   * 尺在本页的首行。换了页、尺还没在新页上动过时：尺在页首往回翻到的前一页从最后几行开始（接着往上读），
+   * 其他换页（往后翻、滑动、跳转）都从页首开始。
+   */
   readingRulerPagedIndex(rows: ReaderRulerRow[]): number {
-    return this.readerRulerPageKey === this.readingRulerPagedKey() ?
-      ReaderReadingRulerSteps.clampIndex(rows, this.readerRulerIndex) : 0;
+    if (this.readerRulerPageKey === this.readingRulerPagedKey()) {
+      return ReaderReadingRulerSteps.clampIndex(rows, this.readerRulerIndex);
+    }
+    const fromChapter = this.readerRulerEnterEndChapter;
+    const before = fromChapter >= 0 && (this.currentChapterIndex < fromChapter ||
+      (this.currentChapterIndex === fromChapter && this.currentPageIndex < this.readerRulerEnterEndPage));
+    return before ? ReaderReadingRulerSteps.lastIndex(rows, this.readingRulerLines()) : 0;
   }
 
-  /** 点击、音量键、键盘的翻页先交给阅读尺：尺还能移动就只移尺，否则照常翻页。滑动翻页不经过这里。 */
+  /** 尺在本页走一步；走不动（该翻页了）或页面正在动时返回 false。 */
   readingRulerStep(direction: number): boolean {
-    if (direction === 0 || !this.isReadingRulerShown()) return false;
+    if (direction === 0 || !this.isReadingRulerActive() || this.readingRulerBusy()) return false;
     if (this.isReaderContinuousScrollSurfaceActive()) return this.readingRulerScrollStep(direction);
     const rows = this.readingRulerPagedRows();
     if (rows.length === 0) return false;
@@ -22660,24 +22704,95 @@ ${leading}` : leading;
     if (step.turn) return false;
     this.readerRulerPageKey = this.readingRulerPagedKey();
     this.readerRulerIndex = step.index;
+    this.readerRulerEnterEndChapter = -1;
     return true;
   }
 
+  /**
+   * 点击、音量键、键盘的翻页先交给阅读尺：尺还能移动就只移尺，否则照常翻页。滑动翻页不经过这里。
+   * 页面正在动、或前面还有没走完的点击时先排队，保证连点时每一下都按顺序先走尺。
+   */
   async readerTapTurn(direction: number): Promise<void> {
-    if (this.readingRulerStep(direction)) return;
-    const pagedRuler = this.isReadingRulerShown() && !this.isReaderContinuousScrollSurfaceActive();
-    const before = pagedRuler ? this.readingRulerPagedKey() : '';
-    if (direction > 0) {
-      await this.turnNext();
+    if (direction !== 0 && this.isReadingRulerActive() &&
+      (this.readingRulerBusy() || this.readerRulerPendingCount > 0)) {
+      this.readingRulerQueue(direction);
       return;
     }
-    await this.turnPrev();
-    // 尺在页首时往回翻：上一页的尺停在最后几行，接着往上读。
-    if (!pagedRuler) return;
-    const key = this.readingRulerPagedKey();
-    if (!key || key === before) return;
-    this.readerRulerPageKey = key;
-    this.readerRulerIndex = ReaderReadingRulerSteps.lastIndex(this.readingRulerPagedRows(), this.readingRulerLines());
+    if (this.readingRulerStep(direction)) return;
+    await this.readingRulerTurnPage(direction);
+  }
+
+  /** 真正翻页。尺开着时记下从哪一页翻走：往回翻到的前一页尺从最后几行开始；新页没换上来之前的点击都排队。 */
+  async readingRulerTurnPage(direction: number): Promise<void> {
+    if (this.isReadingRulerActive() && !this.isReaderContinuousScrollSurfaceActive()) {
+      this.readerRulerEnterEndChapter = direction < 0 ? this.currentChapterIndex : -1;
+      this.readerRulerEnterEndPage = this.currentPageIndex;
+      this.readerRulerAwaitKey = this.readingRulerPagedKey();
+      this.readerRulerAwaitUntil = Date.now() + READER_RULER_TURN_WAIT_MS;
+    }
+    if (direction > 0) {
+      await this.turnNext();
+    } else {
+      await this.turnPrev();
+    }
+  }
+
+  readingRulerQueue(direction: number): void {
+    if (direction !== this.readerRulerPendingDirection) {
+      this.readerRulerPendingDirection = direction;
+      this.readerRulerPendingCount = 0;
+    }
+    this.readerRulerPendingCount = Math.min(READER_RULER_MAX_PENDING, this.readerRulerPendingCount + 1);
+    this.readingRulerDrainLater();
+  }
+
+  readingRulerClearQueue(): void {
+    this.readerRulerPendingCount = 0;
+    this.readerRulerPendingDirection = 0;
+    this.readerRulerDrainWaits = 0;
+  }
+
+  readingRulerDrainLater(): void {
+    if (this.readerRulerDrainTimer >= 0 || this.readerRulerPendingCount <= 0) return;
+    this.readerRulerDrainTimer = setTimeout(() => {
+      this.readerRulerDrainTimer = -1;
+      this.readingRulerDrain();
+    }, 16);
+  }
+
+  /** 排队的点击：页面停下后一下一下走尺；走到要翻页的那一下就翻页，剩下的等新页落定再走。 */
+  readingRulerDrain(): void {
+    if (this.readerRulerPendingCount <= 0) return;
+    if (!this.isReadingRulerActive()) {
+      this.readingRulerClearQueue();
+      return;
+    }
+    if (this.readingRulerBusy()) {
+      // 翻页卡住（比如最后一页翻不过去）时别一直等着，过一会儿把排队的点击丢掉。
+      if (++this.readerRulerDrainWaits > READER_RULER_DRAIN_MAX_WAITS) {
+        this.readingRulerClearQueue();
+        return;
+      }
+      this.readingRulerDrainLater();
+      return;
+    }
+    this.readerRulerDrainWaits = 0;
+    const direction = this.readerRulerPendingDirection;
+    while (this.readerRulerPendingCount > 0) {
+      // 滚动阅读走一步会开始滚动，要等这一段滚完再走下一步。
+      if (this.readingRulerBusy()) break;
+      this.readerRulerPendingCount--;
+      if (this.readingRulerStep(direction)) continue;
+      this.readingRulerTurnPage(direction).catch((error: Error): void => {
+        console.warn('阅读尺排队翻页失败:', error);
+      });
+      break;
+    }
+    if (this.readerRulerPendingCount <= 0) {
+      this.readerRulerPendingDirection = 0;
+    } else {
+      this.readingRulerDrainLater();
+    }
   }
 
   /** 滚动阅读：尺附近的行，坐标为窗口像素。只看屏幕上和前后各一块，够尺往上下走一步。 */
