@@ -467,6 +467,12 @@ export class EpubOriginalReadAloud {
       HdsFeedback.showToast('已读完最后一章');
       return;
     }
+    // 按章定时到数：这一章的结尾放完，翻到下一章开头停住（暂停着），继续时从那里念。
+    const timerEnded = ReaderTtsFloatingSession.finishChapterForTimer(this.ownerId);
+    if (timerEnded) {
+      await this.engine?.drainQueuedTail();
+      if (token !== this.token) return;
+    }
     this.switching = true;
     this.host.clearFocus();
     let opened = false;
@@ -483,6 +489,17 @@ export class EpubOriginalReadAloud {
       if (token !== this.token) return;
       this.finish(false);
       HdsFeedback.showToast('下一章加载失败，朗读已停止');
+      return;
+    }
+    if (timerEnded) {
+      this.engine?.stop();
+      this.speaking = false;
+      this.paused = true;
+      this.chapter = -1;
+      this.publishState();
+      this.host.changed();
+      this.mediaSession().updatePlaybackState(avSession.PlaybackState.PLAYBACK_STATE_PAUSE).catch((): void => {});
+      HdsFeedback.showToast('已读完定好的章数，朗读已暂停');
       return;
     }
     await this.start(0, false, true);
@@ -602,7 +619,7 @@ export class EpubOriginalReadAloud {
   private setSleepTimer(minutes: number): void {
     this.clearSleepTimer(false);
     if (minutes <= 0) {
-      HdsFeedback.showToast('已关闭朗读定时');
+      if (!ReaderTtsFloatingSession.isQuietTimerChange()) HdsFeedback.showToast('已关闭朗读定时');
       this.publishDetails();
       return;
     }
@@ -658,6 +675,7 @@ export class EpubOriginalReadAloud {
       (): void => { this.playChapter(this.host.chapterIndex() + 1); },
       (value: number): void => this.setSpeed(value),
       (minutes: number): void => this.setSleepTimer(minutes));
+    ReaderTtsFloatingSession.configureChapterTimer(this.ownerId, true);
     ReaderTtsFloatingSession.configureTimerExtend(this.ownerId,
       (minutes: number): void => this.extendSleepTimer(minutes));
     ReaderTtsFloatingSession.configureCatalog(this.ownerId, titles, this.host.chapterIndex(),

@@ -61,11 +61,12 @@ export class ReaderTtsFloatingSession {
   static attach(ownerId: string, bookUrl: string, bookName: string, chapterTitle: string,
     paused: boolean, toggleAction: () => Promise<void>, pausedState: () => boolean,
     stopAction: () => Promise<void> | void): void {
-    // 换了会话主人（例如从听书换成朗读）时，上一位发布的离线信息和逐句跳转不再适用。
+    // 换了会话主人（例如从听书换成朗读）时，上一位发布的离线信息和逐句跳转不再适用；按章定时数的是上一位的章节，也作废。
     if (ReaderTtsFloatingSession.ownerId !== ownerId) {
       ReaderTtsFloatingSession.audioOffline = null;
       ReaderTtsFloatingSession.watchVideoAction = null;
       ReaderTtsFloatingSession.clearSentenceControl();
+      ReaderTtsFloatingSession.resetChapterTimer();
     }
     const previousBookUrl = ReaderTtsFloatingSession.isActive() ? AppStorage.get<string>('globalTtsBookUrl') || '' : '';
     if (!paused || ReaderTtsFloatingSession.ownerId !== ownerId) ReaderTtsFloatingSession.suspendedOwnerId = '';
@@ -347,6 +348,11 @@ export class ReaderTtsFloatingSession {
     return ReaderTtsFloatingSession.catalogTitleLabels.slice();
   }
 
+  /** 目录里正在读的那一章（下标）与章数；没有目录时章数为 0。按章定时用它写“读完第几章后停止”。 */
+  static catalogPosition(): number[] {
+    return [ReaderTtsFloatingSession.catalogCurrentIndex, ReaderTtsFloatingSession.catalogTitleLabels.length];
+  }
+
   /**
    * Cache flag for one chapter, in the canonical chapter order published by
    * `configureCatalog` (i.e. pass a canonical index, not a display one).
@@ -617,12 +623,84 @@ export class ReaderTtsFloatingSession {
     if (action) action(nextSpeed);
   }
 
-  static setTimer(minutes: number): void {
+  /**
+   * 按章定时：读完几章（有声书是几集）后停。还剩几章（含正在读的这一章）由会话统一记在 AppStorage，
+   * 持有方不另存，只在一章自然读完、正要接着下一章时调 finishChapterForTimer 问一声；手动跳章不算数。
+   * 和按分钟定时互斥：开一个就关掉另一个。持有方用 configureChapterTimer 声明支持，面板据此显示“按章节”。
+   */
+  static readonly CHAPTER_TIMER_MAX: number = 20;
+
+  static configureChapterTimer(ownerId: string, supported: boolean): void {
+    if (!ReaderTtsFloatingSession.isOwner(ownerId)) return;
+    if (AppStorage.get<boolean>('globalTtsChapterTimerSupported') !== supported) {
+      AppStorage.setOrCreate('globalTtsChapterTimerSupported', supported);
+    }
+    if (!supported) ReaderTtsFloatingSession.resetChapterTimer();
+  }
+
+  static setChapterTimer(chapters: number): void {
+    const next = Math.max(0, Math.min(ReaderTtsFloatingSession.CHAPTER_TIMER_MAX, Math.round(chapters || 0)));
+    if (next > 0 && (AppStorage.get<number>('globalTtsTimerMinutes') || 0) > 0) {
+      ReaderTtsFloatingSession.setTimer(0, true);
+    }
+    AppStorage.setOrCreate('globalTtsTimerChapters', next);
+    AppStorage.setOrCreate('globalTtsTimerChaptersTotal', next);
+  }
+
+  static chapterTimerRemaining(): number {
+    return Math.max(0, AppStorage.get<number>('globalTtsTimerChapters') || 0);
+  }
+
+  /** 读完正在读的这一章就要停：持有方不必提前合成下一章。 */
+  static chapterTimerEndsWithCurrent(): boolean {
+    return ReaderTtsFloatingSession.chapterTimerRemaining() === 1;
+  }
+
+  /**
+   * 持有方：一章（一集）自然读完、正要接着读下一章时调用。到数了返回 true，定时随之关闭，
+   * 持有方停在下一章开头、保持暂停；没开或还没到数返回 false，照常往下读。
+   */
+  static finishChapterForTimer(ownerId: string): boolean {
+    if (!ReaderTtsFloatingSession.isOwner(ownerId)) return false;
+    const remaining = ReaderTtsFloatingSession.chapterTimerRemaining();
+    if (remaining <= 0) return false;
+    if (remaining <= 1) {
+      ReaderTtsFloatingSession.resetChapterTimer();
+      return true;
+    }
+    AppStorage.setOrCreate('globalTtsTimerChapters', remaining - 1);
+    return false;
+  }
+
+  private static resetChapterTimer(): void {
+    if ((AppStorage.get<number>('globalTtsTimerChapters') || 0) !== 0) {
+      AppStorage.setOrCreate('globalTtsTimerChapters', 0);
+    }
+    if ((AppStorage.get<number>('globalTtsTimerChaptersTotal') || 0) !== 0) {
+      AppStorage.setOrCreate('globalTtsTimerChaptersTotal', 0);
+    }
+  }
+
+  /** quiet：按章定时接手时关掉分钟定时，不用再提示一次“已关闭”。 */
+  static setTimer(minutes: number, quiet: boolean = false): void {
     const nextMinutes = Math.max(0, Math.round(minutes || 0));
+    if (nextMinutes > 0) ReaderTtsFloatingSession.resetChapterTimer();
     AppStorage.setOrCreate('globalTtsTimerMinutes', nextMinutes);
     if (nextMinutes <= 0) AppStorage.setOrCreate('globalTtsTimerRemainingSeconds', 0);
     const action = ReaderTtsFloatingSession.timerAction;
-    if (action) action(nextMinutes);
+    ReaderTtsFloatingSession.quietTimerChange = quiet;
+    try {
+      if (action) action(nextMinutes);
+    } finally {
+      ReaderTtsFloatingSession.quietTimerChange = false;
+    }
+  }
+
+  private static quietTimerChange: boolean = false;
+
+  /** 持有方的定时回调里看这个：为 true 时是按章定时顺手关掉分钟定时，不用提示“已关闭朗读定时”。 */
+  static isQuietTimerChange(): boolean {
+    return ReaderTtsFloatingSession.quietTimerChange;
   }
 
   /**
@@ -736,6 +814,9 @@ export class ReaderTtsFloatingSession {
     AppStorage.setOrCreate('globalTtsSpeed', 1);
     AppStorage.setOrCreate('globalTtsTimerMinutes', 0);
     AppStorage.setOrCreate('globalTtsTimerRemainingSeconds', 0);
+    AppStorage.setOrCreate('globalTtsTimerChapters', 0);
+    AppStorage.setOrCreate('globalTtsTimerChaptersTotal', 0);
+    AppStorage.setOrCreate('globalTtsChapterTimerSupported', false);
     AppStorage.setOrCreate('globalTtsCanPrevious', false);
     AppStorage.setOrCreate('globalTtsCanNext', false);
     AppStorage.setOrCreate('globalTtsChapterIndex', -1);

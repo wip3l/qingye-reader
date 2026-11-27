@@ -13692,7 +13692,7 @@ struct ReadBookPage {
   setTtsSleepTimer(minutes: number): void {
     this.clearTtsSleepTimer();
     if (minutes <= 0) {
-      HdsFeedback.showToast('已关闭朗读定时');
+      if (!ReaderTtsFloatingSession.isQuietTimerChange()) HdsFeedback.showToast('已关闭朗读定时');
       return;
     }
     this.ttsSleepTimerMinutes = minutes;
@@ -16300,6 +16300,7 @@ struct ReadBookPage {
     );
     ReaderTtsFloatingSession.configureTimerExtend(this.ttsFloatingSessionOwnerId,
       (minutes: number) => this.extendTtsSleepTimer(minutes));
+    ReaderTtsFloatingSession.configureChapterTimer(this.ttsFloatingSessionOwnerId, true);
     ReaderTtsFloatingSession.configurePositionControl(
       this.ttsFloatingSessionOwnerId,
       (chapterIndex: number, pageIndex: number, sourceOffset: number): Promise<void> =>
@@ -17115,6 +17116,17 @@ struct ReadBookPage {
    * 暂停着翻页：引擎里那段暂停的语音属于旧位置，丢掉它但会话仍算暂停（悬浮条、媒体控件不变），
    * 下一次“继续”走 startTtsReadingFromCurrentPosition 从当前页读起。与快速跳转保持暂停的做法一致。
    */
+  /** 按章定时到数：已经翻到下一章开头，朗读会话留着、显示暂停，点继续从这一章开头读。 */
+  holdTtsAtChapterTimerEnd(): void {
+    this.stopTtsReaderForChapterSwitch();
+    this.isTtsSpeaking = true;
+    this.isTtsPaused = true;
+    this.updateTtsFloatingSession();
+    this.ttsMediaSession().updatePlaybackState(avSession.PlaybackState.PLAYBACK_STATE_PAUSE)
+      .catch((error: Error): void => { console.warn('按章定时暂停后更新播放状态失败:', error); });
+    HdsFeedback.showToast('已读完定好的章数，朗读已暂停');
+  }
+
   holdPausedTtsForManualPageTurn(): void {
     this.clearTtsViewDetached();
     this.quickJumpPausedSpeechOffset = -1;
@@ -17233,8 +17245,18 @@ struct ReadBookPage {
       HdsFeedback.showToast(this.ttsChapterAdvanceError);
       return;
     }
+    // 按章定时到数：这一章已经读完，翻到下一章开头停住（暂停着），点继续从那里读。
+    const timerEnded = ReaderTtsFloatingSession.finishChapterForTimer(this.ttsFloatingSessionOwnerId);
+    if (timerEnded) {
+      await this.ttsReader?.drainQueuedTail();
+      if (token !== this.ttsReadToken || !this.ttsAutoContinue) return;
+    }
     const advanced = await this.advanceTtsReadingToNextChapter();
     if (token !== this.ttsReadToken || !this.ttsAutoContinue) {
+      return;
+    }
+    if (timerEnded && advanced) {
+      this.holdTtsAtChapterTimerEnd();
       return;
     }
     if (!advanced) {
@@ -17343,8 +17365,9 @@ struct ReadBookPage {
     if (this.ttsFocusChapterIndex >= 0 && this.ttsFocusChapterIndex !== chapterIndex) return;
     const nextIndex = chapterIndex + 1;
     if (nextIndex >= this.chapters.length) return;
-    // 定时关闭在一分钟内到点，多半读不到下一章。
+    // 定时关闭在一分钟内到点，多半读不到下一章；按章定时读完这章就停，也不读下一章。
     if (this.ttsSleepTimerEndAt > 0 && this.ttsSleepTimerEndAt - Date.now() < 60000) return;
+    if (ReaderTtsFloatingSession.chapterTimerEndsWithCurrent()) return;
     const body = await this.readerEngine().peekContent(nextIndex);
     if (!body || stale() || this.currentChapterIndex !== chapterIndex) return;
     const processed = await this.prepareReaderContentRules(body, nextIndex);

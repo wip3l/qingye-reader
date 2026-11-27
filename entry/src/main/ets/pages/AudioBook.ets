@@ -1258,6 +1258,10 @@ struct AudioBookPage {
   onPlaybackCompleted(): void {
     this.saveProgressNow(true);
     if (this.chapterIndex < this.chapters.length - 1) {
+      if (ReaderTtsFloatingSession.finishChapterForTimer(this.floatingSessionOwnerId)) {
+        this.holdAtNextChapterForTimer();
+        return;
+      }
       this.autoAdvancing = true;
       this.selectChapter(this.chapterIndex + 1);
     } else {
@@ -1265,6 +1269,25 @@ struct AudioBookPage {
       ReaderTtsFloatingSession.clear(this.floatingSessionOwnerId);
       this.stopAudioBackground().catch(() => {});
     }
+  }
+
+  /**
+   * 按章定时到数：这一集已经放完，选中下一集但不播放，进度记在下一集开头；点播放时
+   * togglePlayback 发现播放器里不是这一集，从头播放它。
+   */
+  holdAtNextChapterForTimer(): void {
+    this.autoAdvancing = false;
+    this.chapterIndex = this.chapterIndex + 1;
+    this.positionMs = 0;
+    this.durationMs = 0;
+    this.latestPositionMs = 0;
+    this.latestDurationMs = 0;
+    this.saveProgressNow(true);
+    this.statusText = '已听完定好的集数，点播放听下一集';
+    this.updateAudioAvSessionState(avSession.PlaybackState.PLAYBACK_STATE_PAUSE).catch(() => {});
+    this.updateFloatingSession();
+    this.syncFloatingStatus();
+    HdsFeedback.showToast('已听完定好的集数，已暂停');
   }
 
   onPlaybackError(message: string): void {
@@ -1524,6 +1547,7 @@ struct AudioBookPage {
       (value: number) => this.changeSpeed(value),
       (minutes: number) => this.setSleepTimer(minutes)
     );
+    ReaderTtsFloatingSession.configureChapterTimer(this.floatingSessionOwnerId, true);
     ReaderTtsFloatingSession.configureTimerExtend(this.floatingSessionOwnerId,
       (minutes: number) => this.extendSleepTimer(minutes));
     ReaderTtsFloatingSession.configureAudioControls(

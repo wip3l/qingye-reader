@@ -2,6 +2,7 @@ import { BookCover } from './book/BookCover';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
+import { HdsFeedback } from '../utils/HdsFeedback';
 import deviceInfo from '@ohos.deviceInfo';
 import { router } from '@kit.ArkUI';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -153,6 +154,10 @@ export struct ReaderTtsPlayerPanel {
   @StorageLink('globalTtsSpeed') globalTtsSpeed: number = 1;
   @StorageLink('globalTtsTimerMinutes') globalTtsTimerMinutes: number = 0;
   @StorageLink('globalTtsTimerRemainingSeconds') globalTtsTimerRemainingSeconds: number = 0;
+  // 按章定时：还剩几章（含正在读的这一章）、开始时的章数；持有方支持时面板才给“按章节”。
+  @StorageProp('globalTtsTimerChapters') globalTtsTimerChapters: number = 0;
+  @StorageProp('globalTtsTimerChaptersTotal') globalTtsTimerChaptersTotal: number = 0;
+  @StorageProp('globalTtsChapterTimerSupported') globalTtsChapterTimerSupported: boolean = false;
   @StorageLink('globalTtsCanPrevious') globalTtsCanPrevious: boolean = false;
   @StorageLink('globalTtsCanNext') globalTtsCanNext: boolean = false;
   @StorageLink('globalTtsAudioPositionMs') globalTtsAudioPositionMs: number = 0;
@@ -179,6 +184,8 @@ export struct ReaderTtsPlayerPanel {
   @State speedDraft: number = -1;
   /** 拖动定时滑条时将要设的分钟数，没在拖时为 -1。 */
   @State timerDraft: number = -1;
+  /** 定时面板选的是哪种：-1 跟着现状（开着按章定时就是按章节），0 按时间，1 按章节。 */
+  @State timerModeChoice: number = -1;
   @State audioVoiceMenuRevision: number = 0;
   // 听书封面区实际分到的高度和其中章节名、状态行的高度。定时/倍速/增益面板展开后封面区变矮，
   // 封面按这些量出来的值缩小；否则屏幕矮的机型上内容溢出，音色下拉会压到进度条上。
@@ -810,7 +817,7 @@ export struct ReaderTtsPlayerPanel {
     Column({ space: AppSpacing.XS }) {
       Stack({ alignContent: Alignment.Center }) {
         if (this.timerActive()) {
-          Progress({ value: this.timerRemainingShown(), total: this.timerTotalSeconds(), type: ProgressType.Ring })
+          Progress({ value: this.timerRingValue(), total: this.timerRingTotal(), type: ProgressType.Ring })
             .width(32)
             .height(32)
             .color(this.timerColor())
@@ -835,8 +842,8 @@ export struct ReaderTtsPlayerPanel {
     .height(56)
     .justifyContent(FlexAlign.Center)
     .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.92 })
-    .accessibilityText(this.timerActive() ?
-      `定时，剩余 ${formatTimerRemaining(this.globalTtsTimerRemainingSeconds)}` : '定时')
+    .accessibilityText(this.chapterTimerActive() ? `定时，${this.secondaryLabel(SECONDARY_TIMER)}` :
+      (this.timerActive() ? `定时，剩余 ${formatTimerRemaining(this.globalTtsTimerRemainingSeconds)}` : '定时'))
     .onClick(() => this.onSecondaryTap(SECONDARY_TIMER))
   }
 
@@ -848,6 +855,135 @@ export struct ReaderTtsPlayerPanel {
   @Builder
   timerOptions() {
     Column({ space: AppSpacing.SM }) {
+      if (this.globalTtsChapterTimerSupported) {
+        Row({ space: AppSpacing.XS }) {
+          this.timerModeButton(0, '按时间')
+          this.timerModeButton(1, '按章节')
+        }
+        .width('100%')
+        .padding(3)
+        .borderRadius(ThemeRuntime.buttonRadius() + 3)
+        .backgroundColor(ThemeRuntime.softFillColor(this.darkMode))
+      }
+      if (this.timerChapterMode()) {
+        this.chapterTimerOptions()
+      } else {
+        this.minuteTimerOptions()
+      }
+    }
+    .width('100%')
+  }
+
+  /** 分段条的一格。 */
+  @Builder
+  timerModeButton(mode: number, label: string) {
+    Text(label)
+      .fontSize(AppFontSize.CAPTION)
+      .fontWeight(this.timerModeSelected(mode) ? FontWeight.Medium : FontWeight.Regular)
+      .fontColor(this.timerModeSelected(mode) ? this.primaryTextColor : this.subTextColor)
+      .textAlign(TextAlign.Center)
+      .layoutWeight(1)
+      .height(28)
+      .borderRadius(ThemeRuntime.buttonRadius())
+      .backgroundColor(this.timerModeSelected(mode) ? ThemeRuntime.cardColor(this.darkMode) : Color.Transparent)
+      .shadow(this.timerModeSelected(mode) ? { radius: 3, color: '#1F000000', offsetY: 1 } :
+        { radius: 0, color: Color.Transparent })
+      .accessibilityText(`定时${label}`)
+      .onClick(() => {
+        this.timerModeChoice = mode;
+        this.timerDraft = -1;
+      })
+  }
+
+  /**
+   * 按章节：标题行写读完第几章后停止、右边是章数；中间 − 章数 + 一次加减一章（减到 0 是关闭），下面是快捷档。
+   * 停的时候是暂停在下一章开头，点继续从那里读。
+   */
+  @Builder
+  chapterTimerOptions() {
+    Row({ space: AppSpacing.SM }) {
+      Text('定时')
+        .fontSize(AppFontSize.CAPTION)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.primaryTextColor)
+      Text(this.chapterTimerEndText())
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      Text(this.chapterTimerActive() ? this.chapterCountLabel(this.globalTtsTimerChapters) : '关闭')
+        .fontSize(AppFontSize.CAPTION)
+        .fontWeight(this.chapterTimerActive() ? FontWeight.Bold : FontWeight.Regular)
+        .fontColor(this.chapterTimerActive() ? this.accentColor : this.subTextColor)
+        .maxLines(1)
+    }
+    .width('100%')
+
+    Row({ space: AppSpacing.XL }) {
+      this.chapterTimerStepButton(-1)
+      Text(this.chapterTimerActive() ? this.chapterCountLabel(this.globalTtsTimerChapters) : '未开启')
+        .fontSize(this.chapterTimerActive() ? 22 : AppFontSize.BODY)
+        .fontWeight(this.chapterTimerActive() ? FontWeight.Bold : FontWeight.Regular)
+        .fontColor(this.chapterTimerActive() ? this.accentColor : this.subTextColor)
+        .fontFeature('"tnum" on')
+        .textAlign(TextAlign.Center)
+        .constraintSize({ minWidth: 88 })
+      this.chapterTimerStepButton(1)
+    }
+    .width('100%')
+    .justifyContent(FlexAlign.Center)
+    .padding({ top: AppSpacing.XS, bottom: AppSpacing.XS })
+
+    Row({ space: AppSpacing.SM }) {
+      this.chapterTimerChip(1)
+      this.chapterTimerChip(2)
+      this.chapterTimerChip(3)
+      this.chapterTimerChip(5)
+      this.chapterTimerChip(10)
+    }
+    .width('100%')
+  }
+
+  @Builder
+  chapterTimerStepButton(direction: number) {
+    Stack({ alignContent: Alignment.Center }) {
+      SymbolGlyph(direction < 0 ? $r('sys.symbol.minus') : $r('sys.symbol.plus'))
+        .fontSize(16)
+        .fontColor([this.chapterTimerStepEnabled(direction) ? this.primaryTextColor : this.subTextColor])
+    }
+    .width(30)
+    .height(30)
+    .borderRadius(15)
+    .backgroundColor(ThemeRuntime.softFillColor(this.darkMode))
+    .opacity(this.chapterTimerStepEnabled(direction) ? 1 : 0.5)
+    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.92 })
+    .accessibilityText(direction < 0 ? `少一${this.chapterUnit()}` : `多一${this.chapterUnit()}`)
+    .onClick(() => {
+      if (!this.chapterTimerStepEnabled(direction)) return;
+      this.setChapterTimer(Math.max(0, this.globalTtsTimerChapters) + direction);
+    })
+  }
+
+  @Builder
+  chapterTimerChip(chapters: number) {
+    Text(chapters === 1 ? `本${this.chapterUnit()}` : `${chapters} ${this.chapterUnit()}`)
+      .fontSize(AppFontSize.CAPTION)
+      .fontWeight(this.globalTtsTimerChapters === chapters ? FontWeight.Bold : FontWeight.Regular)
+      .fontColor(this.globalTtsTimerChapters === chapters ? ThemeRuntime.onAccentColor() : this.primaryTextColor)
+      .textAlign(TextAlign.Center)
+      .layoutWeight(1)
+      .height(30)
+      .borderRadius(ThemeRuntime.buttonRadius())
+      .backgroundColor(this.globalTtsTimerChapters === chapters ? this.accentColor :
+        ThemeRuntime.softFillColor(this.darkMode))
+      .accessibilityText(chapters === 1 ? `读完本${this.chapterUnit()}后停止` :
+        `读完 ${chapters} ${this.chapterUnit()}后停止`)
+      .onClick(() => this.setChapterTimer(chapters))
+  }
+
+  @Builder
+  minuteTimerOptions() {
       Row({ space: AppSpacing.SM }) {
         Text('定时')
           .fontSize(AppFontSize.CAPTION)
@@ -919,8 +1055,6 @@ export struct ReaderTtsPlayerPanel {
         this.timerChip(60, '60分')
       }
       .width('100%')
-    }
-    .width('100%')
   }
 
   /** direction：-1 少 5 分钟（不够扣就关掉），1 多 5 分钟（没开定时就开 5 分钟）。 */
@@ -1656,12 +1790,73 @@ export struct ReaderTtsPlayerPanel {
     return $r('sys.symbol.stop_circle');
   }
 
+  /** 有定时在走：分钟定时或按章定时。 */
   timerActive(): boolean {
+    return this.minuteTimerActive() || this.chapterTimerActive();
+  }
+
+  minuteTimerActive(): boolean {
     return this.globalTtsTimerMinutes > 0 && this.globalTtsTimerRemainingSeconds > 0;
   }
 
+  chapterTimerActive(): boolean {
+    return this.globalTtsChapterTimerSupported && this.globalTtsTimerChapters > 0;
+  }
+
+  /** 面板里显示哪一种：用户点过分段就按点的，否则开着按章定时就显示按章节。 */
+  timerChapterMode(): boolean {
+    if (!this.globalTtsChapterTimerSupported) return false;
+    return this.timerModeChoice >= 0 ? this.timerModeChoice === 1 : this.chapterTimerActive();
+  }
+
+  timerModeSelected(mode: number): boolean {
+    return (mode === 1) === this.timerChapterMode();
+  }
+
+  /** 有声书按“集”数，朗读按“章”数。 */
+  chapterUnit(): string {
+    return this.isAudio() ? '集' : '章';
+  }
+
+  chapterCountLabel(chapters: number): string {
+    return chapters === 1 ? `本${this.chapterUnit()}` : `${chapters} ${this.chapterUnit()}`;
+  }
+
+  /** 标题行：知道目录时写“读完第 N 章后停止”，否则按还剩几章说。 */
+  chapterTimerEndText(): string {
+    if (!this.chapterTimerActive()) return `读完几${this.chapterUnit()}后暂停`;
+    const position = ReaderTtsFloatingSession.catalogPosition();
+    const last = position[0] + this.globalTtsTimerChapters;
+    if (position[1] > 0 && last <= position[1]) return `读完第 ${last} ${this.chapterUnit()}后暂停`;
+    return this.globalTtsTimerChapters === 1 ? `读完本${this.chapterUnit()}后暂停` :
+      `再读 ${this.globalTtsTimerChapters} ${this.chapterUnit()}后暂停`;
+  }
+
+  chapterTimerStepEnabled(direction: number): boolean {
+    if (direction < 0) return this.chapterTimerActive();
+    return this.globalTtsTimerChapters < ReaderTtsFloatingSession.CHAPTER_TIMER_MAX;
+  }
+
+  setChapterTimer(chapters: number): void {
+    const next = Math.max(0, Math.min(ReaderTtsFloatingSession.CHAPTER_TIMER_MAX, chapters));
+    this.timerModeChoice = 1;
+    ReaderTtsFloatingSession.setChapterTimer(next);
+    HdsFeedback.showToast(next <= 0 ? '已关闭定时' : (next === 1 ? `读完本${this.chapterUnit()}后暂停` :
+      `读完 ${next} ${this.chapterUnit()}后暂停`));
+  }
+
+  /** 定时按钮外圈细环：分钟定时按剩余秒数，按章定时按剩余章数。 */
+  timerRingValue(): number {
+    return this.chapterTimerActive() ? this.globalTtsTimerChapters : this.timerRemainingShown();
+  }
+
+  timerRingTotal(): number {
+    return this.chapterTimerActive() ?
+      Math.max(1, this.globalTtsTimerChaptersTotal, this.globalTtsTimerChapters) : this.timerTotalSeconds();
+  }
+
   timerWarning(): boolean {
-    return this.timerActive() && this.globalTtsTimerRemainingSeconds <= TIMER_WARN_SECONDS;
+    return this.minuteTimerActive() && this.globalTtsTimerRemainingSeconds <= TIMER_WARN_SECONDS;
   }
 
   timerColor(): ResourceColor {
@@ -1689,38 +1884,42 @@ export struct ReaderTtsPlayerPanel {
   }
 
   timerChipSelected(minutes: number): boolean {
-    return minutes === 0 && !this.timerActive() && this.timerDraft < 0;
+    return minutes === 0 && !this.minuteTimerActive() && this.timerDraft < 0;
   }
 
   /** 滑块所在的分钟数：拖动中是草稿，开着定时是剩余分钟（向上取整），否则 0。 */
   timerSliderMinutes(): number {
     if (this.timerDraft >= 0) return this.timerDraft;
-    return this.timerActive() ? Math.ceil(this.globalTtsTimerRemainingSeconds / 60) : 0;
+    return this.minuteTimerActive() ? Math.ceil(this.globalTtsTimerRemainingSeconds / 60) : 0;
   }
 
   timerValueOff(): boolean {
-    return this.timerDraft >= 0 ? this.timerDraft <= 0 : !this.timerActive();
+    return this.timerDraft >= 0 ? this.timerDraft <= 0 : !this.minuteTimerActive();
   }
 
   timerValueText(): string {
     if (this.timerDraft >= 0) return this.timerDraft > 0 ? `${this.timerDraft} 分` : '关闭';
-    return this.timerActive() ? `剩余 ${formatTimerRemaining(this.globalTtsTimerRemainingSeconds)}` : '关闭';
+    return this.minuteTimerActive() ? `剩余 ${formatTimerRemaining(this.globalTtsTimerRemainingSeconds)}` : '关闭';
   }
 
   timerEndText(): string {
     if (this.timerDraft > 0) return `${this.clockAfterSeconds(this.timerDraft * 60)} 停止`;
-    if (this.timerDraft < 0 && this.timerActive()) return `${this.timerEndClock()} 停止`;
+    if (this.timerDraft < 0 && this.minuteTimerActive()) return `${this.timerEndClock()} 停止`;
     return '';
   }
 
   timerStepEnabled(direction: number): boolean {
-    if (direction < 0) return this.timerActive();
-    return !this.timerActive() || this.globalTtsTimerRemainingSeconds < SLEEP_TIMER_MAX_MINUTES * 60;
+    if (direction < 0) return this.minuteTimerActive();
+    return !this.minuteTimerActive() || this.globalTtsTimerRemainingSeconds < SLEEP_TIMER_MAX_MINUTES * 60;
   }
 
   secondaryLabel(kind: string): string {
     if (kind === SECONDARY_TIMER) {
-      return this.timerActive() ? formatTimerRemaining(this.globalTtsTimerRemainingSeconds) : '定时';
+      if (this.chapterTimerActive()) {
+        return this.globalTtsTimerChapters === 1 ? `本${this.chapterUnit()}后停` :
+          `还剩 ${this.globalTtsTimerChapters} ${this.chapterUnit()}`;
+      }
+      return this.minuteTimerActive() ? formatTimerRemaining(this.globalTtsTimerRemainingSeconds) : '定时';
     }
     if (kind === SECONDARY_SPEED) {
       const speed = `${PlaybackSpeed.label(this.globalTtsSpeed)}x`;
@@ -1740,7 +1939,7 @@ export struct ReaderTtsPlayerPanel {
     if (kind === SECONDARY_STOP) return ThemeRuntime.dangerColor(this.darkMode);
     let active = false;
     if (kind === SECONDARY_TIMER) {
-      active = this.globalTtsTimerMinutes > 0 || this.optionsPanel === 1;
+      active = this.globalTtsTimerMinutes > 0 || this.chapterTimerActive() || this.optionsPanel === 1;
     } else if (kind === SECONDARY_SPEED) {
       active = Math.abs(this.globalTtsSpeed - 1) > 0.01 || this.gainActive() || this.optionsPanel === 2;
     } else if (kind === SECONDARY_SKIP) {
@@ -1753,6 +1952,7 @@ export struct ReaderTtsPlayerPanel {
   onSecondaryTap(kind: string): void {
     if (kind === SECONDARY_TIMER) {
       this.timerDraft = -1;
+      this.timerModeChoice = -1;
       this.optionsPanel = this.optionsPanel === 1 ? 0 : 1;
     } else if (kind === SECONDARY_SPEED) {
       this.speedDraft = -1;
