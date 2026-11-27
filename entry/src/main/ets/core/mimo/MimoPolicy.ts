@@ -191,6 +191,75 @@ export class MimoPolicy {
     }
   }
 
+  private static readonly QUOTE: RegExp = /[“”「」『』"]/;
+
+  /**
+   * 这一批里要请模型标说话人的句子：带引号的对白。不带引号的叙述直接按旁白读，模型不必为它们各写一行，
+   * 回复短得多，不容易超出输出上限。叙述的原文仍随请求发过去（“林晚转身说：”这类提示全靠它）。
+   * 这一批和前后文里都没有引号的（不用引号写对白的书），整批照旧交给模型。
+   */
+  static dialogueUnitIds(units: MimoUnit[], context: string, after: string): number[] {
+    const quoted = units.filter((unit: MimoUnit): boolean => MimoPolicy.QUOTE.test(unit.text));
+    if (quoted.length === 0 && !MimoPolicy.QUOTE.test(context) && !MimoPolicy.QUOTE.test(after)) {
+      return units.map((unit: MimoUnit): number => unit.id);
+    }
+    return quoted.map((unit: MimoUnit): number => unit.id);
+  }
+
+  /**
+   * 把模型的标注补齐成每句一条：没写的句子按旁白；没写情绪的按平静，没写把握的按 0.9。
+   * 标了不在这一批里的、同一句标了两次的，丢掉后面的。
+   */
+  static completeAssignments(result: MimoAnalysis, units: MimoUnit[]): void {
+    const byId: Map<number, MimoAssignment> = new Map<number, MimoAssignment>();
+    for (const item of Array.isArray(result.assignments) ? result.assignments : []) {
+      if (!item || !Number.isInteger(item.unitId) || byId.has(item.unitId)) continue;
+      if (!units.some((unit: MimoUnit): boolean => unit.id === item.unitId)) continue;
+      if (typeof item.emotion !== 'string' || !item.emotion) item.emotion = '平静';
+      if (item.confidence === undefined || item.confidence === null) item.confidence = 0.9;
+      byId.set(item.unitId, item);
+    }
+    result.assignments = units.map((unit: MimoUnit): MimoAssignment => {
+      const found = byId.get(unit.id);
+      if (found) return found;
+      const narration = new MimoAssignment();
+      narration.unitId = unit.id;
+      narration.roleId = 'narrator';
+      narration.emotion = '平静';
+      narration.confidence = 0.9;
+      return narration;
+    });
+    if (!Array.isArray(result.roles)) result.roles = [];
+  }
+
+  /**
+   * 去掉写在正文里的思考段（<think>…</think>，有的模型和本地部署这样返回）。没写完的 <think> 段连同后面全部去掉。
+   */
+  static stripThinking(content: string): string {
+    return (content || '').replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '')
+      .replace(/<think(?:ing)?>[\s\S]*$/i, '');
+  }
+
+  /**
+   * 回复被输出上限截断时，从半截 JSON 里捡回已经完整写出的标注和人物：逐个找不含嵌套花括号的对象，
+   * 能解析、字段对得上的才要。
+   */
+  static salvageAnalysis(content: string): MimoAnalysis {
+    const result = new MimoAnalysis();
+    const text = MimoPolicy.stripThinking(content || '').replace(/^\s*```(?:json)?\s*/i, '');
+    const objects = text.match(/\{[^{}]*\}/g) || [];
+    for (const raw of objects) {
+      let item: Record<string, Object>;
+      try { item = JSON.parse(raw) as Record<string, Object>; } catch (_) { continue; }
+      if (Number.isInteger(item['unitId']) && typeof item['roleId'] === 'string') {
+        result.assignments.push(item as Object as MimoAssignment);
+      } else if (typeof item['id'] === 'string' && typeof item['name'] === 'string' && Array.isArray(item['aliases'])) {
+        result.roles.push(item as Object as MimoRoleProposal);
+      }
+    }
+    return result;
+  }
+
   /** Analysis batches: a small first batch so the opening starts quickly, then larger ones. */
   // 第一批只有 5 句，起播不用久等；之后每批 30 句：一段来回的对话尽量落在同一批里，模型才分得清谁接谁的话。
   static batchStart(index: number): number {

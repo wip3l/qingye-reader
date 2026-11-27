@@ -64,7 +64,7 @@ const clientSource=fs.readFileSync(new URL('../entry/src/main/ets/utils/mimo/Mim
 let transport;
 const fakeHttp={RequestMethod:{POST:'POST'},HttpDataType:{STRING:1},createHttp:()=>typeof transport==='function'?transport():transport};
 const FakeClient=vm.runInNewContext(stripTypeScriptTypes(clientSource+'\nMimoClient'),{
-  http:fakeHttp, MimoPolicy, MimoSseParser, setTimeout, clearTimeout,
+  http:fakeHttp, MimoPolicy, MimoSseParser, MimoAnalysis:policy.MimoAnalysis, setTimeout, clearTimeout, console,
   util:{TextDecoder:{create:()=>{const d=new TextDecoder();return {decodeWithStream:(b,o)=>d.decode(b,o)}}},
     Base64Helper:class {decodeSync(s){return new Uint8Array(Buffer.from(s,'base64'));}}},
 });
@@ -110,7 +110,8 @@ transport=()=>({
   request:async()=>({responseCode:++analysisRequests<3?429:200,header:{},
     result:JSON.stringify({choices:[{message:{content:JSON.stringify({roles:[],assignments:[]})}}]})}),
 });
-await client.analyze('test',[],[],'',delay=>analysisNotices.push(delay));
+const D=()=>MimoPolicy.split('小明说：“我们走吧。”');
+await client.analyze('test',D(),[],'',delay=>analysisNotices.push(delay));
 assert.equal(analysisRequests,3);
 assert.deepEqual(analysisNotices,[1000,2000], 'analysis retries notify independently from speech');
 // 别家分析接口：请求关掉思考、限制输出；不认识这些字段（400）时改发精简请求并记住；超时说清原因。
@@ -120,7 +121,7 @@ assert.deepEqual(analysisNotices,[1000,2000], 'analysis retries notify independe
   const target={url:'https://api.example.test/v1/chat/completions',model:'thinker'};
   transport=()=>({destroy(){},request:async(url,options)=>{const body=JSON.parse(options.extraData);sent.push(body);
     assert.equal(url,target.url);return {responseCode:200,header:{},result:reply};}});
-  await client.analyze('k',[],[],'',undefined,target);
+  await client.analyze('k',D(),[],'',undefined,target);
   assert.equal(sent[0].enable_thinking,false,'thinking is switched off for other endpoints');
   assert.equal(sent[0].max_tokens,4096);
   assert.equal(sent[0].thinking,undefined,'MiMo-only fields are not sent');
@@ -129,18 +130,133 @@ assert.deepEqual(analysisNotices,[1000,2000], 'analysis retries notify independe
   transport=()=>({destroy(){},request:async(url,options)=>{const body=JSON.parse(options.extraData);sent.push(body);
     if('enable_thinking' in body)return {responseCode:400,header:{},result:JSON.stringify({error:{message:'Unrecognized request argument: enable_thinking'}})};
     return {responseCode:200,header:{},result:reply};}});
-  await client.analyze('k',[],[],'',undefined,strict);
+  await client.analyze('k',D(),[],'',undefined,strict);
   assert.equal(sent.length,2,'one retry with a plain request');
   assert.ok(!('enable_thinking' in sent[1])&&!('max_tokens' in sent[1])&&!('response_format' in sent[1]));
   sent.length=0;
-  await client.analyze('k',[],[],'',undefined,strict);
+  await client.analyze('k',D(),[],'',undefined,strict);
   assert.equal(sent.length,1,'the plain request is remembered');
   assert.ok(!('enable_thinking' in sent[0]));
   transport=()=>({destroy(){},request:async()=>{const e=new Error('timeout');e.code=2300028;throw e;}});
-  await assert.rejects(client.analyze('k',[],[],'',undefined,target),/90 秒内没有返回.*思考/);
+  await assert.rejects(client.analyze('k',D(),[],'',undefined,target),/90 秒内没有返回.*思考/);
   transport=()=>({destroy(){},request:async()=>({responseCode:200,header:{},
     result:JSON.stringify({choices:[{finish_reason:'length',message:{content:''}}]})})});
-  await assert.rejects(client.analyze('k',[],[],'',undefined,target),/长度上限/);
+  await assert.rejects(client.analyze('k',D(),[],'',undefined,target),/长度上限/);
+}
+// 只请模型标对白句，叙述按旁白补齐；回复被截断时捡回已写完的标注，剩下的拆开再问。
+{
+  const mixed=MimoPolicy.split('林晚推开门。“走吧。”她回头看了一眼。“明天见。”沈砚没有回答。');
+  assert.deepEqual(Array.from(mixed,u=>u.text),['林晚推开门。','“走吧。”','她回头看了一眼。','“明天见。”','沈砚没有回答。']);
+  assert.deepEqual(Array.from(MimoPolicy.dialogueUnitIds(mixed,'','')),[1,3],'only quoted units are labelled');
+  const plain=MimoPolicy.split('他走了。她也走了。');
+  assert.deepEqual(Array.from(MimoPolicy.dialogueUnitIds(plain,'“在吗？”','')),[],'a narration-only batch in a quoted book asks nothing');
+  assert.deepEqual(Array.from(MimoPolicy.dialogueUnitIds(plain,'没有引号的上文','')),[0,1],'a book without quotes still asks for every unit');
+  const partial={roles:[],assignments:[{unitId:3,roleId:'lin'},{unitId:3,roleId:'x'},{unitId:9,roleId:'y'}]};
+  MimoPolicy.completeAssignments(partial,mixed);
+  assert.deepEqual(JSON.parse(JSON.stringify(partial.assignments.map(a=>[a.unitId,a.roleId,a.emotion,a.confidence]))),
+    [[0,'narrator','平静',0.9],[1,'narrator','平静',0.9],[2,'narrator','平静',0.9],[3,'lin','平静',0.9],[4,'narrator','平静',0.9]],
+    'missing units become narration, defaults filled, duplicates and strangers dropped');
+  assert.doesNotThrow(()=>MimoPolicy.validate(partial,mixed));
+  const cut='{"assignments":[{"unitId":1,"roleId":"lin","emotion":"开心"},{"unitId":3,"roleId":"shen"},{"unitId":5,"roleId":"lin","emo';
+  const salvaged=MimoPolicy.salvageAnalysis('```json\n'+cut);
+  assert.deepEqual([...salvaged.assignments.map(a=>a.unitId)],[1,3],'only complete objects are kept');
+  const withRoles=MimoPolicy.salvageAnalysis('{"assignments":[{"unitId":1,"roleId":"lin"}],"roles":[{"id":"lin","name":"林晚","aliases":[],"gender":"female"},{"id":"sh');
+  assert.deepEqual([...withRoles.roles.map(r=>r.id)],['lin']);
+
+  const sent=[];let replies=[];
+  const target={url:'https://api.example.test/v1/chat/completions',model:'m'};
+  transport=()=>({destroy(){},request:async(url,options)=>{const body=JSON.parse(options.extraData);sent.push(body);
+    return {responseCode:200,header:{},result:JSON.stringify(replies.shift())};}});
+  const reply=(content,finish)=>({choices:[{finish_reason:finish,message:{content}}],usage:{completion_tokens:4096}});
+  // 叙述句不发请求；对白批只把对白编号放进 label，原文全带上。
+  await client.analyze('k',plain,[],'“在吗？”',undefined,target);
+  assert.equal(sent.length,0,'no request for a narration-only batch');
+  replies=[reply(JSON.stringify({assignments:[{unitId:1,roleId:'narrator',confidence:0.5}],roles:[]}))];
+  let result=await client.analyze('k',mixed,[],'',undefined,target);
+  const payload=JSON.parse(sent[0].messages[1].content);
+  assert.deepEqual(payload.label,[1,3]);
+  assert.deepEqual(payload.units.map(u=>Object.keys(u).sort().join()),Array(5).fill('id,text'),'units carry only id and text');
+  assert.equal(result.assignments.length,5,'the analysis still covers every unit');
+  // 截断：捡回第 1 句，第 3 句单独再问一次。
+  sent.length=0;
+  replies=[reply('{"assignments":[{"unitId":1,"roleId":"lin"},{"unitId":3,"ro','length'),
+    reply(JSON.stringify({assignments:[{unitId:3,roleId:'shen'}],roles:[]}))];
+  result=await client.analyze('k',mixed,[],'',undefined,target);
+  assert.equal(sent.length,2);
+  assert.deepEqual(JSON.parse(sent[1].messages[1].content).label,[3],'only the missing unit is asked again');
+  assert.deepEqual([...result.assignments.map(a=>a.roleId)],['narrator','lin','narrator','shen','narrator']);
+  // 一句都没捡回：对半拆开。
+  sent.length=0;
+  const many=MimoPolicy.split('“一。”“二。”“三。”“四。”');
+  replies=[reply('{"assign','length'),reply(JSON.stringify({assignments:[],roles:[]})),reply(JSON.stringify({assignments:[],roles:[]}))];
+  await client.analyze('k',many,[],'',undefined,target);
+  assert.deepEqual(sent.map(b=>JSON.parse(b.messages[1].content).label),[[0,1,2,3],[0,1],[2,3]],'halves are asked separately');
+  // 思考占满：不拆小，自动带上 thinking 对象重试一次；仍思考到上限才报错，并说清原因。
+  const thinkingCut={choices:[{finish_reason:'length',message:{content:'',reasoning_content:'嗯'.repeat(50)}}],usage:{completion_tokens:4096,completion_tokens_details:{reasoning_tokens:4096}}};
+  sent.length=0;
+  replies=[thinkingCut,thinkingCut,thinkingCut];
+  await assert.rejects(client.analyze('k',many,[],'',undefined,target),e=>e.name==='AnalysisTruncatedError'&&e.thinking===true&&/思考/.test(e.message));
+  assert.equal(sent.length,3,'a thinking-heavy cut is not split into halves; each way of switching thinking off is tried once');
+  assert.equal(sent[0].thinking,undefined);
+  assert.deepEqual({...sent[1].thinking},{type:'disabled'},'first retry: thinking object');
+  assert.equal(sent[2].reasoning_effort,'none','second retry: reasoning_effort');
+  assert.deepEqual(JSON.parse(sent[1].messages[1].content).label,[0,1,2,3]);
+  sent.length=0;replies=[reply(JSON.stringify({assignments:[],roles:[]}))];
+  await client.analyze('k',D(),[],'',undefined,target);
+  assert.deepEqual({...sent[0].thinking},{type:'disabled'},'the endpoint keeps the learned fields');
+  assert.equal(sent[0].reasoning_effort,'none');
+  // 学来的 thinking 字段接口不认（400）：只撤掉它，其余字段照旧，以后也不再加。
+  const picky={url:'https://picky.example.test/v1/chat/completions',model:'p'};
+  sent.length=0;
+  replies=[thinkingCut,{error:{message:'unknown field thinking'}},reply(JSON.stringify({assignments:[],roles:[]}))];
+  transport=()=>({destroy(){},request:async(url,options)=>{const body=JSON.parse(options.extraData);sent.push(body);
+    const next=replies.shift();
+    return next&&next.error?{responseCode:400,header:{},result:JSON.stringify(next)}:{responseCode:200,header:{},result:JSON.stringify(next)};}});
+  await client.analyze('k',D(),[],'',undefined,picky);
+  assert.equal(sent.length,3);
+  assert.ok(!('thinking' in sent[2])&&sent[2].max_tokens===4096&&sent[2].enable_thinking===false,'only the learned field is dropped');
+  sent.length=0;replies=[thinkingCut,thinkingCut];
+  await assert.rejects(client.analyze('k',D(),[],'',undefined,picky),e=>e.thinking===true);
+  assert.equal(sent.length,2,'a rejected field is not tried again; the next way is');
+  assert.ok(!('thinking' in sent[1])&&sent[1].reasoning_effort==='none');
+  // OpenAI、Gemini：不发 enable_thinking，发 reasoning_effort；none 不认退到 minimal，再不认就撤掉。
+  const openai={url:'https://api.openai.com/v1/chat/completions',model:'gpt-5'};
+  sent.length=0;
+  replies=[{error:{message:'bad reasoning_effort none'}},{error:{message:'bad minimal'}},reply(JSON.stringify({assignments:[],roles:[]}))];
+  await client.analyze('k',D(),[],'',undefined,openai);
+  assert.deepEqual(sent.map(b=>b.reasoning_effort),['none','minimal',undefined]);
+  assert.ok(sent.every(b=>!('enable_thinking' in b)),'strict hosts never get enable_thinking');
+  assert.equal(sent[2].max_tokens,4096,'other fields stay');
+  sent.length=0;replies=[reply(JSON.stringify({assignments:[],roles:[]}))];
+  await client.analyze('k',D(),[],'',undefined,openai);
+  assert.equal(sent[0].reasoning_effort,undefined,'rejected values are remembered');
+  sent.length=0;replies=[reply(JSON.stringify({assignments:[],roles:[]}))];
+  await client.analyze('k',D(),[],'',undefined,{url:'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',model:'gemini-2.5-flash'});
+  assert.equal(sent[0].reasoning_effort,'none');assert.ok(!('enable_thinking' in sent[0]));
+  // OpenRouter：reasoning: {enabled: false}。
+  sent.length=0;replies=[reply(JSON.stringify({assignments:[],roles:[]}))];
+  await client.analyze('k',D(),[],'',undefined,{url:'https://openrouter.ai/api/v1/chat/completions',model:'qwen/qwen3'});
+  assert.deepEqual({...sent[0].reasoning},{enabled:false});assert.ok(!('enable_thinking' in sent[0]));
+  // 写在正文里的 <think> 段：去掉再解析；没写完的思考段算思考占满。
+  assert.equal(MimoPolicy.stripThinking('<think>想想</think>\n{"a":1}'),'\n{"a":1}');
+  assert.equal(MimoPolicy.stripThinking('<think>一直想'),'');
+  assert.equal(MimoPolicy.stripThinking('{"a":"<b>"}'),'{"a":"<b>"}');
+  sent.length=0;replies=[reply('<think>他是林晚吗……</think>'+JSON.stringify({assignments:[{unitId:1,roleId:'lin'}],roles:[]}))];
+  result=await client.analyze('k',D(),[],'',undefined,{url:'https://local.example.test/v1',model:'qwen3'});
+  assert.equal(result.assignments[1].roleId,'lin','a reply with an inline think block still parses');
+  sent.length=0;replies=[reply('<think>'+'想'.repeat(200),'length'),reply('<think>'+'想'.repeat(200),'length'),reply('<think>'+'想'.repeat(200),'length')];
+  await assert.rejects(client.analyze('k',D(),[],'',undefined,{url:'https://local2.example.test/v1',model:'qwen3'}),e=>e.thinking===true);
+  // DeepSeek 接口一开始就带 thinking 对象。
+  sent.length=0;replies=[reply(JSON.stringify({assignments:[],roles:[]}))];
+  await client.analyze('k',D(),[],'',undefined,{url:'https://api.deepseek.com/chat/completions',model:'deepseek-flash'});
+  assert.deepEqual({...sent[0].thinking},{type:'disabled'});
+  // 火山方舟、智谱这类接口另发 thinking 对象。
+  sent.length=0;
+  replies=[reply(JSON.stringify({assignments:[],roles:[]}))];
+  await client.analyze('k',D(),[],'',undefined,{url:'https://ark.cn-beijing.volces.com/api/v3/chat/completions',model:'doubao'});
+  assert.deepEqual({...sent[0].thinking},{type:'disabled'});
+  assert.equal(sent[0].enable_thinking,false);
+  assert.match(sent[0].messages[0].content,/只标注 label/);
 }
 // 原文写明的说话人直接认，不靠模型。
 {
@@ -212,7 +328,7 @@ assert.deepEqual(analysisNotices,[1000,2000], 'analysis retries notify independe
   let sentBody=null;
   transport=()=>({destroy(){},request:async(url,options)=>{sentBody=JSON.parse(options.extraData);
     return {responseCode:200,header:{},result:JSON.stringify({choices:[{message:{content:JSON.stringify({roles:[],assignments:[]})}}]})};}});
-  await client.analyze('k',[],[],'前文','',undefined,'林晚说。'+'后'.repeat(400));
+  await client.analyze('k',D(),[],'前文','',undefined,'林晚说。'+'后'.repeat(400));
   const payload=JSON.parse(sentBody.messages[1].content);
   assert.equal(payload.context,'前文');
   assert.ok(payload.after.startsWith('林晚说。')&&payload.after.length===300,'up to 300 characters of following text');
@@ -252,7 +368,7 @@ const castPolicy=vm.runInNewContext(stripTypeScriptTypes(fs.readFileSync(new URL
   .replace(/^import .*;\r?\n/gm,'').replace(/^export \{.*;\r?\n/gm,'').replaceAll('export ','')+'\n({CastVoicePolicy})'),
   {CastVoiceRef:policy.CastVoiceRef,MimoRole}).CastVoicePolicy;
 const castScheme=castPolicy.scheme('s','默认方案');const castUnsupported=new Set();const castSpoken=[];let castPcmWrites=[];
-let customAnalysis=null;const analysisTargets=[];let decodeFails=false;const localLevels=new Map();
+let truncateNext=0;let truncateThinking=false;let customAnalysis=null;const analysisTargets=[];let decodeFails=false;const localLevels=new Map();
 let localBusy=0;let localOverlap=false;
 const castStore={
   blocker:()=>castPolicy.key(castScheme.narrator)&&!castUnsupported.has(castPolicy.key(castScheme.narrator))?'':'音色方案还没有选旁白音色',
@@ -297,6 +413,7 @@ class Player {write(){return Promise.resolve()} writeSegment(b,s,focus){castPcmW
 class Client {
   stop(){clientStops++;}
   async analyze(key,units,roles,context,onRetry,target){
+    if(truncateNext>0){truncateNext--;const e=new Error('分析模型的回复超出长度上限被截断');e.name='AnalysisTruncatedError';e.thinking=truncateThinking;throw e;}
     events.push('analyze:'+units[0].id);analysisTargets.push([key,target?target.url:'']);
     await new Promise(r=>setTimeout(r,1));
     return {roles:proposals,assignments:units.map(u=>({unitId:u.id,roleId:assignRole?assignRole(u):'narrator',emotion:'平静',confidence:1}))};
@@ -317,7 +434,9 @@ const Session=vm.runInNewContext(stripTypeScriptTypes(readingSource+'\nMimoReadi
   MimoVoicePolicy:voicePolicy.MimoVoicePolicy,MIMO_AGES:voicePolicy.MIMO_AGES,MIMO_GENDERS:voicePolicy.MIMO_GENDERS,MIMO_VOICES:['白桦','苏打','茉莉','冰糖'],
   CastVoiceRef:policy.CastVoiceRef,CastVoicePolicy:castPolicy,CastVoiceStore:castStore,HttpTtsReader:FakeHttpReader,
   LocalTtsEngine:localEngine,PcmTimeStretch:stretch,TtsAudioDecodeTask:decodeTask,MimoAnalysisTarget:class{url='';model='';},
-  AppStorage:{get:k=>storage.get(k),setOrCreate:(k,v)=>storage.set(k,v)}});
+  AppStorage:{get:k=>storage.get(k),setOrCreate:(k,v)=>storage.set(k,v)},
+  HdsFeedback:{showToast:t=>toasts.push(t)}});
+const toasts=[];
 const session=new Session();const focus=[];
 const options={book:'book',chapter:'one',sourceOffset:0,speed:1,onAudio:()=>{},onFocus:u=>focus.push(u.text)};
 await session.read('甲说：“走吧。”乙说：“好。”',options);
@@ -644,4 +763,25 @@ assert.equal(focus.join(''),mimoB,'a mismatched preparation is discarded');
   assert.ok(!handoff.hasQueuedTail());
   proto.stop=saved.stop;proto.drain=saved.drain;delete proto.startGapFill;delete proto.debugState;
 }
-console.log('MiMo session checks passed: source focus, cached replay, failed segment retention, short-unit merging, synthesis and analysis prefetch, stale chapter cancellation, next chapter preparation, continuous chapter handoff.');
+// 拆小重试后仍被截断：这一批按旁白读下去、轻提示一次，结果不存，下次读到再请求。
+{
+  files.clear();settings.multi=true;focus.length=0;toasts.length=0;truncateNext=1;truncateThinking=false;
+  const text='丙说：“再见。”丁说：“好的。”';
+  await session.read(text,{...options,chapter:'trunc'});
+  assert.equal(focus.join(''),text,'reading goes on after a truncated analysis');
+  assert.equal(toasts.length,1,'a light notice instead of stopping');
+  const before=events.filter(e=>e.startsWith('analyze:')).length;
+  focus.length=0;await session.read(text,{...options,chapter:'trunc'});
+  assert.ok(events.filter(e=>e.startsWith('analyze:')).length>before,'the fallback is not stored, so the batch is asked again');
+  // 连续两批都思考到上限：这个模型暂停请求一段时间，后面的批直接按旁白读，并提示换模型。
+  files.clear();focus.length=0;toasts.length=0;truncateNext=2;truncateThinking=true;
+  const long=Array.from({length:8},(_,i)=>`第${i}句话说：“这是第${i}句对白。”`).join('');
+  await session.read(long,{...options,chapter:'think'});
+  assert.equal(focus.join(''),long,'reading goes on');
+  assert.ok(toasts.some(t=>/一直在“思考”/.test(t)),'the pause is announced');
+  const paused=events.filter(e=>e.startsWith('analyze:')).length;
+  focus.length=0;await session.read(long,{...options,chapter:'think2'});
+  assert.equal(events.filter(e=>e.startsWith('analyze:')).length,paused,'no requests while paused');
+  truncateThinking=false;settings.multi=false;
+}
+console.log('MiMo session checks passed: source focus, cached replay, failed segment retention, short-unit merging, synthesis and analysis prefetch, stale chapter cancellation, next chapter preparation, continuous chapter handoff, narrator fallback on truncation, pause after repeated thinking cuts.');

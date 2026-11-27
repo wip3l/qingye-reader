@@ -1,6 +1,6 @@
 import fs from '@ohos.file.fs';
 import { MimoAnalysis, MimoAssignment, MimoRole, MimoUnit, MimoPolicy, MIMO_VOICES } from '../../core/mimo/MimoPolicy';
-import { MimoAnalysisTarget, MimoClient } from './MimoClient';
+import { AnalysisTruncatedError, MimoAnalysisTarget, MimoClient } from './MimoClient';
 import { TtsAudioDecodeTask } from '../../core/concurrency/TtsAudioDecodeTask';
 import { MimoBookCast, MimoStore } from './MimoStore';
 import { MimoVoicePolicy, MimoVoicePreset, MIMO_AGES, MIMO_GENDERS } from '../../core/mimo/MimoVoicePolicy';
@@ -10,6 +10,7 @@ import { CastVoiceStore } from './CastVoiceStore';
 import { HttpTtsAudio, HttpTtsReader } from '../HttpTtsReader';
 import { LocalTtsEngine } from '../localtts/LocalTtsEngine';
 import { PcmTimeStretch } from '../PcmTimeStretch';
+import { HdsFeedback } from '../HdsFeedback';
 
 export interface MimoReadingOptions {
   book: string;
@@ -91,6 +92,27 @@ class MimoSegment {
 }
 
 export class MimoReadingSession {
+  private static lastFallbackNoticeAt: number = 0;
+  /** 按分析接口（地址|模型）记：连续几批思考到上限，以及暂停请求到什么时候。进程内有效，换模型就是另一个键。 */
+  private static thinkingStrikes: Map<string, number> = new Map<string, number>();
+  private static thinkingSkipUntil: Map<string, number> = new Map<string, number>();
+
+  /** 识别没完成、先按旁白读时轻提示一下，不打断朗读；十分钟内只提示一次，force 的提示（暂停请求）总会出。 */
+  private static noticeFallback(message: string = '这一段没认出说话人，先用旁白读', force: boolean = false): void {
+    const now = Date.now();
+    if (!force && now - MimoReadingSession.lastFallbackNoticeAt < 10 * 60 * 1000) return;
+    MimoReadingSession.lastFallbackNoticeAt = now;
+    HdsFeedback.showToast(message);
+  }
+
+  /** 整批按旁白读；把握记 0，存的人物档案不受影响。 */
+  private static narratorAnalysis(batch: MimoUnit[]): MimoAnalysis {
+    const analysis = new MimoAnalysis();
+    MimoPolicy.completeAssignments(analysis, batch);
+    analysis.assignments.forEach((item: MimoAssignment): void => { item.confidence = 0; });
+    return analysis;
+  }
+
   private client: MimoClient = new MimoClient();
   private player: TtsPcmAudioPlayer = new TtsPcmAudioPlayer();
   private generation: number = 0;
@@ -370,10 +392,43 @@ export class MimoReadingSession {
     }
     const analysisStartedAt = Date.now();
     const analysisCached = !!analysis;
+    let fallback = false;
+    const endpoint = target ? target.url + '|' + target.model : 'mimo';
+    if (!analysis && (MimoReadingSession.thinkingSkipUntil.get(endpoint) || 0) > Date.now()) {
+      // 这个模型刚连续几批都思考到上限：一段时间内不再请求，免得每批白等半分钟、白花用量。
+      analysis = MimoReadingSession.narratorAnalysis(batch);
+      fallback = true;
+    }
     if (!analysis) {
       const client = generation < 0 ? this.aheadClient : this.client;
-      try { analysis = await client.analyze(key, batch, cast.roles.slice(-100), context, undefined, target, after); }
-      catch (error) { throw new Error('MIMO_ANALYSIS:' + (error as Error).message); }
+      try {
+        analysis = await client.analyze(key, batch, cast.roles.slice(-100), context, undefined, target, after);
+        MimoReadingSession.thinkingStrikes.delete(endpoint);
+      }
+      catch (error) {
+        if ((error as Error).name !== 'AnalysisTruncatedError') throw new Error('MIMO_ANALYSIS:' + (error as Error).message);
+        // 拆小重试后回复仍被截断：这一批先全按旁白读，不中断朗读；结果不存，下次读到这里再请求。
+        console.warn(`[TTS] role analysis fallback to narrator: units=${batch[0].id}-${batch[batch.length - 1].id},` +
+          `reason=${(error as Error).message}`);
+        analysis = MimoReadingSession.narratorAnalysis(batch);
+        fallback = true;
+        if ((error as AnalysisTruncatedError).thinking === true) {
+          const strikes = (MimoReadingSession.thinkingStrikes.get(endpoint) || 0) + 1;
+          MimoReadingSession.thinkingStrikes.set(endpoint, strikes);
+          if (strikes >= 2) {
+            MimoReadingSession.thinkingSkipUntil.set(endpoint, Date.now() + 30 * 60 * 1000);
+            MimoReadingSession.thinkingStrikes.delete(endpoint);
+            console.warn(`[TTS] role analysis paused for 30 min: endpoint keeps thinking to the output limit`);
+            MimoReadingSession.noticeFallback('分析模型一直在“思考”，接下来先用旁白读。请在分析模型设置里换一个不带思考的模型', true);
+          } else {
+            MimoReadingSession.noticeFallback();
+          }
+        } else {
+          MimoReadingSession.noticeFallback();
+        }
+      }
+    }
+    if (!analysisCached && !fallback) {
       await this.readyFor(generation);
       // 请求期间别的批次可能已经写过这个文件：重新读一遍再并进去。
       try { stored = JSON.parse(fs.readTextSync(storePath)) as Record<string, MimoAssignment>; } catch (_) {}
