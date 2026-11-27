@@ -121,5 +121,6 @@ jobs:
       - run: node --experimental-strip-types scripts/search-simp-trad-check.mjs
       - run: node scripts/tts-custom-voice-import-check.mjs
       - run: node scripts/tts-voice-section-fold-check.mjs
+      - run: node scripts/plugin-tts-voices-check.mjs
       # 书源解析内核（子模块）自己的回归检查。
       - run: for f in harmony-book-source-engine/scripts/*-check.mjs; do node --experimental-strip-types "$f" || exit 1; done

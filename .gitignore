@@ -38,6 +38,9 @@ tmp/
 /entry/.test/
 # 原生模块的 CMake 中间目录
 /entry/.cxx/
+/pluginengine/.cxx/
+/pluginengine/oh_modules/
+/pluginengine/BuildProfile.ets
 /entry/src/ohosTest/resources/rawfile/reader-font-fixture.ttf
 /.hvigor
 /.appanalyzer

@@ -154,6 +154,7 @@ struct VerifyWebPage {
   private controller: webview.WebviewController = new webview.WebviewController();
   private browserAwaitToken: string = '';
   private browserAwaitCompleted: boolean = false;
+  private oauthCallbackPrefix: string = '';
   private browserPayloadToken: string = '';
   private browserPayloadHtml: string = '';
   private browserPayloadBaseUrl: string = '';
@@ -205,6 +206,11 @@ struct VerifyWebPage {
       return;
     }
     if (this.browserAwaitToken) {
+      this.oauthCallbackPrefix = (params?.['callbackUrlPrefix'] ||
+        AppStorage.get<string>('pendingVerificationCallbackPrefix') || '').trim();
+      if (this.oauthCallbackPrefix) {
+        AppStorage.setOrCreate('pendingVerificationCallbackPrefix', '');
+      }
       this.url = initialUrl;
       this.currentUrl = initialUrl;
       return;
@@ -467,6 +473,14 @@ struct VerifyWebPage {
     try {
       requestUrl = event?.data.getRequestUrl() || '';
     } catch (_) {}
+    if (this.browserAwaitToken && this.oauthCallbackPrefix && requestUrl.startsWith(this.oauthCallbackPrefix)) {
+      if (!this.browserAwaitCompleted) {
+        this.browserAwaitCompleted = true;
+        this.publishBrowserAwaitResult(requestUrl, '');
+        this.backSafely();
+      }
+      return true;
+    }
     if (this.shouldBlockFanqieAppLaunch(requestUrl)) {
       if (!this.fanqieAppLaunchNoticeShown) {
         this.fanqieAppLaunchNoticeShown = true;

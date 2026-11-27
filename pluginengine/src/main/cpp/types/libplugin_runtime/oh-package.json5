@@ -1,0 +1,6 @@
+{
+  "name": "libplugin_runtime.so",
+  "types": "./Index.d.ts",
+  "version": "1.0.0",
+  "description": "Multi-language plugin native session runtime (QuickJS + PocketPy)."
+}
