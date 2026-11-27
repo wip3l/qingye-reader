@@ -8,6 +8,8 @@ import { ReaderSettings } from '../utils/ReaderSettingsStore';
 export class ReaderPreferencesSyncPayload {
   syncVersion: number = 2;
   typographyFollowsTheme?: boolean;
+  /** 替换净化生效的书籍类型（ReaderReplaceBookKind.encode），存在替换规则的偏好里，借阅读设置这一项同步。 */
+  replaceRuleBookKinds?: string;
   regexFontEnabled: boolean = false;
   regexFontPattern: string = '';
   regexFontMode: string = '';

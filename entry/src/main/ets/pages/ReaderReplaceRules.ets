@@ -3,7 +3,12 @@ import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { Book, HttpClient, JavaRegexCompat, ReplaceRuleImport } from '@legado/sourceengine';
-import { ReaderReplaceRule, ReaderReplaceRuleCheck, ReaderReplaceRuleStore } from '../utils/ReaderReplaceRuleStore';
+import {
+  ReaderReplaceBookKind,
+  ReaderReplaceRule,
+  ReaderReplaceRuleCheck,
+  ReaderReplaceRuleStore
+} from '../utils/ReaderReplaceRuleStore';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ResponsiveManagerListLayout } from '../utils/ResponsiveManagerListLayout';
 import { FormDraftStore } from '../utils/FormDraftStore';
@@ -99,6 +104,10 @@ struct ReaderReplaceRulesPage {
   private moveToDialogSession: SystemDialogSession = new SystemDialogSession();
   @State @Watch('onSystemDialogFlagChanged') showMoveToDialog: boolean = false;
   @State moveToPosition: string = '';
+  /** 替换净化按书籍类型生效的范围，见 ReaderReplaceBookKind。 */
+  @State bookKinds: string[] = ReaderReplaceBookKind.DEFAULTS.slice();
+  @State showBookKindSheet: boolean = false;
+  private bookKindSaveChain: Promise<void> = Promise.resolve();
 
   aboutToAppear(): void {
     this.loadPreviewContext();
@@ -117,6 +126,10 @@ struct ReaderReplaceRulesPage {
   }
 
   onBackPress(): boolean {
+    if (this.showBookKindSheet) {
+      this.showBookKindSheet = false;
+      return true;
+    }
     if (this.showRuleMoreDialog) {
       this.showRuleMoreDialog = false;
       return true;
@@ -141,6 +154,142 @@ struct ReaderReplaceRulesPage {
 
   async loadRules(): Promise<void> {
     this.rules = await ReaderReplaceRuleStore.load(getContext(this), true);
+    this.bookKinds = ReaderReplaceRuleStore.getBookKinds();
+  }
+
+  // ---------- 生效范围（按书籍类型） ----------
+
+  bookKindSummary(): string {
+    if (this.bookKinds.length === 0) return '都不生效';
+    if (this.bookKinds.length === ReaderReplaceBookKind.ALL.length) return '全部书籍';
+    return this.bookKinds.map((kind: string) => ReaderReplaceBookKind.label(kind)).join('、');
+  }
+
+  bookKindDescription(kind: string): string {
+    if (kind === ReaderReplaceBookKind.ONLINE) return '书源搜到、加入书架的书';
+    if (kind === ReaderReplaceBookKind.TXT) return '本地导入与 WebDAV 的 TXT';
+    if (kind === ReaderReplaceBookKind.EPUB) return '排版多已整理，默认不净化';
+    return 'MOBI、AZW3、FB2、PDF、CBZ';
+  }
+
+  /** 从阅读页进来时，当前这本书的类型不在范围内：范围行里给一句提示。 */
+  previewBookOutOfKinds(): boolean {
+    return this.previewMode && !!this.previewBook &&
+      !this.bookKinds.includes(ReaderReplaceBookKind.of(this.previewBook));
+  }
+
+  toggleBookKind(kind: string): void {
+    const next = this.bookKinds.includes(kind) ?
+      this.bookKinds.filter((item: string) => item !== kind) : this.bookKinds.concat([kind]);
+    this.bookKinds = ReaderReplaceBookKind.decode(ReaderReplaceBookKind.encode(next));
+    const snapshot = this.bookKinds.slice();
+    // 连点时按先后排队写，后一次总是最新的选择。
+    this.bookKindSaveChain = this.bookKindSaveChain
+      .then(() => ReaderReplaceRuleStore.saveBookKinds(getContext(this), snapshot))
+      .then(() => {
+        // 卡片上的“当前书籍已生效/不适用”按存储里的范围判断，换一个数组让它们重算。
+        this.rules = this.rules.slice();
+      })
+      .catch((e: Error) => {
+        console.error('保存替换净化生效范围失败:', e);
+        HdsFeedback.showToast('保存失败');
+      });
+  }
+
+  @Builder
+  bookKindScopeRow() {
+    Row({ space: AppSpacing.MD }) {
+      Column({ space: 2 }) {
+        Text('生效范围')
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryTextColor())
+        if (this.previewBookOutOfKinds()) {
+          Text(`这本书是 ${ReaderReplaceBookKind.label(ReaderReplaceBookKind.of(this.previewBook))}，规则对它不执行`)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor('#D17A00')
+        }
+      }
+      .alignItems(HorizontalAlign.Start)
+      Text(this.bookKindSummary())
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.secondaryTextColor())
+        .textAlign(TextAlign.End)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(16)
+        .fontColor([this.subTextColor()])
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.MD, bottom: AppSpacing.MD })
+    .constraintSize({ minHeight: 48 })
+    .backgroundColor(this.cardColor())
+    .borderRadius(ThemeRuntime.cardRadius())
+    .border({ width: ThemeRuntime.glassBorderWidth(), color: ThemeRuntime.glassBorderColor(this.appDarkMode) })
+    .margin({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: AppSpacing.MD })
+    .accessibilityText(`生效范围，${this.bookKindSummary()}`)
+    .accessibilityRole(AccessibilityRoleType.BUTTON)
+    .onClick(() => this.showBookKindSheet = true)
+  }
+
+  @Builder
+  bookKindSheetContent() {
+    Column({ space: AppSpacing.SM }) {
+      Text('只对勾选类型的书执行替换净化')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .width('100%')
+      Column() {
+        ForEach(ReaderReplaceBookKind.ALL, (kind: string) => {
+          Row({ space: AppSpacing.LG }) {
+            Column({ space: 2 }) {
+              Text(ReaderReplaceBookKind.label(kind))
+                .fontSize(AppFontSize.BODY_LARGE)
+                .fontColor(this.primaryTextColor())
+              Text(this.bookKindDescription(kind))
+                .fontSize(AppFontSize.CAPTION)
+                .fontColor(this.subTextColor())
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+            Checkbox({ name: `replace_kind_${kind}` })
+              .select(this.bookKinds.includes(kind))
+              .selectedColor(this.accentColor())
+              .width(22)
+              .height(22)
+              .hitTestBehavior(HitTestMode.None)
+          }
+          .width('100%')
+          .constraintSize({ minHeight: 56 })
+          .padding({ top: AppSpacing.SM, bottom: AppSpacing.SM })
+          .onClick(() => this.toggleBookKind(kind))
+          .accessibilityText(`${ReaderReplaceBookKind.label(kind)}，${this.bookKinds.includes(kind) ? '已选' : '未选'}，` +
+            this.bookKindDescription(kind))
+        }, (kind: string): string => kind)
+      }
+      .width('100%')
+      Text('内置的“移除标题”“移除重复标题”不受此限制')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .width('100%')
+        .margin({ top: AppSpacing.XS })
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: this.navBarHeight + AppSpacing.XL })
+  }
+
+  bookKindSheetOptions(): SheetOptions {
+    return ImmersiveMaterialRuntime.applySheetMaterial(this.immersiveLightLevel, {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: true,
+      showClose: true,
+      title: { title: '生效范围' },
+      onDisappear: () => {
+        this.showBookKindSheet = false;
+      }
+    }, this.appDarkMode, this.accentColor());
   }
 
   async importRulesFromFile(): Promise<void> {
@@ -375,6 +524,7 @@ struct ReaderReplaceRulesPage {
     .height('100%')
     .onAreaChange((_oldValue: Area, newValue: Area) => this.updateContextViewport(newValue))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .bindSheet($$this.showBookKindSheet, this.bookKindSheetContent(), this.bookKindSheetOptions())
   }
 
   @Builder
@@ -568,6 +718,8 @@ struct ReaderReplaceRulesPage {
 
       if (this.selectionMode) {
         this.ruleSelectionHeader()
+      } else {
+        this.bookKindScopeRow()
       }
 
       if (this.filteredRules().length === 0) {

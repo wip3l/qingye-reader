@@ -504,6 +504,8 @@ struct ReadBookPage {
   private quickJumpPausedSpeechChapter: number = -1;
   @State content: string = '';
   @State readerReplaceRules: ReaderReplaceRule[] = [];
+  /** 载入规则时的替换净化生效范围（书籍类型），用来发现只改了范围的情况。 */
+  private readerReplaceKindsKey: string = '';
   @State isLoading: boolean = true;
   @State @Watch('onReaderShowMenuChange') showMenu: boolean = false;
   @State readerDayNightLongPressHandled: boolean = false;
@@ -1673,6 +1675,7 @@ struct ReadBookPage {
         })
       ]);
       this.readerReplaceRules = initialReplaceRules;
+      this.readerReplaceKindsKey = ReaderReplaceRuleStore.getBookKinds().join(',');
       ReaderOpenTrace.mark(this.bookUrl, 'reader-settings-ready', `replaceRules=${initialReplaceRules.length}`);
       // 开书只读朗读设置。音色列表要枚举系统音色、拉云端目录，还会加载整个朗读引擎，留到打开朗读面板、
       // 设置面板或开始朗读时再取。
@@ -6416,7 +6419,7 @@ struct ReadBookPage {
         book: (): Book | null => this.book,
         chapterCount: (): number => this.chapters.length,
         chapterTitle: (index: number): string => this.getChapterTitle(index),
-        replaceRules: (): ReaderReplaceRule[] => this.readerReplaceRules,
+        replaceRules: (): ReaderReplaceRule[] => ReaderReplaceRuleStore.rulesForBook(this.readerReplaceRules, this.book),
         transformText: async (text: string): Promise<string> => this.isReaderTextConvertActive() ?
           await ReaderTextConvertRuntime.convert(getContext(this), text) : text,
         onProgress: (progress: ReaderContentSearchProgress): void => this.onReaderContentSearchProgress(progress)
@@ -8373,7 +8376,8 @@ struct ReadBookPage {
   // Whether the raw chapter body differs from what pagination consumes. Synchronous callers must not
   // paginate the raw body in that case: its cache key would never match the prepared chapter.
   readerContentNeedsPreparation(content: string): boolean {
-    return ReaderContentPreprocessor.hasActiveContentRules(this.readerReplaceRules) ||
+    return ReaderContentPreprocessor.hasActiveContentRules(
+      ReaderReplaceRuleStore.rulesForBook(this.readerReplaceRules, this.book)) ||
       this.isReaderTextConvertActive() ||
       (!this.isReaderComicModeActive() && ReaderImageSizeResolver.needsSizes(content));
   }
@@ -8385,7 +8389,8 @@ struct ReadBookPage {
     if (cached !== undefined) return cached;
     const startedAt = Date.now();
     let replaced = ReaderActionMarker.limit(
-      await ReaderContentPreprocessor.apply(content, this.readerReplaceRules, this.book));
+      await ReaderContentPreprocessor.apply(content,
+        ReaderReplaceRuleStore.rulesForBook(this.readerReplaceRules, this.book), this.book));
     // 繁→简在替换净化之后：规则是按原文写的。转换前后等长，按原文记下的进度偏移照常可用。
     if (this.isReaderTextConvertActive()) {
       try {
@@ -8420,8 +8425,12 @@ struct ReadBookPage {
 
   async reloadReaderReplaceRules(repaginate: boolean): Promise<void> {
     const nextRules = await ReaderReplaceRuleStore.load(getContext(this), true);
-    const rulesChanged = JSON.stringify(nextRules) !== JSON.stringify(this.readerReplaceRules);
+    // 生效范围（按书籍类型）改了也要重排：规则没变，但这本书可能从执行变成不执行。
+    const kindsKey = ReaderReplaceRuleStore.getBookKinds().join(',');
+    const rulesChanged = JSON.stringify(nextRules) !== JSON.stringify(this.readerReplaceRules) ||
+      kindsKey !== this.readerReplaceKindsKey;
     this.readerReplaceRules = nextRules;
+    this.readerReplaceKindsKey = kindsKey;
     if (!rulesChanged) {
       return;
     }

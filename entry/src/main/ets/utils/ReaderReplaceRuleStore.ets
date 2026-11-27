@@ -47,10 +47,55 @@ class ReaderTitleReplaceStep {
   broken: boolean = false;
 }
 
+/**
+ * 替换净化按书籍类型生效的范围。只管用户自己的规则；内置“移除标题”“移除重复标题”是开关，不受它限制。
+ * “其他”是 MOBI、AZW3、FB2、PDF、CBZ 等（PDF、CBZ 本来就不走文字净化）。
+ */
+export class ReaderReplaceBookKind {
+  static readonly ONLINE: string = 'online';
+  static readonly TXT: string = 'txt';
+  static readonly EPUB: string = 'epub';
+  static readonly OTHER: string = 'other';
+  static readonly ALL: string[] = ['online', 'txt', 'epub', 'other'];
+  /** 没设置过时的默认：在线书和 TXT；EPUB 多已排好版，默认不净化。 */
+  static readonly DEFAULTS: string[] = ['online', 'txt'];
+
+  static label(kind: string): string {
+    if (kind === ReaderReplaceBookKind.ONLINE) return '在线书';
+    if (kind === ReaderReplaceBookKind.TXT) return 'TXT';
+    if (kind === ReaderReplaceBookKind.EPUB) return 'EPUB';
+    return '其他';
+  }
+
+  /** 按 LocalBookService.formatOf 的口径分类；这里不引 LocalBookService，免得书架等处为取章节名带进整套导入代码。 */
+  static of(book: Book | null): string {
+    if (!book || book.origin !== 'local') return ReaderReplaceBookKind.ONLINE;
+    const format = (book.getVariable('localFormat') ||
+      (book.type === 4 ? 'pdf' : book.type === 2 ? 'epub' : 'txt')).toLowerCase();
+    if (format === 'txt') return ReaderReplaceBookKind.TXT;
+    if (format === 'epub') return ReaderReplaceBookKind.EPUB;
+    return ReaderReplaceBookKind.OTHER;
+  }
+
+  /** 存储与同步用的文本：按固定顺序、逗号分隔；空串表示一类都不选。 */
+  static encode(kinds: string[]): string {
+    return ReaderReplaceBookKind.ALL.filter((kind: string) => kinds.includes(kind)).join(',');
+  }
+
+  static decode(raw: string): string[] {
+    const values = (raw || '').split(',').map((item: string) => item.trim());
+    return ReaderReplaceBookKind.ALL.filter((kind: string) => values.includes(kind));
+  }
+}
+
 export class ReaderReplaceRuleStore {
   static readonly UPDATE_TIME_KEY: string = 'readerReplaceRulesUpdateTime';
   private static readonly STORE_NAME: string = 'reader_replace_rules';
   private static readonly RULES_KEY: string = 'rulesV1';
+  private static readonly BOOK_KINDS_KEY: string = 'bookKindsV1';
+  /** 生效的书籍类型；load 时一并读出。没设置过按 ReaderReplaceBookKind.DEFAULTS。 */
+  private static bookKinds: string[] = ReaderReplaceBookKind.DEFAULTS.slice();
+  private static bookKindsLoaded: boolean = false;
   private static cachedRules: ReaderReplaceRule[] | null = null;
   /** cachedRules 对应的落盘原文；强制重读时原文没变就沿用同一个数组，按数组引用记的标题缓存不作废。 */
   private static cachedRaw: string | null = null;
@@ -74,10 +119,11 @@ export class ReaderReplaceRuleStore {
   private static readonly BUILTIN_REMOVE_DUPLICATE_TITLE_ID: number = 8888000000002;
 
   static async load(context: Context, force: boolean = false): Promise<ReaderReplaceRule[]> {
-    if (!force && ReaderReplaceRuleStore.cachedRules) {
+    if (!force && ReaderReplaceRuleStore.cachedRules && ReaderReplaceRuleStore.bookKindsLoaded) {
       return ReaderReplaceRuleStore.cloneRules(ReaderReplaceRuleStore.cachedRules);
     }
     const store = await preferences.getPreferences(context, ReaderReplaceRuleStore.STORE_NAME);
+    await ReaderReplaceRuleStore.readBookKinds(store);
     const value = await store.get(ReaderReplaceRuleStore.RULES_KEY, '');
     const raw = typeof value === 'string' ? value : '';
     if (ReaderReplaceRuleStore.cachedRules && raw === ReaderReplaceRuleStore.cachedRaw) {
@@ -100,6 +146,57 @@ export class ReaderReplaceRuleStore {
     await store.flush();
     AppStorage.setOrCreate(ReaderReplaceRuleStore.UPDATE_TIME_KEY, Date.now());
     CloudSyncChangeTracker.markPreferenceChanged();
+  }
+
+  private static async readBookKinds(store: preferences.Preferences): Promise<void> {
+    const value = await store.get(ReaderReplaceRuleStore.BOOK_KINDS_KEY, '\u0000');
+    ReaderReplaceRuleStore.bookKinds = typeof value === 'string' && value !== '\u0000' ?
+      ReaderReplaceBookKind.decode(value) : ReaderReplaceBookKind.DEFAULTS.slice();
+    ReaderReplaceRuleStore.bookKindsLoaded = true;
+  }
+
+  /** 当前生效的书籍类型（副本）。调用前应先 load 过一次。 */
+  static getBookKinds(): string[] {
+    return ReaderReplaceRuleStore.bookKinds.slice();
+  }
+
+  static async loadBookKinds(context: Context): Promise<string[]> {
+    const store = await preferences.getPreferences(context, ReaderReplaceRuleStore.STORE_NAME);
+    await ReaderReplaceRuleStore.readBookKinds(store);
+    return ReaderReplaceRuleStore.getBookKinds();
+  }
+
+  /**
+   * 改生效范围。规则本身没变，但阅读页、书架章节名都要按新范围重算，所以同样刷新 UPDATE_TIME_KEY。
+   * 同步下来的值写入时 markChanged 传 false，不再触发一轮上传。
+   */
+  static async saveBookKinds(context: Context, kinds: string[], markChanged: boolean = true): Promise<void> {
+    const raw = ReaderReplaceBookKind.encode(kinds);
+    const store = await preferences.getPreferences(context, ReaderReplaceRuleStore.STORE_NAME);
+    const previous = await store.get(ReaderReplaceRuleStore.BOOK_KINDS_KEY, '\u0000');
+    if (previous === raw) {
+      return;
+    }
+    await store.put(ReaderReplaceRuleStore.BOOK_KINDS_KEY, raw);
+    await store.flush();
+    ReaderReplaceRuleStore.bookKinds = ReaderReplaceBookKind.decode(raw);
+    ReaderReplaceRuleStore.bookKindsLoaded = true;
+    AppStorage.setOrCreate(ReaderReplaceRuleStore.UPDATE_TIME_KEY, Date.now());
+    if (markChanged) CloudSyncChangeTracker.markPreferenceChanged();
+  }
+
+  /** 这本书的类型在不在生效范围里；不在时只剩内置规则生效。 */
+  static bookKindAllowed(book: Book | null): boolean {
+    return ReaderReplaceRuleStore.bookKinds.includes(ReaderReplaceBookKind.of(book));
+  }
+
+  /**
+   * 阅读页用：本书实际要执行的规则。类型不在范围内时只留内置规则，正文就不进预处理；
+   * 换了范围后返回的列表跟着变，阅读页据此判断要不要重排。
+   */
+  static rulesForBook(rules: ReaderReplaceRule[], book: Book | null): ReaderReplaceRule[] {
+    return ReaderReplaceRuleStore.bookKindAllowed(book) ? rules :
+      rules.filter((rule: ReaderReplaceRule) => ReaderReplaceRuleStore.isBuiltin(rule));
   }
 
   static newRule(): ReaderReplaceRule {
@@ -147,7 +244,7 @@ export class ReaderReplaceRuleStore {
     if (!text || rules.length === 0) {
       return text;
     }
-    const scope = ReaderReplaceRuleStore.bookScopeText(book);
+    const scope = ReaderReplaceRuleStore.planKey(book);
     if (rules !== ReaderReplaceRuleStore.titlePlanRules || scope !== ReaderReplaceRuleStore.titlePlanScope) {
       ReaderReplaceRuleStore.titlePlan = ReaderReplaceRuleStore.buildTitlePlan(rules, book);
       ReaderReplaceRuleStore.titlePlanRules = rules;
@@ -188,7 +285,7 @@ export class ReaderReplaceRuleStore {
       ReaderReplaceRuleStore.displayPlans.clear();
       ReaderReplaceRuleStore.displayResults.clear();
     }
-    const scope = ReaderReplaceRuleStore.bookScopeText(book);
+    const scope = ReaderReplaceRuleStore.planKey(book);
     let plan = ReaderReplaceRuleStore.displayPlans.get(scope);
     if (plan === undefined) {
       plan = ReaderReplaceRuleStore.buildTitlePlan(rules, book);
@@ -215,8 +312,18 @@ export class ReaderReplaceRuleStore {
     return result;
   }
 
+  /** 标题规则缓存按书区分的键：范围词原文，加上书籍类型当前在不在生效范围（改范围后自然换键）。 */
+  private static planKey(book: Book | null): string {
+    return `${ReaderReplaceRuleStore.bookScopeText(book)}\n` +
+      `${ReaderReplaceRuleStore.bookKindAllowed(book) ? 'on' : 'off'}`;
+  }
+
   /** 这本书适用的标题规则：从整理好的规则里按书籍范围挑，顺序不变。 */
   private static buildTitlePlan(rules: ReaderReplaceRule[], book: Book | null): ReaderTitleReplaceStep[] {
+    // 标题规则都是用户规则（内置规则没有匹配内容），类型不在范围内就一条不用。
+    if (!ReaderReplaceRuleStore.bookKindAllowed(book)) {
+      return [];
+    }
     const steps = ReaderReplaceRuleStore.titleStepsFor(rules);
     if (steps.length === 0) {
       return steps;
@@ -297,6 +404,12 @@ export class ReaderReplaceRuleStore {
       result.valid = false;
       return result;
     }
+    if (!ReaderReplaceRuleStore.bookKindAllowed(book)) {
+      result.scopeMatched = false;
+      result.state = 'outOfScope';
+      result.label = `不适用于当前书籍（${ReaderReplaceBookKind.label(ReaderReplaceBookKind.of(book))}不在生效范围）`;
+      return result;
+    }
     result.scopeMatched = ReaderReplaceRuleStore.matchesBookScope(rule, book);
     if (!result.scopeMatched) {
       result.state = 'outOfScope';
@@ -350,7 +463,7 @@ export class ReaderReplaceRuleStore {
     book: Book | null,
     title: boolean
   ): string {
-    if (!text || rules.length === 0) {
+    if (!text || rules.length === 0 || !ReaderReplaceRuleStore.bookKindAllowed(book)) {
       return text;
     }
     let result = text;
