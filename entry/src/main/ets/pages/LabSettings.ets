@@ -11,12 +11,9 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { NetworkSettingsStore } from '../utils/NetworkSettingsStore';
 import { WindowGrayscaleStore } from '../utils/WindowGrayscaleStore';
-import { PluginFeatureStore } from '../utils/PluginFeatureStore';
-import { ThemedDialog } from '../utils/ThemedDialog';
 
 /**
- * 我的 › 实验室：显示（墨水屏灰阶）、插件（总开关、插件管理、使用须知）、
- * 兼容与诊断（只对网页解析的内容有意义，开关关闭时不显示）和浏览器看书。
+ * 我的 › 实验室：显示（墨水屏灰阶）、兼容与诊断（只对网页解析的内容有意义，开关关闭时不显示）和浏览器看书。
  * 网页解析的开关在“我的 › 在线阅读”。
  */
 @Entry
@@ -29,11 +26,6 @@ struct LabSettingsPage {
   @State savingNetwork: boolean = false;
   @State savingImageConcurrency: boolean = false;
   @StorageProp('labWindowGrayscale') windowGrayscale: boolean = false;
-  @StorageProp('pluginFeatureEnabled') @Watch('onPluginFeatureChanged') pluginFeatureEnabled: boolean = false;
-  @StorageProp('pluginEnabledCount') pluginEnabledCount: number = 0;
-  /** 插件开关的显示状态。用户拨动后先跟着变，没同意须知或取消关闭时再拨回去。 */
-  @State pluginSwitchOn: boolean = false;
-  @State pluginSwitching: boolean = false;
   @State savingGrayscale: boolean = false;
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
@@ -48,57 +40,11 @@ struct LabSettingsPage {
 
   aboutToAppear(): void {
     this.lanReaderPasswordDraft = this.lanReaderPasswordUnreadable ? '' : this.lanReaderPassword;
-    this.pluginSwitchOn = this.pluginFeatureEnabled;
     this.syncBars();
   }
 
   onPageShow(): void {
-    // 从须知页没同意就返回时，把拨开的开关拨回去。
-    this.pluginSwitchOn = this.pluginFeatureEnabled;
     this.syncBars();
-  }
-
-  onPluginFeatureChanged(): void {
-    this.pluginSwitchOn = this.pluginFeatureEnabled;
-  }
-
-  openPluginNotice(accept: boolean): void {
-    router.pushUrl({ url: 'pages/PluginNotice', params: { mode: accept ? 'accept' : 'view' } });
-  }
-
-  /** 打开要先在须知页同意；关闭先确认，插件和数据都保留。 */
-  onPluginSwitch(value: boolean): void {
-    if (this.pluginSwitching || value === this.pluginSwitchOn) return;
-    this.pluginSwitchOn = value;
-    if (value === this.pluginFeatureEnabled) return;
-    if (value) {
-      this.openPluginNotice(true);
-      return;
-    }
-    this.confirmDisablePlugins();
-  }
-
-  async confirmDisablePlugins(): Promise<void> {
-    this.pluginSwitching = true;
-    try {
-      const answer = await ThemedDialog.showDialog(this.getUIContext(), {
-        title: '关闭插件功能？',
-        message: '关闭后所有插件暂停运行，插件提供的音色暂时不能用。已装的插件和它们的数据都保留，重新开启后恢复。',
-        buttons: [
-          { text: '取消', color: this.subTextColor() },
-          { text: '关闭', color: ThemeRuntime.dangerColor(this.appDarkMode) }
-        ]
-      }, this.appDarkMode);
-      if (answer.index !== 1) {
-        this.pluginSwitchOn = this.pluginFeatureEnabled;
-        return;
-      }
-      await PluginFeatureStore.disable(this.getUIContext().getHostContext()!);
-    } catch (_) {
-      this.pluginSwitchOn = this.pluginFeatureEnabled;
-    } finally {
-      this.pluginSwitching = false;
-    }
   }
 
   build() {
@@ -128,40 +74,6 @@ struct LabSettingsPage {
         isOn: this.windowGrayscale,
         showDivider: false,
         onChange: (value: boolean) => { this.saveGrayscale(value); }
-      })
-    }
-    .width('calc(100% - 24vp)')
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .borderRadius(ThemeRuntime.cardRadius())
-    .clip(true)
-    .backgroundColor(this.cardColor())
-
-    this.sectionTitle('插件')
-    Column() {
-      SettingSwitchRow({
-        title: '插件',
-        description: this.pluginFeatureEnabled ?
-          '开启后可以安装第三方插件，为应用扩展更多功能。关闭后所有插件暂停，已装的插件和数据都保留' :
-          '开启后可以安装第三方插件，为应用扩展更多功能。开启前请先看一下使用须知',
-        isOn: this.pluginSwitchOn,
-        switchEnabled: !this.pluginSwitching,
-        onChange: (value: boolean) => { this.onPluginSwitch(value); }
-      })
-      if (this.pluginFeatureEnabled) {
-        SettingNavRow({
-          title: '插件管理',
-          description: '安装、启用、设置和卸载插件',
-          value: this.pluginEnabledCount > 0 ? `${this.pluginEnabledCount} 个启用` : '',
-          onTap: () => {
-            router.pushUrl({ url: 'pages/PluginManager' });
-          }
-        })
-      }
-      SettingNavRow({
-        title: '使用须知',
-        description: '查看插件使用须知',
-        showDivider: false,
-        onTap: () => { this.openPluginNotice(false); }
       })
     }
     .width('calc(100% - 24vp)')

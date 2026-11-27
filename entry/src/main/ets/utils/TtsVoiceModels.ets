@@ -25,37 +25,13 @@ export class TtsCustomVoiceImportResult {
 }
 
 export class TtsCustomVoices {
-  /** 插件音色的地址前缀。插件音色只在运行时并进列表，不写进保存的自定义音色。 */
-  static readonly PLUGIN_URL_PREFIX: string = 'plugin-tts://';
-  /** 启用中的插件提供的音色；由插件桥在启动时设置，插件功能关闭时返回空列表。 */
-  static extraVoicesProvider: (() => HttpTTS[]) | null = null;
-
-  /** 读出保存的自定义音色，并在末尾接上启用中的插件音色。 */
   static parse(raw: string): HttpTTS[] {
-    return TtsCustomVoices.parseWith(raw, 0, true);
-  }
-
-  static isPluginVoice(voice: HttpTTS | null | undefined): boolean {
-    return !!voice && (voice.url || '').startsWith(TtsCustomVoices.PLUGIN_URL_PREFIX);
-  }
-
-  /** 去掉插件音色，只留用户自己的自定义音色；保存和导出前调用。 */
-  static withoutPluginVoices(voices: HttpTTS[]): HttpTTS[] {
-    return voices.filter((voice: HttpTTS): boolean => !TtsCustomVoices.isPluginVoice(voice));
-  }
-
-  private static pluginVoices(): HttpTTS[] {
-    if (!TtsCustomVoices.extraVoicesProvider) return [];
-    try {
-      return TtsCustomVoices.extraVoicesProvider();
-    } catch (_) {
-      return [];
-    }
+    return TtsCustomVoices.parseWith(raw, 0);
   }
 
   /** 导入用解析：没写 id（或 id 不是数字）的条目 id 记为 NaN，由 mergeImported 分配新 id。 */
   static parseImport(raw: string): HttpTTS[] {
-    return TtsCustomVoices.parseWith(raw, NaN, false);
+    return TtsCustomVoices.parseWith(raw, NaN);
   }
 
   /**
@@ -120,11 +96,10 @@ export class TtsCustomVoices {
     return `已导入 ${result.added} 个、更新 ${result.updated} 个自定义音色`;
   }
 
-  private static parseWith(raw: string, missingId: number, includePlugins: boolean): HttpTTS[] {
-    const extra: HttpTTS[] = includePlugins ? TtsCustomVoices.pluginVoices() : [];
+  private static parseWith(raw: string, missingId: number): HttpTTS[] {
     const value = (raw || '').trim();
     if (!value) {
-      return extra;
+      return [];
     }
     try {
       const parsed = JSON.parse(value) as Object;
@@ -132,14 +107,13 @@ export class TtsCustomVoices {
       const result: HttpTTS[] = [];
       for (const item of items) {
         const voice = TtsCustomVoices.parseVoice(item as Record<string, Object>, missingId);
-        // 保存的数据里不该有插件音色；万一有（旧数据或手写导入），以插件当前提供的为准。
-        if (voice.name && voice.url && !TtsCustomVoices.isPluginVoice(voice)) {
+        if (voice.name && voice.url) {
           result.push(voice);
         }
       }
-      return result.concat(extra);
+      return result;
     } catch (_) {
-      return extra;
+      return [];
     }
   }
 

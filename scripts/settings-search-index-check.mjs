@@ -19,7 +19,7 @@ const failures = [];
 const IGNORED = new Map([
   ['Settings', ['恢复主题预设', '从其他主题复制排版', '眼动校准', '每页最多', '卡片行数']],
   ['TtsSettings', ['兑换在线朗读字数']],
-  ['LabSettings', ['后台脚本线程验证', '使用须知']],
+  ['LabSettings', ['后台脚本线程验证']],
   ['WebParseSettings', ['请确认使用须知', '使用须知']],
   ['OtherSettings', ['删除离线音频？', '删除离线内容？', '其他设置']],
   ['DataSync', ['书源']],

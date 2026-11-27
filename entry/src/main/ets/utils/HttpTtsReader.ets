@@ -8,7 +8,6 @@ import { TtsAvAudioPlayer } from './TtsAvAudioPlayer';
 import { PcmPlaybackCue, TtsPcmAudioPlayer } from './TtsPcmAudioPlayer';
 import { HdsFeedback } from './HdsFeedback';
 import { PcmTimeStretch } from './PcmTimeStretch';
-import { TtsCustomVoices } from './TtsVoiceModels';
 
 class TtsRequestRule {
   url: string = '';
@@ -97,9 +96,6 @@ export class HttpTtsReader {
   async synthesize(voice: HttpTTS, text: string, speed: number = 1): Promise<HttpTtsAudio> {
     const generation = this.generation;
     const normalizedSpeed = this.normalizeSpeed(speed);
-    if (TtsCustomVoices.isPluginVoice(voice)) {
-      return await this.synthesizePluginVoice(voice, text, normalizedSpeed, generation);
-    }
     const engineSpeed = this.speedMode(voice) === 'engine';
     try {
       // 播放器变速时接口只要原速音频：倍速变量一律按 1 倍代入，换倍速也能命中同一份缓存。
@@ -271,34 +267,6 @@ export class HttpTtsReader {
   debugState(): string {
     return `httpGeneration=${this.generation},requests=${this.currentClients.length},` +
       `${this.pcmPlayer.debugState()},${this.avPlayer.debugState()}`;
-  }
-
-  /**
-   * 插件音色交给插件合成，原速音频由播放器变速。插件引擎带原生库，只在真正用到插件音色时才加载，
-   * 普通朗读不受影响。并发按音色的 concurrentRate 限流，和网络音色一样。
-   */
-  private async synthesizePluginVoice(voice: HttpTTS, text: string, speed: number,
-    generation: number): Promise<HttpTtsAudio> {
-    try {
-      const bridge = await import('../core/plugin/PluginTtsBridge');
-      this.assertGeneration(generation);
-      const audio = await this.withRateLimit(voice, generation,
-        (): Promise<HttpTtsAudio> => bridge.PluginTtsBridge.synthesize(voice, text, speed));
-      this.assertGeneration(generation);
-      if (audio.filePath) {
-        this.retainCacheFile(audio.filePath);
-        return audio;
-      }
-      if (TtsPcmAudioPlayer.speedSupported()) return audio;
-      audio.playerSpeed = false;
-      return this.applyLocalSpeed(audio, speed);
-    } catch (error) {
-      if (this.isCancelledError(error as Error) || generation !== this.generation) {
-        throw new HttpTtsCancelledError();
-      }
-      console.warn('[TTS] plugin voice synthesize failed:', error);
-      throw error as Error;
-    }
   }
 
   private async synthesizeWithRetry(voice: HttpTTS, text: string, speed: number,

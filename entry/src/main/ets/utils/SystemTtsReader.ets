@@ -3062,9 +3062,8 @@ export class SystemTtsReader {
     return TtsCustomVoices.parse(raw);
   }
 
-  /** 插件音色由插件运行时提供，不写进保存的自定义音色。 */
   static serializeCustomVoices(voices: HttpTTS[]): string {
-    return JSON.stringify(TtsCustomVoices.withoutPluginVoices(voices));
+    return JSON.stringify(voices);
   }
 
   private static alternateOnlineMode(online: number): number {

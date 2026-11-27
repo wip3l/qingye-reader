@@ -1,5 +1,4 @@
 import { WebParseSettingsStore } from '../utils/WebParseSettingsStore';
-import { PluginFeatureStore } from '../utils/PluginFeatureStore';
 import { ReaderRasterAssets } from '../core/reader/ReaderRasterAssets';
 import { AppAiHost } from '../utils/AppAiHost';
 import { AiAccessPolicy } from '../account/AiAccessPolicy';
@@ -175,22 +174,6 @@ export default class EntryAbility extends UIAbility {
     });
     // 原生书源脚本的提示、刷新发现页、打开网页。
     NativeSourceInteraction.setHandler(new AppSourceInteraction(this.context));
-    // 插件功能默认关闭。插件宿主带原生库，只在开关开着（启动时读出或之后打开）时才加载。
-    const pluginContext = this.context;
-    let pluginHostRequested = false;
-    PluginFeatureStore.subscribe((enabled: boolean): void => {
-      if (!enabled || pluginHostRequested) return;
-      pluginHostRequested = true;
-      import('../core/plugin/AppPluginHost').then((loader) => {
-        loader.AppPluginHost.install(pluginContext);
-      }).catch((error: Error) => {
-        pluginHostRequested = false;
-        console.warn('加载插件宿主失败:', error);
-      });
-    });
-    PluginFeatureStore.load(this.context).catch((error: Error) => {
-      console.warn('恢复插件开关失败:', error);
-    });
     TlsTrustStore.load(this.context).catch((e: Error) => {
       hilog.warn(0x0000, 'testTag', 'Load TLS trust settings failed: %{public}s', JSON.stringify(e));
     });

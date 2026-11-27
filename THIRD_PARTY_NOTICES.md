@@ -18,15 +18,6 @@
 - 许可证：MIT
 - 版权所有：Copyright (c) 2017-2021 Fabrice Bellard；Copyright (c) 2017-2021 Charlie Gordon
 
-## PocketPy
-
-- 组件：PocketPy Lightweight Python 3 Interpreter（v1.4.6 单头文件，位于 `pluginengine/src/main/cpp/third_party/pocketpy/`）
-- 上游项目：https://github.com/pocketpy/pocketpy
-- 许可证：MIT
-- 版权所有：Copyright (c) 2023 blueloveTH
-
-用于插件引擎（`@legado/pluginengine`）里沙箱化的 Python 插件运行时（关闭操作系统模块，只暴露受控的宿主接口）。原始 MIT 许可见 [pluginengine/src/main/cpp/third_party/pocketpy/LICENSE](pluginengine/src/main/cpp/third_party/pocketpy/LICENSE)，发行包内的许可合集见 [THIRD_PARTY_LICENSES.txt](entry/src/main/resources/rawfile/licenses/THIRD_PARTY_LICENSES.txt)。
-
 ## OpenHarmony / Huawei N-API 封装代码
 
 - 组件：带有 Huawei Device Co., Ltd. 版权头的 N-API 封装源文件

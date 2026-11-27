@@ -1173,15 +1173,8 @@ struct CustomTtsVoiceManagerPage {
     this.loadingCatalog = false;
   }
 
-  /** 插件提供的音色不能在这里编辑、停用或删除，提示去插件管理处理。 */
-  private pluginVoiceBlocked(voice: HttpTTS): boolean {
-    if (!TtsCustomVoices.isPluginVoice(voice)) return false;
-    HdsFeedback.showToast('这个音色由插件提供，请到“实验室 › 插件管理”里停用或卸载插件');
-    return true;
-  }
-
   private voiceSwipeActions(voice: HttpTTS): HdsSwipeActionOptions {
-    if (this.selectionMode || TtsCustomVoices.isPluginVoice(voice)) return { icons: [] };
+    if (this.selectionMode) return { icons: [] };
     return { icons: [
       {
         icon: new SymbolGlyphModifier(voice.enabled ? $r('sys.symbol.minus_circle') : $r('sys.symbol.checkmark_circle')),
@@ -1261,7 +1254,6 @@ struct CustomTtsVoiceManagerPage {
   }
 
   toggleVoiceEnabled(voice: HttpTTS, enabled: boolean): void {
-    if (this.pluginVoiceBlocked(voice)) return;
     this.voices = this.voices.map((item: HttpTTS) => {
       if (String(item.id) === String(voice.id)) {
         item.enabled = enabled;
@@ -1275,14 +1267,12 @@ struct CustomTtsVoiceManagerPage {
   }
 
   toggleVoiceState(voice: HttpTTS): void {
-    if (this.pluginVoiceBlocked(voice)) return;
     const enabled = !voice.enabled;
     this.toggleVoiceEnabled(voice, enabled);
     HdsFeedback.showToast(enabled ? '音色已启用' : '音色已禁用');
   }
 
   deleteVoice(voice: HttpTTS): void {
-    if (this.pluginVoiceBlocked(voice)) return;
     ThemedDialog.showAlertDialog(this.getUIContext(), {
       title: '删除音色',
       message: `确定删除自定义音色“${voice.name || '未命名音色'}”吗？删除后无法撤销。`,
@@ -1462,7 +1452,7 @@ struct CustomTtsVoiceManagerPage {
         count++;
       }
       this.voices = this.voices.map((voice: HttpTTS): HttpTTS => {
-        if (this.isVoiceSelected(voice) && !TtsCustomVoices.isPluginVoice(voice)) {
+        if (this.isVoiceSelected(voice)) {
           voice.enabled = enabled;
           if (!enabled && this.isCurrentVoice(voice)) resetCurrent = true;
         }
@@ -1480,16 +1470,10 @@ struct CustomTtsVoiceManagerPage {
   batchDelete(): void {
     if (this.selectedVoiceIds.length === 0 || this.isBatchOperating) return;
     const selected = this.batchVoices().filter((voice: TtsBatchVoiceEntry): boolean => this.selectedVoiceIds.includes(voice.key));
-    const fromPlugin = (entry: TtsBatchVoiceEntry): boolean => entry.kind === '自定义音色' &&
-      this.voices.some((voice: HttpTTS): boolean => String(voice.id) === entry.key.replace(/^custom:/, '') &&
-        TtsCustomVoices.isPluginVoice(voice));
     const blocked = selected.filter((voice: TtsBatchVoiceEntry): boolean =>
-      (voice.kind !== '自定义音色' && voice.kind !== '离线音色') || fromPlugin(voice))
-      .map((voice: TtsBatchVoiceEntry): string => fromPlugin(voice) ?
-        `${voice.title}（插件提供，请在插件管理里停用或卸载）` :
-        `${voice.title}（${voice.kind}，仅自定义和离线音色可删除）`);
-    const customVoices = selected.filter((voice: TtsBatchVoiceEntry): boolean =>
-      voice.kind === '自定义音色' && !fromPlugin(voice));
+      voice.kind !== '自定义音色' && voice.kind !== '离线音色')
+      .map((voice: TtsBatchVoiceEntry): string => `${voice.title}（${voice.kind}，仅自定义和离线音色可删除）`);
+    const customVoices = selected.filter((voice: TtsBatchVoiceEntry): boolean => voice.kind === '自定义音色');
     const localTargets = this.batchLocalRemovalTargets(selected);
     if (customVoices.length === 0 && localTargets.length === 0) {
       ThemedDialog.showAlertDialog(this.getUIContext(), {
@@ -1586,7 +1570,6 @@ struct CustomTtsVoiceManagerPage {
   }
 
   openEditDialog(voice: HttpTTS): void {
-    if (this.pluginVoiceBlocked(voice)) return;
     FormDraftStore.removePersistent(getContext(this), 'custom_tts:edit');
     this.editingVoiceId = String(voice.id);
     this.editName = voice.name || '';
@@ -1813,11 +1796,9 @@ struct CustomTtsVoiceManagerPage {
   }
 
   // 导出为与导入相同的 HttpTTS 数组 JSON，可直接用“从文件导入”或其他阅读应用导入。
-  async exportVoices(selectedVoices: HttpTTS[]): Promise<void> {
-    // 插件音色离开插件无法使用，不导出。
-    const voices = TtsCustomVoices.withoutPluginVoices(selectedVoices);
+  async exportVoices(voices: HttpTTS[]): Promise<void> {
     if (voices.length === 0) {
-      HdsFeedback.showToast(selectedVoices.length > 0 ? '插件提供的音色不能导出' : '请先选择自定义音色');
+      HdsFeedback.showToast('请先选择自定义音色');
       return;
     }
     if (this.isExporting) return;
@@ -2225,9 +2206,9 @@ struct CustomTtsVoiceManagerPage {
           .fontColor(this.primaryTextColor())
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text(TtsCustomVoices.isPluginVoice(voice) ? '插件提供' : '自定义音色')
+        Text('自定义音色')
           .fontSize(AppFontSize.CAPTION)
-          .fontColor(TtsCustomVoices.isPluginVoice(voice) ? this.accentColor() : this.subTextColor())
+          .fontColor(this.subTextColor())
           .margin({ top: AppSpacing.XS })
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })

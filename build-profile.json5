@@ -109,19 +109,6 @@
       ]
     },
     {
-      "name": "pluginengine",
-      "srcPath": "./pluginengine",
-      "targets": [
-        {
-          "name": "default",
-          "applyToProducts": [
-            "default",
-            "release"
-          ]
-        }
-      ]
-    },
-    {
       "name": "wearable",
       "srcPath": "./wearable",
       "targets": [
